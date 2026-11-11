@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "s1-api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "export PATH=/Users/adrienlacombe/ws/kamui/spikes/s1/tools/node_modules/.bin:$PATH && cd /Users/adrienlacombe/ws/kamui/spikes/s1/social-account/backend && exec /Users/adrienlacombe/ws/kamui/spikes/s1/tools/node_modules/.bin/bun run service:api"],
+      "port": 3000
+    },
+    {
+      "name": "s1-client",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "export PATH=/Users/adrienlacombe/ws/kamui/spikes/s1/tools/node_modules/.bin:$PATH && cd /Users/adrienlacombe/ws/kamui/spikes/s1/social-account/client && exec /Users/adrienlacombe/ws/kamui/spikes/s1/tools/node_modules/.bin/bun run dev"],
+      "port": 5173
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "kamui-s1-harness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preflight": "bun run preflight.ts"
+  },
+  "dependencies": {
+    "starknet": "10.8.0"
+  }
+}

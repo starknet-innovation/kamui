@@ -1,0 +1,12 @@
+# Upstream checkout and local tooling for the S1 spike (see spikes/s1/README.md)
+spikes/s1/social-account/
+spikes/s1/tools/
+node_modules/
+# Secrets and local config
+.env
+.env.*
+*.local
+# Cairo build output
+target/
+.snfoundry_cache/
+.DS_Store
