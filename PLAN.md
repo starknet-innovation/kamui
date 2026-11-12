@@ -105,7 +105,7 @@ Done when: all tests pass on a devnet, a gas profile shows at most one storage w
 
 ### Phase 2: backend
 
-Status 2026-11-12: upstream's backend is now in `services/backend/` with the Kamui changes as code (owner anchor, Kamui class, prover memory) and the pepper confirmed with the pepper service before anything is paid for; 17 tests. The pepper service is in `services/pepper/` and runs against AWS KMS. It ran live on Sepolia in run 5. Not done: hardening (step 1), the `KeySet` watcher, the paymaster (step 3), the session and app registry (step 4) and the indexer (step 5).
+Status 2026-11-12: upstream's backend is now in `services/backend/` with the Kamui changes as code (owner anchor, Kamui class, prover memory) and the pepper confirmed with the pepper service before anything is paid for; 17 tests. The pepper service is in `services/pepper/` and runs against AWS KMS. It ran live on Sepolia in run 5. A development `/sponsor` endpoint stands in for the paymaster. Not done: hardening (step 1), the `KeySet` watcher, the paymaster (step 3), the session and app registry (step 4) and the indexer (step 5).
 
 1. Harden social-account's recover API, prover service, relayer and JWK rotator for production (rate limits, monitoring, key handling). The committed `backend/.env` and `client/.env` were checked and hold only addresses, class hashes and an API URL. Add the `KeySet` watcher (D8). Budget for a flat 75M L2 gas per proof on every deployment and recovery the relayer pays for.
 2. Pepper service (D2).
@@ -116,13 +116,15 @@ Status 2026-11-12: upstream's backend is now in `services/backend/` with the Kam
 
 ### Phase 3: SDK and connector
 
-Status 2026-11-12: started in `sdk/` (see its README). Done: address derivation, account reader, owner management, sessions with scopes and spending limits, sponsored calls, and a session account for self-paid transactions, and a pepper recovery file (export and import), with 19 unit tests, 7 devnet tests and a live check on Sepolia. The SDK refuses sessions with unlimited token access by default and always estimates session fees with validation on. The login flow was added the same day: nonce and blinding, the redirect answer, the pepper lookup with its key proof (checked against the real pepper service in process), and `recover` through the backend, skipped when the device already owns the account; 19 more tests. A login ran end to end on Sepolia the same day through `apps/login-demo`, with the pepper service on AWS KMS and the backend from the repo (`spikes/s1/results/RESULTS.md`, run 5). Not done: the wallet-standard connector (step 2) and iframe messaging.
+Status 2026-11-12: started in `sdk/` (see its README). Done: address derivation, account reader, owner management, sessions with scopes and spending limits, sponsored calls, and a session account for self-paid transactions, and a pepper recovery file (export and import), with 19 unit tests, 7 devnet tests and a live check on Sepolia. The SDK refuses sessions with unlimited token access by default and always estimates session fees with validation on. The login flow was added the same day: nonce and blinding, the redirect answer, the pepper lookup with its key proof (checked against the real pepper service in process), and `recover` through the backend, skipped when the device already owns the account; 19 more tests. A login ran end to end on Sepolia the same day through `apps/login-demo`, with the pepper service on AWS KMS and the backend from the repo (`spikes/s1/results/RESULTS.md`, run 5). Not done: the wallet-standard connector (step 2). The app-side helpers for the keychain's redirect protocol are in `sdk/src/keychain.ts`.
 
 1. TypeScript SDK on starknet.js: account interface, session creation and signing, `OutsideExecution` construction, iframe messaging. Start from social-account's `client/src/sdk`.
 2. Wallet-standard connector so apps integrate the same way they do other Starknet wallets.
 3. Session-only provider for server and native contexts.
 
 ### Phase 4: keychain
+
+Status 2026-11-12: a first version is in `keychain/`, with `apps/demo-dapp` connecting through it and the protocol in `sdk/src/keychain.ts`. It uses full-page redirects, not an iframe: browsers isolate storage in third-party iframes, so a shared iframe keychain needs extra browser permissions. Done: sign-in, session approval with scope, limits and warnings, the device list with removal, the recovery file, encrypted key storage and a strict content security policy. It ran on Sepolia (`spikes/s1/results/RESULTS.md`, run 6). Not done: per-transaction approval, the session list, embedded modes, a production build and domain, and automated tests of the pages.
 
 1. Thin iframe app on a domain that will never change (OAuth redirect URIs and stored keys are bound to it).
 2. Flows: login (Google, Apple), first-time proof with progress, session approval showing contracts, selectors, expiry, fee cap and spending limits, per-transaction approval, session list and revoke, recovery and override recovery with cancel, device list if D4 is (b).

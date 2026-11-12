@@ -27,6 +27,7 @@ import { deployAccount, type DeployRequest } from '../recovery/deploy';
 import { pepperSettings } from '../recovery/pepper';
 import { recoverAccount, type RecoverContext, type RecoverRequest } from '../recovery/recover';
 import { relayProof, type RelayRequest } from '../recovery/relay';
+import { sponsorOutsideExecution, sponsoredPerHour, type SponsorRequest } from '../recovery/sponsor';
 
 const provider = makeProvider();
 const chain = await chainName(provider);
@@ -46,6 +47,7 @@ const ctx: RecoverContext = {
   deploysPerHour: Number(process.env.DEPLOYS_PER_HOUR ?? 30),
   pepper: pepperSettings(chain, process.env.PEPPER_SERVICE_URL),
 };
+const sponsorCtx = { ...ctx, sponsoredPerHour: sponsoredPerHour(chain, process.env.SPONSORED_PER_HOUR) };
 const rotatorUrl = process.env.ROTATOR_URL ?? 'http://localhost:3001';
 
 /** The rotator's own answer, or why it could not be asked. */
@@ -83,6 +85,8 @@ const server = Bun.serve({
     '/recover': { POST: route<RecoverRequest>(['jwt', 'account', 'newPubkey', 'blinding', 'pepper'], (b) => recoverAccount(b, ctx)) },
     '/deploy': { POST: route<DeployRequest>(['aud', 'identity'], (b, ip) => deployAccount(b, ip, ctx)) },
     '/relay': { POST: route<RelayRequest>(['account', 'newPubkey', 'proof'], (b, ip) => relayProof(b, ip, ctx)) },
+    // Kamui: a development stand-in for the paymaster.
+    '/sponsor': { POST: route<SponsorRequest>(['account'], (b, ip) => sponsorOutsideExecution(b, ip, sponsorCtx)) },
     '/health/api': { GET: () => Response.json({ ok: true, chain, deploys: ctx.deploysPerHour > 0 && !ctx.pepper.serviceUrl, pepper_service: Boolean(ctx.pepper.serviceUrl) }) },
     '/health/prover': { GET: async () => Response.json(await proverHealth(ctx.prover.url)) },
     '/health/rotator': { GET: async () => Response.json(await rotatorHealth()) },

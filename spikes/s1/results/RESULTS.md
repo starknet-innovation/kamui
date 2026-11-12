@@ -147,3 +147,20 @@ First time on a live network for: the SDK's login flow, the key proof, a pepper 
 Pepper service timings, from its log: 106 to 212 ms for a request from the browser (the first includes fetching Google's keys), 37 to 38 ms for the backend's confirmation.
 
 Not covered: the pepper recovery file used for a login, override recovery, Apple, and a refused wrong pepper on a live run (covered in tests only).
+
+## Run 6: an app connecting through the keychain
+
+2026-11-12. The keychain (`keychain/`), the demo app (`apps/demo-dapp`), the backend with its `/sponsor` endpoint, the pepper service on the test KMS key and the prover, all local, on Sepolia. Same account as run 5.
+
+| Step | Result |
+|---|---|
+| The demo app sends the user to the keychain | The keychain shows the app's origin and asks for a sign-in. |
+| Sign-in in the keychain, as a new device | Works: a key for the keychain's device is added with a proof. |
+| The keychain shows the request and the user approves | Works: the session is registered by an owner-signed call that the relayer pays for (`0x3f43869cbbb857c9c16d76f59d14e6ec751d73cc202c96dece2b82f24115d37`), and the user returns to the app. |
+| The app pings with its session key, sponsored | Works: confirmed in 7.4 s, and the contract's count went from 6 to 7 (`0x7d3432e1befdc6651fc5726efebd77a460ab7ce87e94b1f048a670dd798bec1`). |
+| The app tries a function the session was not given | Refused by the account: `Kamui: invalid session`. Nothing was sent. |
+| The keychain's home page | Lists the account's four device keys and marks its own. |
+
+One thing the run exposed, now fixed: the sign-in happened twice, so two keys were added for the same device and the first is unused. The likely cause is that a keychain page drawn before the first sign-in still offered "Continue with Google" afterwards. The keychain now looks at its stored login again before starting a sign-in. The account has four owners as a result; the unused key can be removed from the home page.
+
+Not exercised: removing a device, the recovery file download, "forget this device", a refused request (covered by tests), and any browser other than the one in the Claude desktop app.

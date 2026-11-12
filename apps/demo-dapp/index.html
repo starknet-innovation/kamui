@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ping, a Kamui demo app</title>
+    <style>
+      body { font: 15px/1.5 system-ui, sans-serif; max-width: 680px; margin: 40px auto; padding: 0 16px; color: #1b1b1f; }
+      h1 { font-size: 22px; }
+      button { font: inherit; padding: 8px 14px; margin: 4px 8px 4px 0; cursor: pointer; }
+      button:disabled { opacity: 0.5; }
+      code, pre { font: 13px/1.5 ui-monospace, monospace; }
+      pre { background: #f4f4f6; padding: 12px; white-space: pre-wrap; word-break: break-all; }
+      .note { color: #5c5c66; }
+    </style>
+  </head>
+  <body>
+    <h1>Ping</h1>
+    <p class="note">A demo app. It asks the Kamui keychain for a session that may only call <code>ping()</code> on one test contract, then pings without asking again.</p>
+    <p id="who"></p>
+    <div id="actions"></div>
+    <pre id="log"></pre>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

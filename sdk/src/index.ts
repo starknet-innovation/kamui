@@ -1,5 +1,6 @@
 export * from './address';
 export * from './constants';
+export * from './keychain';
 export * from './login';
 export * from './outside';
 export * from './owners';

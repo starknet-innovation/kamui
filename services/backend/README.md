@@ -11,6 +11,7 @@ It is upstream's backend (keep-starknet-strange/social-account, MIT) with the Ka
 | `POST /recover` | Verifies the login token, confirms the pepper with the pepper service, deploys the account if needed, has the prover prove `prove_jwt`, and submits `recover` from the relayer. This is the path the SDK's `completeLogin` uses. |
 | `POST /relay` | Submits `recover` with a proof the browser made. The token never reaches this backend. |
 | `POST /deploy` | Relayer-paid deployment for browser proving. Disabled when a pepper service is configured, because there is no token to confirm a pepper with. |
+| `POST /sponsor` | The relayer pays for an `execute_from_outside_v2` call on a Kamui account: an owner approving a session or changing devices, or a session making a call. A development stand-in for the paymaster: an hourly cap and nothing else, off on mainnet by default. |
 | Prover | The SNIP-36 prover, in Docker. One proof at a time; see the memory note in `compose.yml`. |
 | Rotator | Copies the issuers' current signing keys into the on-chain registry. |
 
@@ -46,7 +47,7 @@ The scripts under `src/scripts/` build the contracts with `scarb`. Put the pinne
 bun test
 ```
 
-17 tests: upstream's 8, and 9 for the pepper confirmation. The pepper tests run three real parts together in process: the SDK builds the key proof, this backend forwards it, and the pepper service answers.
+24 tests: upstream's 8, 9 for the pepper confirmation and 7 for the sponsor endpoint. The pepper tests run three real parts together in process: the SDK builds the key proof, this backend forwards it, and the pepper service answers.
 
 ## Not done
 

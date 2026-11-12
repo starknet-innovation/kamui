@@ -1,0 +1,17 @@
+body { font: 15px/1.5 system-ui, sans-serif; color: #1b1b1f; background: #fafafa; margin: 0; }
+main { max-width: 620px; margin: 48px auto; padding: 0 20px; }
+h1 { font-size: 20px; letter-spacing: 0.02em; }
+h2 { font-size: 17px; margin: 24px 0 8px; }
+button { font: inherit; padding: 9px 16px; margin: 8px 8px 0 0; border-radius: 6px; border: 1px solid #b9b9c4; background: #fff; cursor: pointer; }
+button.primary { background: #1b1b1f; color: #fff; border-color: #1b1b1f; }
+button:disabled { opacity: 0.5; cursor: default; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+td, th { text-align: left; padding: 5px 12px 5px 0; vertical-align: top; border-bottom: 1px solid #ececf0; }
+th { font-weight: 600; color: #5c5c66; font-size: 13px; }
+code { font: 13px/1.5 ui-monospace, monospace; word-break: break-all; }
+.origin { font-size: 18px; font-weight: 600; }
+.note { color: #5c5c66; font-size: 14px; }
+.warn { background: #fff7e0; border: 1px solid #e8c766; padding: 10px 12px; border-radius: 6px; margin: 12px 0; }
+.error { background: #fdecec; border: 1px solid #e59a9a; padding: 10px 12px; border-radius: 6px; margin: 12px 0; }
+#status { color: #5c5c66; min-height: 1.5em; }
+ul { padding-left: 20px; }

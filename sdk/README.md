@@ -10,6 +10,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 
 | Module | What it does |
 |---|---|
+| `keychain` | The keychain protocol and the app side of it: `beginConnect`, `finishConnect`, `sessionCall`, `sponsor`, and for the keychain `parseConnectRequest`, `sessionProblems`. |
 | `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |
 | `reader` | `KamuiReader`: owners, anchor, session epoch, session data and scope, spending policies, nonces. |
@@ -110,6 +111,7 @@ const login = await completeLogin({
 bun install
 bun test test/unit.test.ts            # 19 tests, no network
 bun test test/login.test.ts           # 19 tests, no network; runs the pepper service in process
+bun test test/keychain.test.ts        # 16 tests, no network
 
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0
@@ -125,6 +127,6 @@ Bun 1.2 or later. The devnet tests deploy `DevAccount` (the production owner, se
 
 - More than one live run. The login ran end to end on Sepolia once, through `../apps/login-demo` (`../spikes/s1/results/RESULTS.md`, run 5): a first login, a returning device and a new device.
 - Browser proving (the backend proves; plan D9).
-- A wallet-standard connector and the iframe messaging for the keychain.
+- A wallet-standard connector. Apps connect with the redirect helpers in `keychain`; see `../keychain/README.md` and `../apps/demo-dapp`.
 - Override recovery calls.
 - Publishing as a built package.
