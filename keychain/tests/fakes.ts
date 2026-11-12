@@ -27,6 +27,8 @@ export type World = {
   anchor: bigint;
   epoch: number;
   sessions: Map<string, FakeSession>;
+  /** Contracts that answer `symbol()` and `decimals()`, by address. Anything else is not a token. */
+  tokens: Map<bigint, { symbol: string; decimals: number }>;
   /** What the keychain asked the outside world to do. */
   recoverRequests: any[];
   sponsorRequests: { account: string; calls: { to: string; selector: bigint; data: string[] }[] }[];
@@ -37,7 +39,7 @@ export type World = {
 };
 
 export function newWorld(): World {
-  return { deployed: false, owners: [], anchor: 0n, epoch: 0, sessions: new Map(), recoverRequests: [], sponsorRequests: [], pepperRequests: [], issuerVisits: 0 };
+  return { deployed: false, owners: [], anchor: 0n, epoch: 0, sessions: new Map(), tokens: new Map(), recoverRequests: [], sponsorRequests: [], pepperRequests: [], issuerVisits: 0 };
 }
 
 function ownersChanged(world: World) {
@@ -54,7 +56,12 @@ function token(nonce: string): string {
 }
 
 function contractCall(world: World, contract: string, entry: bigint, calldata: string[]): string[] {
-  if (!same(contract, ACCOUNT)) throw new Error(`unexpected contract ${contract}`);
+  if (!same(contract, ACCOUNT)) {
+    const token = world.tokens.get(BigInt(contract));
+    if (token && entry === selector('symbol')) return [`0x${Buffer.from(token.symbol).toString('hex')}`];
+    if (token && entry === selector('decimals')) return [hex(token.decimals)];
+    throw new Error(`contract ${contract} has no such entry point`);
+  }
   switch (entry) {
     case selector('is_owner'):
       return [world.owners.some((o) => same(o, calldata[0]!)) ? '0x1' : '0x0'];

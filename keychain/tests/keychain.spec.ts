@@ -8,7 +8,11 @@ import { ACCOUNT, CHAIN_ID, CLAIMS, CLASS_HASH, KEYCHAIN, PEPPER, installApp, in
 const APP = 'http://localhost:5199';
 const OTHER_SITE = 'http://localhost:5198';
 const GAME = '0x2f8ce9fcc5f6e165ab5dcccf865c4c08e7d752d6b930938195683eef9f43dfc';
-const TOKEN = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
+const TOKEN = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d'; // STRK
+/** A contract that is not on Kamui's list of known tokens. */
+const OTHER_TOKEN = '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+/** 1.5 tokens of 18 decimals, as the low half of a u256. */
+const ONE_AND_A_HALF = '0x14d1120d7b160000';
 
 function memoryStore(): KeyValueStore {
   const data = new Map<string, string>();
@@ -240,16 +244,32 @@ test.describe('connection requests', () => {
     await signIn(page);
     const store = await requestFrom(page, APP, {
       calls: [{ to: GAME, entrypoint: 'move' }, { to: TOKEN, entrypoint: 'transfer' }],
-      limits: [{ token: TOKEN, maxPerCall: 100n, maxPerWindow: 150n, windowSeconds: 3600 }],
+      limits: [{ token: TOKEN, maxPerCall: 10n ** 18n, maxPerWindow: 15n * 10n ** 17n, windowSeconds: 3600 }],
     });
     await expect(page.getByRole('heading', { name: 'Spending limits' })).toBeVisible();
-    await expect(page.getByText('150 every 60 min')).toBeVisible();
+    // A known token: amounts read in whole units, with its name.
+    await expect(page.getByRole('cell', { name: '1 STRK', exact: true })).toBeVisible();
+    await expect(page.getByText('1.5 STRK every 60 min')).toBeVisible();
     await page.getByRole('button', { name: 'Approve' }).click();
     expect((await answerAt(page, store)).ok).toBe(true);
     expect(world.sponsorRequests[0]!.calls.map((call) => call.selector)).toEqual([
       selectorOf('add_or_update_scoped_session_key'),
       selectorOf('set_spending_policy'),
     ]);
+  });
+
+  test('a spending limit on a token Kamui cannot identify says so', async ({ page, context }) => {
+    await setup(context);
+    await signIn(page);
+    await requestFrom(page, APP, {
+      calls: [{ to: OTHER_TOKEN, entrypoint: 'transfer' }],
+      limits: [{ token: OTHER_TOKEN, maxPerCall: 100n, maxPerWindow: 150n, windowSeconds: 3600 }],
+    });
+    await expect(page.getByRole('cell', { name: '100 units', exact: true })).toBeVisible();
+    await expect(page.getByText('150 units every 60 min')).toBeVisible();
+    await expect(page.getByText('Kamui could not identify this token')).toBeVisible();
+    // It can still be approved: the limit is enforced on chain in raw units either way.
+    await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible();
   });
 
   test('a denied request tells the app and sends nothing', async ({ page, context }) => {
@@ -338,7 +358,7 @@ test.describe('connection requests', () => {
 
 test.describe('transaction requests', () => {
   /** An app on `from` asks the keychain to approve one transaction. */
-  async function transactionFrom(page: Page, from: string, calls = [{ contractAddress: TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x64', '0x0'] }]) {
+  async function transactionFrom(page: Page, from: string, calls = [{ contractAddress: TOKEN, entrypoint: 'transfer', calldata: [GAME, ONE_AND_A_HALF, '0x0'] }]) {
     const store = memoryStore();
     const url = beginExecute({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/`, appName: 'Example Game', calls }, store);
     await page.goto(`${from}/`);
@@ -364,7 +384,8 @@ test.describe('transaction requests', () => {
     await expect(page.getByRole('heading', { name: 'Transaction request' })).toBeVisible();
     await expect(page.locator('.origin')).toHaveText(APP);
     await expect(page.getByText('This uses your full authority')).toBeVisible();
-    await expect(page.getByText('Sends 100 units of a token out of your account.')).toBeVisible();
+    await expect(page.getByText('Sends 1.5 STRK out of your account.')).toBeVisible();
+    await expect(page.getByText('1.5 STRK (1500000000000000000 in the smallest unit)')).toBeVisible();
     await expect(page.getByRole('cell', { name: TOKEN })).toBeVisible();
     await expect(page.getByRole('cell', { name: GAME })).toBeVisible();
 
@@ -377,14 +398,49 @@ test.describe('transaction requests', () => {
     expect(world.sponsorRequests[0]!.calls).toHaveLength(1);
     expect(BigInt(call!.to)).toBe(BigInt(TOKEN));
     expect(call!.selector).toBe(selectorOf('transfer'));
-    expect(call!.data.map(BigInt)).toEqual([BigInt(GAME), 100n, 0n]);
+    expect(call!.data.map(BigInt)).toEqual([BigInt(GAME), 1_500_000_000_000_000_000n, 0n]);
   });
 
   test('an allowance is described as letting someone else spend', async ({ page, context }) => {
     await setup(context);
     await signIn(page);
-    await transactionFrom(page, APP, [{ contractAddress: TOKEN, entrypoint: 'approve', calldata: [GAME, '0x5', '0x0'] }]);
-    await expect(page.getByText('Lets another address spend up to 5 units of a token from your account.')).toBeVisible();
+    await transactionFrom(page, APP, [{ contractAddress: TOKEN, entrypoint: 'approve', calldata: [GAME, ONE_AND_A_HALF, '0x0'] }]);
+    await expect(page.getByText('Lets another address spend up to 1.5 STRK from your account.')).toBeVisible();
+  });
+
+  test('an unlimited allowance is called unlimited', async ({ page, context }) => {
+    await setup(context);
+    await signIn(page);
+    const max = '0xffffffffffffffffffffffffffffffff';
+    await transactionFrom(page, APP, [{ contractAddress: TOKEN, entrypoint: 'approve', calldata: [GAME, max, max] }]);
+    await expect(page.getByText('Lets another address spend up to an unlimited amount of STRK from your account.')).toBeVisible();
+  });
+
+  test('a token Kamui does not list is shown as a claim, with a caution', async ({ page, context }) => {
+    const world = await setup(context);
+    world.tokens.set(BigInt(OTHER_TOKEN), { symbol: 'GOLD', decimals: 6 });
+    await signIn(page);
+    await transactionFrom(page, APP, [{ contractAddress: OTHER_TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x2625a0', '0x0'] }]);
+    await expect(page.getByText('Sends 2.5 GOLD out of your account.')).toBeVisible();
+    await expect(page.getByText('Kamui does not recognise this token. It says it is "GOLD"')).toBeVisible();
+    await expect(page.getByText('says it is "GOLD"', { exact: false }).first()).toBeVisible();
+  });
+
+  test('a contract calling itself STRK at another address is not taken for STRK', async ({ page, context }) => {
+    const world = await setup(context);
+    world.tokens.set(BigInt(OTHER_TOKEN), { symbol: 'STRK', decimals: 18 });
+    await signIn(page);
+    await transactionFrom(page, APP, [{ contractAddress: OTHER_TOKEN, entrypoint: 'transfer', calldata: [GAME, ONE_AND_A_HALF, '0x0'] }]);
+    await expect(page.getByText('Kamui does not recognise this token. It says it is "STRK", but anyone can make a token with that name.')).toBeVisible();
+    await expect(page.getByRole('cell', { name: OTHER_TOKEN })).toBeVisible();
+  });
+
+  test('a contract that is not a token gets raw amounts and a caution', async ({ page, context }) => {
+    await setup(context);
+    await signIn(page);
+    await transactionFrom(page, APP, [{ contractAddress: OTHER_TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x64', '0x0'] }]);
+    await expect(page.getByText('Sends 100 units of an unidentified token out of your account.')).toBeVisible();
+    await expect(page.getByText('Kamui could not identify this token')).toBeVisible();
   });
 
   test('an unrecognised call is shown with its raw arguments, and several calls are all shown', async ({ page, context }) => {

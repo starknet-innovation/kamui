@@ -17,6 +17,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 | `owners` | `signNewOwner`, `addOwnerCall`, `removeOwnerCall`. |
 | `pepper` | `exportPepper`, `parsePepperFile`, `pepperFileMatchesLogin`: a recovery file holding the user's pepper. |
 | `sessions` | `createSessionCalls`, `addSessionCall`, `setSpendingPolicyCall`, `revokeSessionCall`, `revokeAllSessionsCall`, `sessionSignature`, and the checks `assertValidSession` and `unlimitedTokenCalls`. |
+| `tokens` | `readTokenInfo`, `formatTokenAmount`, `describeAmount`: a token's name and exact amounts for approval screens, with known, unverified and unknown tokens told apart. |
 | `outside` | Sponsored calls: `ownerOutsideExecution`, `sessionOutsideExecution`, `nextSessionNonce`. |
 | `sessionAccount` | `createSessionAccount`: a starknet.js `Account` that signs as a session, for self-paid transactions. |
 
@@ -112,6 +113,7 @@ bun install
 bun test test/unit.test.ts            # 19 tests, no network
 bun test test/login.test.ts           # 19 tests, no network; runs the pepper service in process
 bun test test/keychain.test.ts        # 23 tests, no network
+bun test test/tokens.test.ts          # 9 tests, no network
 
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0

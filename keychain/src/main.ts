@@ -15,6 +15,7 @@ import {
   callsFromWire,
   completeLogin,
   createSessionCalls,
+  describeAmount,
   describeCall,
   executeProblems,
   exportPepper,
@@ -25,6 +26,7 @@ import {
   parseConnectRequest,
   parseExecuteRequest,
   parseLoginRedirect,
+  readTokenInfo,
   removeOwnerCall,
   resultUrl,
   serializePepperFile,
@@ -35,6 +37,7 @@ import {
   type ExecuteRequest,
   type KeyPair,
   type LoginAttempt,
+  type TokenInfo,
 } from '../../sdk/src';
 import { forget, loadLogin, loadPendingDevice, saveLogin, savePendingDevice, type AccountRecord } from './vault';
 
@@ -101,6 +104,35 @@ function table(headers: string[], rows: (string | Node)[][]): HTMLTableElement {
 
 const short = (felt: string) => (felt.length > 20 ? `${felt.slice(0, 10)}…${felt.slice(-6)}` : felt);
 const code = (text: string) => el('code', text);
+
+//
+// Tokens: what an amount means
+//
+
+/** Looks up every token an approval screen will mention, once. */
+async function lookUpTokens(addresses: string[]): Promise<(address: string) => TokenInfo> {
+  const unique = [...new Set(addresses.map((address) => BigInt(address)))];
+  const infos = await Promise.all(unique.map((address) => readTokenInfo(provider, `0x${address.toString(16)}`)));
+  return (address) => infos[unique.indexOf(BigInt(address))] ?? { status: 'unknown', address };
+}
+
+/** A token as a table cell: its name if Kamui recognises it, otherwise what it claims, and always its address. */
+function tokenCell(info: TokenInfo): Node {
+  const cell = el('span');
+  const name = info.status === 'known' ? info.symbol : info.status === 'unverified' ? `says it is "${info.symbol}"` : 'unidentified';
+  cell.append(document.createTextNode(`${name} `), code(short(info.address)));
+  return cell;
+}
+
+/** What to say about a token Kamui cannot vouch for. Nothing for a known one. */
+function tokenCaution(info: TokenInfo): Node | null {
+  if (info.status === 'known') return null;
+  const text =
+    info.status === 'unverified'
+      ? `Kamui does not recognise this token. It says it is "${info.symbol}", but anyone can make a token with that name. Check the contract address before you approve.`
+      : 'Kamui could not identify this token, so the amount is shown in its smallest unit and may be much larger or smaller than it looks.';
+  return el('p', text, 'warn');
+}
 
 //
 // Pending connect request (survives the trip to the issuer)
@@ -202,11 +234,12 @@ async function finishLogin() {
 // Session approval
 //
 
-function showApproval(request: ConnectRequest, device: KeyPair, record: AccountRecord) {
+async function showApproval(request: ConnectRequest, device: KeyPair, record: AccountRecord) {
   const origin = new URL(request.redirectUri).origin;
   const session = request.session;
   const problems = sessionProblems(record.account, session);
   const { params, limits } = sessionFromWire(session);
+  const tokenOf = await lookUpTokens(limits.map((limit) => limit.token));
 
   const nodes: Node[] = [
     el('h2', 'Connection request'),
@@ -228,10 +261,20 @@ function showApproval(request: ConnectRequest, device: KeyPair, record: AccountR
       el('h2', 'Spending limits'),
       table(
         ['Token', 'Per call', 'Per period'],
-        limits.map((limit) => [code(short(limit.token)), String(limit.maxPerCall), `${limit.maxPerWindow} every ${Math.round(limit.windowSeconds / 60)} min`]),
+        limits.map((limit) => {
+          const info = tokenOf(limit.token);
+          return [
+            tokenCell(info),
+            describeAmount(BigInt(limit.maxPerCall), info),
+            `${describeAmount(BigInt(limit.maxPerWindow), info)} every ${Math.round(limit.windowSeconds / 60)} min`,
+          ];
+        }),
       ),
-      el('p', 'Amounts are in the token\'s smallest unit.', 'note'),
     );
+    for (const limit of limits) {
+      const caution = tokenCaution(tokenOf(limit.token));
+      if (caution) nodes.push(caution);
+    }
   }
 
   nodes.push(
@@ -275,9 +318,11 @@ function showApproval(request: ConnectRequest, device: KeyPair, record: AccountR
 // Transaction approval
 //
 
-function showTransaction(request: ExecuteRequest, device: KeyPair, record: AccountRecord) {
+async function showTransaction(request: ExecuteRequest, device: KeyPair, record: AccountRecord) {
   const origin = new URL(request.redirectUri).origin;
   const problems = executeProblems(record.account, request.calls);
+  const described = request.calls.map(describeCall);
+  const tokenOf = await lookUpTokens(described.flatMap((what) => (what.kind === 'other' ? [] : [what.token])));
 
   const nodes: Node[] = [
     el('h2', 'Transaction request'),
@@ -288,19 +333,32 @@ function showTransaction(request: ExecuteRequest, device: KeyPair, record: Accou
 
   request.calls.forEach((call, index) => {
     nodes.push(el('h2', request.calls.length > 1 ? `Call ${index + 1} of ${request.calls.length}` : 'What it does'));
-    const what = describeCall(call);
-    if (what.kind === 'transfer') {
-      nodes.push(el('p', `Sends ${what.amount} units of a token out of your account.`, 'warn'));
-    } else if (what.kind === 'approve') {
-      nodes.push(el('p', `Lets another address spend up to ${what.amount} units of a token from your account.`, 'warn'));
-    }
+    const what = described[index]!;
     const rows: (string | Node)[][] = [
       ['Contract', code(call.to)],
       ['Function', code(call.entrypoint)],
     ];
-    if (what.kind === 'transfer') rows.push(['To', code(what.recipient)], ['Amount', `${what.amount} (smallest unit)`]);
-    else if (what.kind === 'approve') rows.push(['Spender', code(what.spender)], ['Amount', `${what.amount} (smallest unit)`]);
-    else rows.push(['Arguments', call.calldata.length ? code(call.calldata.join(', ')) : 'none']);
+    if (what.kind === 'other') {
+      rows.push(['Arguments', call.calldata.length ? code(call.calldata.join(', ')) : 'none']);
+    } else {
+      const info = tokenOf(what.token);
+      const amount = describeAmount(what.amount, info);
+      const of = info.status === 'unknown' ? ' of an unidentified token' : '';
+      nodes.push(
+        el(
+          'p',
+          what.kind === 'transfer' ? `Sends ${amount}${of} out of your account.` : `Lets another address spend up to ${amount}${of} from your account.`,
+          'warn',
+        ),
+      );
+      const caution = tokenCaution(info);
+      if (caution) nodes.push(caution);
+      rows.push(
+        ['Token', tokenCell(info)],
+        [what.kind === 'transfer' ? 'To' : 'Spender', code(what.kind === 'transfer' ? what.recipient : what.spender)],
+        ['Amount', `${amount} (${what.amount} in the smallest unit)`],
+      );
+    }
     nodes.push(table([], rows));
   });
 

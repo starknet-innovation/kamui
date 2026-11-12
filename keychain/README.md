@@ -21,6 +21,7 @@ Why redirects and not an iframe or a popup: browsers isolate storage inside thir
 - **Who is asking.** It shows the origin the answer will go to, and refuses a request that did not come from a page on that origin (the browser's referrer). A link on another site cannot ask in an app's name.
 - **What is asked.** For a session it refuses, whatever the user clicks: token calls with no spending limit, functions a session can never call, the account itself as a target, and any scope that does not name its contracts. For a single transaction it refuses any call to the account itself: device keys, sessions and spending limits are only ever changed from the keychain's own pages, never at a site's request.
 - **What it tells the user.** For a session: the contracts and functions, the expiry, the transaction and fee limits, the spending limits, that the app can sign messages as the account while the session lasts, and that signing in on a new device ends every session. For a single transaction: every call, that it uses the account's full authority, and in plain words when a call sends tokens out or lets another address spend them.
+- **What an amount means.** Amounts are shown in whole units with the token's name ("1.5 STRK"), exactly, next to the raw value. Kamui recognises STRK and ETH by address. For any other contract that answers like a token it shows the name as a claim ("says it is GOLD") with a caution, because anyone can deploy a token with any name. For a contract it cannot identify it shows raw units and says the amount may not be what it looks like. An allowance with no limit is called unlimited.
 
 ## Where the device key lives
 
@@ -51,7 +52,7 @@ bun run server.ts      # http://localhost:5173
 ## Tested
 
 - **The protocol,** its refusals and the app-side helpers: 23 tests in `../sdk/test/keychain.test.ts`.
-- **The pages and key storage, in Chrome:** 29 tests in `tests/`. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the pepper service and the issuer) with fakes at the network level. They cover sign-in, a remembered device, a stale sign-in page, a key removed elsewhere, how the key is stored, forgetting the device, approving and denying a session or a single transaction, the requests the keychain refuses, how token calls are described, an app name containing markup, removing a device, the recovery file, and the content security policy.
+- **The pages and key storage, in Chrome:** 34 tests in `tests/`. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the pepper service and the issuer) with fakes at the network level. They cover sign-in, a remembered device, a stale sign-in page, a key removed elsewhere, how the key is stored, forgetting the device, approving and denying a session or a single transaction, the requests the keychain refuses, how token calls and amounts are described for known, unverified and unidentified tokens, an app name containing markup, removing a device, the recovery file, and the content security policy.
 - **Live on Sepolia** on 2026-11-12, through the demo app: sign-in on a new device, the approval screen, a sponsored session call, a call outside the session refused by the account, and the device list (`../spikes/s1/results/RESULTS.md`, run 6); and one transaction approved in the keychain (run 7).
 
 ```sh
@@ -66,7 +67,8 @@ The browser tests found two things, both fixed: a refused request stayed in the 
 - **One browser.** The tests run in Chrome only. Safari and Firefox store keys and send referrers under their own rules and have not been tried.
 - **Removing a device, the recovery file download and "forget this device"** are covered by the browser tests against fakes, and were not exercised on a live network.
 - **A login from a recovery file,** Apple, and override recovery.
-- **Token amounts are shown in the smallest unit.** The keychain does not look up a token's name or decimals, so the user has to know them.
+- **Only STRK and ETH are recognised by address.** Every other token, including well-known ones, is shown as unverified. The list is in `../sdk/src/tokens.ts` and needs an owner and a process before it grows.
+- **Token names and amounts were not checked in a live run,** only in the browser tests against a fake chain.
 - **A single transaction is always sponsored.** There is no path for the account to pay its own fee from the keychain.
 - **A list of live sessions** with revocation. The account does not enumerate sessions; this needs the session and app registry (plan, Phase 2 step 4).
 - **Embedded modes** (iframe with the Storage Access API, or popup) for apps that cannot afford a page reload.
