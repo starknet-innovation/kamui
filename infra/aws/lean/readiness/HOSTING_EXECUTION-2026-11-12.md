@@ -4,6 +4,16 @@
 
 The operator is the user. These are workstation/host commands for the operator, not permission for the agent to change AWS settings. Sensitive AWS metadata stays in private local files; do not paste it into chat or Git. Never enter a signing key into any command or helper. The hosted services receive their reviewed runtime secrets through the existing private delivery process; no administrator KMS identity belongs on a host.
 
+## Start here when resources are missing
+
+The [ordered resource setup](../setup/README.md) now fills the private selections from retained local records and official AMI discovery, creates dedicated network/role/backup resources and verifies the exported input. From the repository root:
+
+```sh
+./infra/aws/lean/setup/00-setup-aws-resources.sh
+```
+
+This user-run command executes prepare/network/identity/export only; it does not launch hosts or allocate IPs. After reviewing the prepared account-aware plan, the optional `05-launch-hosts.sh` and `06-addresses.sh` in that directory replace the manual host-launch/address commands below. Use one path and preserve the same private launch intents; never run both paths to duplicate a host. DNS/OAuth, immutable images, runtime configuration and hosted acceptance still follow this runbook.
+
 ## 1. Create the private selection file
 
 From the repository root, run once:

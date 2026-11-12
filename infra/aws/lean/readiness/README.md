@@ -4,6 +4,10 @@ Prepared 12 November 2026 for the selected lean Google-only Sepolia beta. The $1
 
 This is the concrete review package for an authorized operator. The agent does not create cloud accounts or change AWS security settings. A passed helper is not an IAM audit, deployment authorization, fee cap or security sign-off.
 
+## Missing AWS resources
+
+The [ordered setup scripts](../setup/README.md) create dedicated networks, instance profiles and a private backup repository, automatically filling the existing private input from retained local identity/key records. Run `../setup/00-setup-aws-resources.sh` as the operator; host launch and static IPs are separate numbered steps. No AWS changes were executed while implementing them.
+
 ## Current execution packages
 
 The user requested registry handoff preparation, hosting review and hosted-beta execution in parallel. Start with the [exact handoff review](HANDOFF_REVIEW-2026-11-12.md), [ordered AWS/host commands](HOSTING_EXECUTION-2026-11-12.md) and [hosted acceptance runner](BETA_ACCEPTANCE-2026-11-12.md). These packages record actual observations separately from pending operator actions. AWS provisioning/security changes remain user-run; no reviewed resource selection or custody approval is guessed. The KMS account is deployed and tested, while registry roles remain with the relayer and the hosted origins are unavailable.

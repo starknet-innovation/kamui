@@ -1,0 +1,365 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Kamui lean Sepolia network in one existing account: dedicated IPv4 VPC and public subnet, web-only ingress, HTTPS egress, no SSH, NAT, load balancer or paid hosts.",
+  "Metadata": {
+    "AWSToolsMetrics": {
+      "AWSAgentToolkit": "aws-cloudformation@3"
+    },
+    "com.aws.cloudformation.Context": {
+      "arch": "One stack per existing backend/pepper account; direct Caddy HTTPS; independent accounts, not peered.",
+      "must": [
+        "Sepolia only; existing accounts only.",
+        "Dedicated resources: never widen an existing/shared security group.",
+        "No instances, signing credentials, KMS keys, public API/database ports or exports."
+      ],
+      "ref": [
+        "NETWORK.md",
+        "../README.md"
+      ]
+    }
+  },
+  "Parameters": {
+    "Role": {
+      "Type": "String",
+      "AllowedValues": [
+        "backend",
+        "pepper"
+      ],
+      "Description": "Host role; two stacks are deployed in separate existing accounts."
+    },
+    "AvailabilityZone": {
+      "Type": "AWS::EC2::AvailabilityZone::Name",
+      "AllowedPattern": "eu-west-1[a-z]",
+      "Description": "Available eu-west-1 Availability Zone selected and pinned by the local setup."
+    },
+    "VpcCidr": {
+      "Type": "String",
+      "Default": "10.68.0.0/20",
+      "AllowedValues": [
+        "10.68.0.0/20"
+      ],
+      "Description": "Dedicated fixed IPv4 range. Separate accounts use the same range and are not interconnected."
+    },
+    "SubnetCidr": {
+      "Type": "String",
+      "Default": "10.68.0.0/24",
+      "AllowedValues": [
+        "10.68.0.0/24"
+      ],
+      "Description": "Single public subnet inside the dedicated VPC."
+    }
+  },
+  "Resources": {
+    "Vpc": {
+      "Type": "AWS::EC2::VPC",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Isolate this role from existing VPC resources.",
+          "must": [
+            "IPv4 only; no peering or shared-resource updates."
+          ]
+        }
+      },
+      "Properties": {
+        "CidrBlock": {
+          "Ref": "VpcCidr"
+        },
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "InstanceTenancy": "default",
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "kamui"
+          },
+          {
+            "Key": "Network",
+            "Value": "sepolia"
+          },
+          {
+            "Key": "Role",
+            "Value": {
+              "Ref": "Role"
+            }
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${AWS::StackName}-vpc"
+            }
+          }
+        ]
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Public route without a NAT gateway or its recurring cost.",
+          "must": [
+            "Attach only to this dedicated VPC."
+          ]
+        }
+      },
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "kamui"
+          },
+          {
+            "Key": "Network",
+            "Value": "sepolia"
+          },
+          {
+            "Key": "Role",
+            "Value": {
+              "Ref": "Role"
+            }
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${AWS::StackName}-igw"
+            }
+          }
+        ]
+      }
+    },
+    "GatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Attach dedicated internet gateway before creating default route.",
+          "must": [
+            "Never attach an existing/shared gateway."
+          ]
+        }
+      },
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "InternetGatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "PublicSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "One public subnet; launch helper explicitly opts into the host public address.",
+          "must": [
+            "No automatic public IPs on unrelated launches; no IPv6."
+          ]
+        }
+      },
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "AvailabilityZone": {
+          "Ref": "AvailabilityZone"
+        },
+        "CidrBlock": {
+          "Ref": "SubnetCidr"
+        },
+        "MapPublicIpOnLaunch": false,
+        "AssignIpv6AddressOnCreation": false,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "kamui"
+          },
+          {
+            "Key": "Network",
+            "Value": "sepolia"
+          },
+          {
+            "Key": "Role",
+            "Value": {
+              "Ref": "Role"
+            }
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${AWS::StackName}-public-subnet"
+            }
+          }
+        ]
+      }
+    },
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "A separate route table keeps the default VPC route table untouched.",
+          "must": [
+            "Use only this dedicated VPC."
+          ]
+        }
+      },
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "kamui"
+          },
+          {
+            "Key": "Network",
+            "Value": "sepolia"
+          },
+          {
+            "Key": "Role",
+            "Value": {
+              "Ref": "Role"
+            }
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${AWS::StackName}-public-routes"
+            }
+          }
+        ]
+      }
+    },
+    "InternetRoute": {
+      "Type": "AWS::EC2::Route",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Direct internet route for explicit public host networking.",
+          "must": [
+            "Dependency on gateway attachment; no NAT or private-route claim."
+          ]
+        }
+      },
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "InternetGateway"
+        }
+      },
+      "DependsOn": "GatewayAttachment"
+    },
+    "SubnetRouteAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Pin explicit route-table association for later read-only inventory.",
+          "must": [
+            "Do not alter existing subnet associations."
+          ]
+        }
+      },
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        }
+      }
+    },
+    "WebSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Create a dedicated group for selected public web ports; use Session Manager rather than SSH.",
+          "must": [
+            "Public 80/443 is the selected direct-origin design; no upstream WAF or DoS guarantee.",
+            "Outbound TCP443 only; SG does not filter Amazon DNS, time sync or IMDS.",
+            "Container IMDS credential isolation remains a host/IAM review obligation."
+          ]
+        }
+      },
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "GroupDescription": "Kamui Sepolia direct HTTPS and HTTP ACME only; no SSH API DB or metrics ingress",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "HTTP certificate challenge and HTTPS-required response"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Public HTTPS keychain or pepper"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "HTTPS AWS APIs SSM backups registries ACME and RPC"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "kamui"
+          },
+          {
+            "Key": "Network",
+            "Value": "sepolia"
+          },
+          {
+            "Key": "Role",
+            "Value": {
+              "Ref": "Role"
+            }
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${AWS::StackName}-web"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "VpcId": {
+      "Description": "Dedicated VPC identifier; retain only in private setup state.",
+      "Value": {
+        "Ref": "Vpc"
+      }
+    },
+    "SubnetId": {
+      "Description": "Explicitly routed subnet identifier for the existing host launch helper.",
+      "Value": {
+        "Ref": "PublicSubnet"
+      }
+    },
+    "SecurityGroupId": {
+      "Description": "New web-only group identifier; no shared group was modified.",
+      "Value": {
+        "Ref": "WebSecurityGroup"
+      }
+    },
+    "AvailabilityZone": {
+      "Description": "Pinned selected Availability Zone.",
+      "Value": {
+        "Ref": "AvailabilityZone"
+      }
+    }
+  }
+}

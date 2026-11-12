@@ -1,0 +1,440 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Operator-run Sepolia host identity and private backup repository. No signing key, pepper key mutation or hosted registry administration.",
+  "Parameters": {
+    "HostRole": {
+      "Type": "String",
+      "AllowedValues": [
+        "backend",
+        "pepper"
+      ]
+    },
+    "ExistingPepperKeyArn": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^arn:aws:kms:eu-west-1:[0-9]{12}:key/[a-zA-Z0-9-]+$",
+      "Description": "Existing HMAC key only; required for pepper. Keep actual value private."
+    },
+    "BackupBucketName": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$",
+      "Description": "Unique private dedicated repository bucket; required for backend."
+    }
+  },
+  "Rules": {
+    "BackendBucketRequired": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "HostRole"
+          },
+          "backend"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Equals": [
+                  {
+                    "Ref": "BackupBucketName"
+                  },
+                  ""
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "Backend requires a dedicated backup bucket name."
+        }
+      ]
+    },
+    "PepperKeyRequired": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "HostRole"
+          },
+          "pepper"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Equals": [
+                  {
+                    "Ref": "ExistingPepperKeyArn"
+                  },
+                  ""
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "Pepper requires its existing immutable HMAC key reference."
+        }
+      ]
+    },
+    "SepoliaRegion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "AWS::Region"
+              },
+              "eu-west-1"
+            ]
+          },
+          "AssertDescription": "This Sepolia package is fixed to eu-west-1."
+        }
+      ]
+    }
+  },
+  "Conditions": {
+    "IsBackend": {
+      "Fn::Equals": [
+        {
+          "Ref": "HostRole"
+        },
+        "backend"
+      ]
+    }
+  },
+  "Resources": {
+    "BackupBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Condition": "IsBackend",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BucketName": {
+          "Ref": "BackupBucketName"
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "kamui"
+          },
+          {
+            "Key": "Network",
+            "Value": "sepolia"
+          },
+          {
+            "Key": "Role",
+            "Value": {
+              "Ref": "HostRole"
+            }
+          }
+        ]
+      }
+    },
+    "BackupBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Condition": "IsBackend",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "Bucket": {
+          "Ref": "BackupBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "RequireTls",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "BackupBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${BackupBucket.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "InstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "InstanceProfileName": {
+          "Fn::Sub": "KamuiSepolia-${HostRole}-Host"
+        },
+        "Path": "/kamui/sepolia/hosts/",
+        "Roles": [
+          {
+            "Ref": "HostIdentityRole"
+          }
+        ]
+      }
+    },
+    "HostIdentityRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "KamuiSepolia-${HostRole}-Host"
+        },
+        "Path": "/kamui/sepolia/hosts/",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "KamuiSepoliaHostScope",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "NoIamOrRoleChaining",
+                  "Effect": "Deny",
+                  "Action": [
+                    "iam:*",
+                    "sts:AssumeRole",
+                    "sts:AssumeRoleWithSAML",
+                    "sts:AssumeRoleWithWebIdentity",
+                    "sts:GetFederationToken",
+                    "sts:GetSessionToken"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Fn::If": [
+                    "IsBackend",
+                    {
+                      "Sid": "LocateOwnBackupBucket",
+                      "Effect": "Allow",
+                      "Action": [
+                        "s3:GetBucketLocation"
+                      ],
+                      "Resource": {
+                        "Fn::GetAtt": [
+                          "BackupBucket",
+                          "Arn"
+                        ]
+                      }
+                    },
+                    {
+                      "Sid": "UseExistingPepperMacKey",
+                      "Effect": "Allow",
+                      "Action": [
+                        "kms:GenerateMac",
+                        "kms:VerifyMac",
+                        "kms:DescribeKey"
+                      ],
+                      "Resource": {
+                        "Ref": "ExistingPepperKeyArn"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Fn::If": [
+                    "IsBackend",
+                    {
+                      "Sid": "ListOnlyRepositoryPrefix",
+                      "Effect": "Allow",
+                      "Action": [
+                        "s3:ListBucket"
+                      ],
+                      "Resource": {
+                        "Fn::GetAtt": [
+                          "BackupBucket",
+                          "Arn"
+                        ]
+                      },
+                      "Condition": {
+                        "StringLike": {
+                          "s3:prefix": [
+                            "kamui-sepolia",
+                            "kamui-sepolia/*"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "Sid": "NoOtherKmsResource",
+                      "Effect": "Deny",
+                      "Action": "kms:*",
+                      "NotResource": {
+                        "Ref": "ExistingPepperKeyArn"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Fn::If": [
+                    "IsBackend",
+                    {
+                      "Sid": "InspectOwnMultipartUploads",
+                      "Effect": "Allow",
+                      "Action": [
+                        "s3:ListBucketMultipartUploads"
+                      ],
+                      "Resource": {
+                        "Fn::GetAtt": [
+                          "BackupBucket",
+                          "Arn"
+                        ]
+                      }
+                    },
+                    {
+                      "Sid": "NoOtherOperationOnPepperKey",
+                      "Effect": "Deny",
+                      "NotAction": [
+                        "kms:GenerateMac",
+                        "kms:VerifyMac",
+                        "kms:DescribeKey"
+                      ],
+                      "Resource": {
+                        "Ref": "ExistingPepperKeyArn"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Fn::If": [
+                    "IsBackend",
+                    {
+                      "Sid": "MaintainOwnRepositoryObjects",
+                      "Effect": "Allow",
+                      "Action": [
+                        "s3:GetObject",
+                        "s3:PutObject",
+                        "s3:DeleteObject",
+                        "s3:AbortMultipartUpload",
+                        "s3:ListMultipartUploadParts"
+                      ],
+                      "Resource": {
+                        "Fn::Sub": "${BackupBucket.Arn}/kamui-sepolia/*"
+                      }
+                    },
+                    {
+                      "Ref": "AWS::NoValue"
+                    }
+                  ]
+                },
+                {
+                  "Fn::If": [
+                    "IsBackend",
+                    {
+                      "Sid": "NoKmsOnBackend",
+                      "Effect": "Deny",
+                      "Action": "kms:*",
+                      "Resource": "*"
+                    },
+                    {
+                      "Ref": "AWS::NoValue"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "MaxSessionDuration": 3600,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "kamui"
+          },
+          {
+            "Key": "Network",
+            "Value": "sepolia"
+          },
+          {
+            "Key": "Role",
+            "Value": {
+              "Ref": "HostRole"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "InstanceProfileName": {
+      "Value": {
+        "Ref": "InstanceProfile"
+      }
+    },
+    "HostRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "HostIdentityRole",
+          "Arn"
+        ]
+      }
+    },
+    "BackupBucketName": {
+      "Condition": "IsBackend",
+      "Value": {
+        "Ref": "BackupBucket"
+      }
+    },
+    "BackupRepositoryPrefix": {
+      "Condition": "IsBackend",
+      "Value": "kamui-sepolia/"
+    }
+  },
+  "Metadata": {
+    "ValidationNotes": "W1030 is disabled for this template only because the backend-only empty ExistingPepperKeyArn is evaluated in unused pepper IAM branches. Nonempty key inputs have an ARN-shaped eu-west-1 AllowedPattern; PepperKeyRequired rejects empty key inputs for pepper. Other cfn-lint rules remain enabled.",
+    "cfn-lint": {
+      "config": {
+        "ignore_checks": [
+          "W1030"
+        ]
+      }
+    }
+  }
+}

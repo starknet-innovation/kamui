@@ -4,6 +4,8 @@
 
 The user selected open Sepolia access at `sepolia.kamui.page` and `pepper-sepolia.kamui.page`, Google only, client proving and DNS-only Cloudflare. Costs and untested sizing assumptions are in [COST_ESTIMATE.md](../terraform/COST_ESTIMATE.md). There is no managed WAF/ALB or automatic host/database failover. Proxy/body/time limits and application spending limits do not replace upstream denial-of-service protection. Public Wasm delivery also incurs egress independently of paid-transaction budgets. A reviewer must accept the public abuse and egress exposure or add a separately priced edge before public launch.
 
+For operator resource creation, use the [ordered setup scripts](setup/README.md): `00` creates/verifies network, IAM and backup prerequisites in the existing accounts; separate `05`/`06` steps launch hosts and assign stable IPs. They retain private identifiers and uncertain intents and do not create keys, change registry roles or start the wallet.
+
 ## Layout and boundaries
 
 - `backend/compose.yml`: PostgreSQL 16 plus pgBackRest image, unprivileged application database role, API and keychain on private service networks; no published API, metrics, database or rotator ports. Each signer file is mounted only into its consumer. The database and restore gate persist under `/var/lib/kamui`.
