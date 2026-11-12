@@ -1,6 +1,6 @@
 //! The Kamui account: social login and recovery (keep-starknet-strange/social-account), an
-//! owner set with one key per device, session keys (SNIP-41) and Kamui's own SNIP-9 outside
-//! execution.
+//! owner set with one key per device, session keys with optional per-token spending limits
+//! (SNIP-41) and Kamui's own SNIP-9 outside execution.
 //!
 //! The account is deployed from `(aud, identity)` with no owner. A login proves the identity and
 //! adds the device's key; a later login on another device adds another key.
@@ -18,11 +18,13 @@ pub mod KamuiAccount {
     use crate::owners::OwnersComponent;
     use crate::session::component::SessionKeyComponent;
     use crate::session::interface::HasAccountOwner;
+    use crate::session::spending::SpendingPolicyComponent;
     use crate::social::component::{RecoveryTarget, SocialComponent};
 
     component!(path: OwnersComponent, storage: owners, event: OwnersEvent);
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
     component!(path: SessionKeyComponent, storage: session, event: SessionEvent);
+    component!(path: SpendingPolicyComponent, storage: spending, event: SpendingEvent);
     component!(path: KamuiCoreComponent, storage: core, event: CoreEvent);
     component!(path: SocialComponent, storage: social, event: SocialEvent);
 
@@ -42,6 +44,9 @@ pub mod KamuiAccount {
     impl SessionKeyManagerExtImpl =
         SessionKeyComponent::SessionKeyManagerExtImpl<ContractState>;
     #[abi(embed_v0)]
+    impl SessionSpendingPolicyImpl =
+        SpendingPolicyComponent::SessionSpendingPolicyImpl<ContractState>;
+    #[abi(embed_v0)]
     impl SocialRecoverableImpl =
         SocialComponent::SocialRecoverableImpl<ContractState>;
 
@@ -59,6 +64,8 @@ pub mod KamuiAccount {
         #[substorage(v0)]
         session: SessionKeyComponent::Storage,
         #[substorage(v0)]
+        spending: SpendingPolicyComponent::Storage,
+        #[substorage(v0)]
         core: KamuiCoreComponent::Storage,
         #[substorage(v0)]
         social: SocialComponent::Storage,
@@ -73,6 +80,8 @@ pub mod KamuiAccount {
         SRC5Event: SRC5Component::Event,
         #[flat]
         SessionEvent: SessionKeyComponent::Event,
+        #[flat]
+        SpendingEvent: SpendingPolicyComponent::Event,
         #[flat]
         CoreEvent: KamuiCoreComponent::Event,
         #[flat]

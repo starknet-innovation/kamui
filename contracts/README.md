@@ -9,7 +9,7 @@ Cairo contracts for the Kamui account. Not audited. Do not deploy with real fund
 | `src/account.cairo` | `KamuiAccount`: social login and recovery, an owner set, session keys, outside execution. Deployed from `(aud, identity)` with no owner until the first recovery. Not upgradeable (plan D1). |
 | `src/owners.cairo` | `OwnersComponent`: up to 5 owner keys, one per device (plan D4). |
 | `src/core.cairo` | `KamuiCoreComponent`: `__validate__`, `__execute__`, `is_valid_signature` and Kamui's own SNIP-9 `execute_from_outside_v2`, for owner and session signatures. |
-| `src/session/` | `SessionKeyComponent`, written from SNIP-41 (starknet-io/SNIPs PR 180 at `ae0970c`). The choices it makes where the SNIP is open are listed at the top of `component.cairo`. |
+| `src/session/` | `SessionKeyComponent` and `SpendingPolicyComponent` (Part H), written from SNIP-41 (starknet-io/SNIPs PR 180 at `ae0970c`). The choices they make where the SNIP is open are listed at the top of `component.cairo` and `spending.cairo`. |
 | `src/jwt/`, `src/social/` | From keep-starknet-strange/social-account (MIT). Unchanged except `social/component.cairo`, which reaches the account's keys through a `RecoveryTarget` trait instead of `get_public_key` and `set_public_key`. See `THIRD_PARTY.md`. |
 | `src/mocks.cairo` | Test contracts, including `DevAccount`: the same core, owners and sessions with a first owner key set at deployment, for devnets. |
 
@@ -22,6 +22,12 @@ Cairo contracts for the Kamui account. Not audited. Do not deploy with real fund
 - Every change of the owner set (a login on a new device, a key added or removed by an owner) revokes every session and drops any pending override recovery (plan D5). Sessions have to be approved again afterwards.
 - Recovery proofs and new-owner signatures are bound to an anchor that changes with every change of the set, so a proof cannot be replayed to bring back a removed key.
 
+## Spending policies
+
+SNIP-41 Part H, as written. The owner can give a session a limit per token: a maximum per call and a maximum per time window, counted over `transfer`, `approve`, `increase_allowance` and `increaseAllowance`. Limits apply on both the self-paid and the sponsored path and share one window.
+
+As the SNIP says, a token with no policy is unrestricted for the session. The contract does not force a policy to exist, so whoever approves a session (the keychain) must set one for every token the session may call.
+
 ## Build and test
 
 The pinned tools (see `.tool-versions`) must come first on `PATH`:
@@ -32,7 +38,7 @@ scarb build
 snforge test
 ```
 
-134 tests: 64 for sessions and outside execution, 21 for owners and recovery, and upstream's 49 (20 in `tests/upstream_*.cairo` run against `KamuiAccount`, with four call sites adapted to the owner set, and 29 unit tests in `src/jwt`).
+158 tests: 64 for sessions and outside execution, 21 for owners and recovery, 24 for spending policies, and upstream's 49 (20 in `tests/upstream_*.cairo` run against `KamuiAccount`, with four call sites adapted to the owner set, and 29 unit tests in `src/jwt`).
 
 ## Devnet profile
 
@@ -63,9 +69,10 @@ The sponsored transactions are signed over typed data built by starknet.js's own
 
 - Pepper service (plan D2): upstream supports a pepper in `prove_jwt`; nothing here supplies one yet.
 - A real measure of owner-transaction cost with 1 to 5 keys.
-- Spending policy (SNIP-41 Part H).
 - On a live network: removing an owner, a recovery on a full owner set, and override recovery.
 
 ## Sepolia run
+
+The spending policy was added after this run, so the class hash below is no longer the current one and the run has not been repeated with it.
 
 On 2026-11-12 the class at commit `f067f32` was declared on Sepolia (`0x6b3cd8dd5787fcef206ffd2362970bfac3973930b509d7de6fc1cb61fc07fdc`) and run end to end: two logins with real proofs, an owner-approved session, and sponsored and self-paid session transactions, with the refusals checked. Results are in `../spikes/s1/results/RESULTS.md` (run 3). Scripts: `scripts/declare-sepolia.ts`, `scripts/sepolia-check.ts`, `scripts/sepolia-session.ts`.

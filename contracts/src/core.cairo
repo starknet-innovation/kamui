@@ -30,6 +30,7 @@ pub mod KamuiCoreComponent {
     use OwnersComponent::ReadTrait as OwnersReadTrait;
     use SRC5Component::InternalTrait as SRC5InternalTrait;
     use SessionKeyComponent::InternalTrait as SessionInternalTrait;
+    use SpendingPolicyComponent::InternalTrait as SpendingInternalTrait;
     use core::num::traits::Zero;
     use openzeppelin_account::extensions::src9::snip12_utils::OutsideExecutionStructHash;
     use openzeppelin_account::utils::is_tx_version_valid;
@@ -44,6 +45,7 @@ pub mod KamuiCoreComponent {
     use crate::owners::OwnersComponent;
     use crate::session::component::SessionKeyComponent;
     use crate::session::interface::SESSION_KEY_INTERFACE_ID;
+    use crate::session::spending::SpendingPolicyComponent;
     use super::{IKamuiAccount, OutsideExecutionSNIP12Metadata};
 
     #[storage]
@@ -68,15 +70,24 @@ pub mod KamuiCoreComponent {
         +HasComponent<TContractState>,
         impl Owners: OwnersComponent::HasComponent<TContractState>,
         impl Session: SessionKeyComponent::HasComponent<TContractState>,
+        impl Spending: SpendingPolicyComponent::HasComponent<TContractState>,
         +SRC5Component::HasComponent<TContractState>,
         +Drop<TContractState>,
     > of IKamuiAccount<ComponentState<TContractState>> {
-        /// Session restrictions are enforced in `__validate__`, on the same calls.
+        /// Session restrictions are enforced in `__validate__`, on the same calls. Spending
+        /// policies (SNIP-41 Part H) are applied here, so that what a session spends is only
+        /// recorded if the transaction goes through.
         fn __execute__(
             ref self: ComponentState<TContractState>, calls: Array<Call>,
         ) -> Array<Span<felt252>> {
             assert(get_caller_address().is_zero(), Errors::INVALID_CALLER);
             assert(is_tx_version_valid(), Errors::INVALID_TX_VERSION);
+            // A 4-element signature is a session's: `[session_pubkey, r, s, valid_until]`.
+            let signature = get_tx_info().unbox().signature;
+            if signature.len() == 4 {
+                let mut spending = get_dep_component_mut!(ref self, Spending);
+                spending.check_and_update_spending(*signature.at(0), calls.span());
+            }
             execute_calls(calls.span())
         }
 
@@ -136,6 +147,7 @@ pub mod KamuiCoreComponent {
         +HasComponent<TContractState>,
         impl Owners: OwnersComponent::HasComponent<TContractState>,
         impl Session: SessionKeyComponent::HasComponent<TContractState>,
+        impl Spending: SpendingPolicyComponent::HasComponent<TContractState>,
         +SRC5Component::HasComponent<TContractState>,
         +Drop<TContractState>,
     > of ISRC9_V2<ComponentState<TContractState>> {
@@ -179,6 +191,12 @@ pub mod KamuiCoreComponent {
 
             // Recorded after the signature check and before the calls run (reentrancy).
             self.SRC9_nonces.write(nonce, true);
+
+            // Spending policies apply to a session's sponsored calls too.
+            if signature.len() == 4 {
+                let mut spending = get_dep_component_mut!(ref self, Spending);
+                spending.check_and_update_spending(*signature.at(0), outside_execution.calls);
+            }
 
             execute_calls(outside_execution.calls)
         }

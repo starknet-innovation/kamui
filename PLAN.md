@@ -92,7 +92,7 @@ Status after the first pass (details in [SPIKES.md](SPIKES.md)): S3 and S4 are c
 
 ### Phase 1: contracts
 
-Status 2026-11-12: in `contracts/` (see its README). Done: `SocialComponent`, `JwkRegistry` and `ProverExecutor` from upstream (one file adapted), `SessionKeyComponent` from the spec, Kamui's own `execute_from_outside_v2`, the admin blocklist, and the owner set (D4). No upgrade path, by decision (D1). 134 snforge tests pass, including upstream's run against the Kamui account. A devnet run confirms at most one storage write per session transaction. The class was run end to end on Sepolia with real proofs on 2026-11-12 (two logins, an owner-approved session, sponsored and self-paid session transactions; `spikes/s1/results/RESULTS.md`, run 3). Not done: pepper service (D2), spending policy, and the class freeze that D1 requires before mainnet.
+Status 2026-11-12: in `contracts/` (see its README). Done: `SocialComponent`, `JwkRegistry` and `ProverExecutor` from upstream (one file adapted), `SessionKeyComponent` from the spec, Kamui's own `execute_from_outside_v2`, the admin blocklist, and the owner set (D4). No upgrade path, by decision (D1). 134 snforge tests pass, including upstream's run against the Kamui account. A devnet run confirms at most one storage write per session transaction. The class was run end to end on Sepolia with real proofs on 2026-11-12 (two logins, an owner-approved session, sponsored and self-paid session transactions; `spikes/s1/results/RESULTS.md`, run 3). The spending policy (SNIP-41 Part H, as written) was added afterwards; 158 tests pass, and the Sepolia run has not been repeated with the new class. Not done: pepper service (D2) and the class freeze that D1 requires before mainnet.
 
 1. Fork social-account's `social_account` package into the `kamui` repo. Keep `SocialComponent`, `JwkRegistry` and `ProverExecutor`.
 2. Write `SessionKeyComponent` to SNIP-41 as revised in PR 180, from the spec. Include the fee cap, epoch (D5), limit mechanism (D6) and scope decision (D7).
@@ -139,6 +139,7 @@ Done when: all tests pass on a devnet, a gas profile shows at most one storage w
 - The OAuth client owner can recover accounts under its `aud` with no delay (stated in social-account's `SECURITY.md`).
 - Google and Apple can recover any account tied to their users.
 - With backend proving (D9), SNF's prover sees each login JWT and so learns who the user is.
+- A session is only limited on tokens it was given a spending policy for. Under SNIP-41 Part H, kept as written (decided 2026-11-12), a token with no policy is unrestricted, so the keychain must set a policy for every token a session may call and must show the limits on the approval screen.
 - A live session key can sign off-chain messages as the account. `is_valid_signature` accepts session signatures, as SNIP-41 requires, and no whitelist or limit applies there (decided 2026-11-11: keep per spec). The keychain's session approval screen must say so, and apps should not treat `is_valid_signature` as proof of owner consent.
 
 ## 8. Not verified

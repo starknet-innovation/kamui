@@ -4,6 +4,7 @@
 pub trait ITarget<TContractState> {
     fn ping(ref self: TContractState);
     fn transfer(ref self: TContractState, recipient: felt252, amount: u256);
+    fn approve(ref self: TContractState, spender: felt252, amount: u256);
     fn count(self: @TContractState) -> u32;
 }
 
@@ -27,6 +28,10 @@ pub mod Target {
             self.count.write(self.count.read() + 1);
         }
 
+        fn approve(ref self: ContractState, spender: felt252, amount: u256) {
+            self.count.write(self.count.read() + 1);
+        }
+
         fn count(self: @ContractState) -> u32 {
             self.count.read()
         }
@@ -43,10 +48,12 @@ pub mod DevAccount {
     use crate::owners::OwnersComponent;
     use crate::session::component::SessionKeyComponent;
     use crate::session::interface::HasAccountOwner;
+    use crate::session::spending::SpendingPolicyComponent;
 
     component!(path: OwnersComponent, storage: owners, event: OwnersEvent);
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
     component!(path: SessionKeyComponent, storage: session, event: SessionEvent);
+    component!(path: SpendingPolicyComponent, storage: spending, event: SpendingEvent);
     component!(path: KamuiCoreComponent, storage: core, event: CoreEvent);
 
     #[abi(embed_v0)]
@@ -64,6 +71,9 @@ pub mod DevAccount {
     #[abi(embed_v0)]
     impl SessionKeyManagerExtImpl =
         SessionKeyComponent::SessionKeyManagerExtImpl<ContractState>;
+    #[abi(embed_v0)]
+    impl SessionSpendingPolicyImpl =
+        SpendingPolicyComponent::SessionSpendingPolicyImpl<ContractState>;
 
     impl OwnersReadImpl = OwnersComponent::ReadImpl<ContractState>;
     impl OwnersInternalImpl = OwnersComponent::InternalImpl<ContractState>;
@@ -79,6 +89,8 @@ pub mod DevAccount {
         #[substorage(v0)]
         session: SessionKeyComponent::Storage,
         #[substorage(v0)]
+        spending: SpendingPolicyComponent::Storage,
+        #[substorage(v0)]
         core: KamuiCoreComponent::Storage,
     }
 
@@ -91,6 +103,8 @@ pub mod DevAccount {
         SRC5Event: SRC5Component::Event,
         #[flat]
         SessionEvent: SessionKeyComponent::Event,
+        #[flat]
+        SpendingEvent: SpendingPolicyComponent::Event,
         #[flat]
         CoreEvent: KamuiCoreComponent::Event,
     }
