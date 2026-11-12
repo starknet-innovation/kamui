@@ -22,6 +22,18 @@ Cairo contracts for the Kamui account. Not audited. Do not deploy with real fund
 - Every change of the owner set (a login on a new device, a key added or removed by an owner) revokes every session and drops any pending override recovery (plan D5). Sessions have to be approved again afterwards.
 - Recovery proofs and new-owner signatures are bound to an anchor that changes with every change of the set, so a proof cannot be replayed to bring back a removed key.
 
+## Revocations in the key registry
+
+A recovery proof checks the login token against the registry as it stood at the proof's base block, and a proof stays usable for 1,000 blocks. So a revocation has to cut off proofs made before it:
+
+- The registry records the block of its latest revocation. A revocation is a key removed, a recovery aud removed, or a key replaced with different material. Adding a new key, or writing the same key again, is not one.
+- `recover` refuses any proof whose base block is not after that block (`REVOKED_SINCE_PROOF`). This applies to a normal recovery and to queuing an override.
+- A pending override is still cancelled by any later revocation, as upstream does, and that now includes a key replacement.
+
+The cost: one revocation cancels every proof in flight and every pending override, for all users. They sign in again. A proof based in the revocation's own block is refused too, whichever way the prover orders that block; that is deliberately strict.
+
+These two changes answer findings 1 and 5 of a first security audit. They change the registry's interface, so **the account now needs a registry of this class**: upstream's registry on Sepolia does not have `last_revocation_block`, and `recover` against it would fail. The next live run needs a Kamui registry deployed, its address pinned in `JWK_REGISTRY_ADDRESS`, and the account class declared again.
+
 ## Spending policies
 
 SNIP-41 Part H, as written. The owner can give a session a limit per token: a maximum per call and a maximum per time window, counted over `transfer`, `approve`, `increase_allowance` and `increaseAllowance`. Limits apply on both the self-paid and the sponsored path and share one window.
@@ -38,7 +50,7 @@ scarb build
 snforge test
 ```
 
-158 tests: 64 for sessions and outside execution, 21 for owners and recovery, 24 for spending policies, and upstream's 49 (20 in `tests/upstream_*.cairo` run against `KamuiAccount`, with four call sites adapted to the owner set, and 29 unit tests in `src/jwt`).
+168 tests: 64 for sessions and outside execution, 31 for owners, recovery and registry revocations, 24 for spending policies, and upstream's 49 (20 in `tests/upstream_*.cairo` run against `KamuiAccount`, with four call sites adapted to the owner set and one test adapted to the revocation rule, and 29 unit tests in `src/jwt`).
 
 ## Devnet profile
 
@@ -72,6 +84,8 @@ The sponsored transactions are signed over typed data built by starknet.js's own
 - On a live network: a recovery on a full owner set, and override recovery.
 
 ## Sepolia run
+
+The registry revocation changes came after these runs, so the class below is no longer the current one, and the current one has not run on a live network.
 
 On 2026-11-12 the class at commit `ac8e8a8` was declared on Sepolia (`0x13c5e8166199db99e894da9e55ce642267e5258c42eae8851357747b6201fdc`) and run end to end with a real proof: a login, an owner adding and removing a key, an owner-approved session with a spending policy, and sponsored and self-paid session transactions, with the refusals checked. An earlier class (commit `f067f32`, before the spending policy) was run the same way with two logins. Results are in `../spikes/s1/results/RESULTS.md` (runs 3 and 4).
 

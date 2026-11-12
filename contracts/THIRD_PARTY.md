@@ -5,22 +5,32 @@
 Copied unchanged from https://github.com/keep-starknet-strange/social-account at commit
 `e1681348afbf5fc55ea410ea7ef93e1df575e969`:
 
-- `src/jwt.cairo`, `src/jwt/`
+- `src/jwt.cairo`, `src/jwt/` except the two files below
 - `src/social.cairo`, `src/social/proof_facts.cairo`, `src/social/prover_executor.cairo`
 - `tests/data/`
 
-Copied and modified:
+Copied and modified (each change is marked `Kamui:` in the code):
 
-- `src/social/component.cairo`. Upstream reads and replaces the account's single key by calling
-  `get_public_key` and `set_public_key` on the account. Kamui has an owner set, so the component
-  now goes through a `RecoveryTarget` trait (`recovery_anchor`, `apply_recovery`) that the
-  account implements. Nothing else in the file changed: the proven message, the proof-facts
-  check, the override delay and the events are upstream's.
+- `src/social/component.cairo`.
+  - Upstream reads and replaces the account's single key by calling `get_public_key` and
+    `set_public_key` on the account. Kamui has an owner set, so the component goes through a
+    `RecoveryTarget` trait (`recovery_anchor`, `apply_recovery`) that the account implements.
+  - `recover` refuses a proof whose base block is not after the registry's last revocation
+    (`REVOKED_SINCE_PROOF`), on both the normal and the override path.
+- `src/jwt/rec_aud_component.cairo`: records the block of the latest revocation next to the
+  revocation count.
+- `src/jwt/registry.cairo`: exposes `last_revocation_block`, and `set_key` counts a key replaced
+  with different material as a revocation.
+
+The last three changes answer two findings of a first security audit (issues 1 and 5 on the
+repository). The proven message, the proof-facts check, the override delay and the events are
+upstream's.
 
 Copied with the package name and the account contract name changed (`social_account` to `kamui`,
 `SocialAccount` to `KamuiAccount`), so that upstream's tests run against the Kamui account:
 
-- `tests/upstream_test_recover.cairo` (also four call sites adapted to the owner set)
+- `tests/upstream_test_recover.cairo` (also four call sites adapted to the owner set, and one
+  test's revocation moved before its proof's base block)
 - `tests/upstream_test_prove_jwt.cairo`
 - `tests/upstream_test_prover_executor.cairo`
 

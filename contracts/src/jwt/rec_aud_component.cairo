@@ -48,6 +48,9 @@ pub mod RecoveryAudienceComponent {
         /// it, and finalize refuses if it moved: a revocation cancels queued recoveries.
         // ponytail: one global counter; per-(iss, kid) binding if blanket cancels hurt.
         revocations: u64,
+        /// Kamui: the block of the latest revocation. `recover` refuses a proof whose base block
+        /// is not after it: such a proof read the registry before the revocation.
+        last_revocation_block: u64,
     }
 
     #[event]
@@ -120,6 +123,11 @@ pub mod RecoveryAudienceComponent {
 
         fn bump_revocations(ref self: ComponentState<TContractState>) {
             self.revocations.write(self.revocations.read() + 1);
+            self.last_revocation_block.write(starknet::get_block_number());
+        }
+
+        fn last_revocation_block(self: @ComponentState<TContractState>) -> u64 {
+            self.last_revocation_block.read()
         }
 
         fn revocations(self: @ComponentState<TContractState>) -> u64 {

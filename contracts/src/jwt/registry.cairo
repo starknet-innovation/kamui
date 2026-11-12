@@ -20,12 +20,17 @@ pub trait IJwkRegistry<T> {
     /// looks up without mapping it to an `Issuer`. Panics with 'UNKNOWN_KID'.
     fn get_key(self: @T, iss: ByteArray, kid: ByteArray) -> RSA2048PublicKey;
     /// Insert or replace the key for `kid`. Admin only.
+    /// Kamui: replacing a key with different material counts as a revocation of the old one.
     fn set_key(ref self: T, issuer: Issuer, kid: ByteArray, key: RSA2048PublicKey);
     /// Stop accepting `kid`. Revoker only, so a compromised key can go without a delay.
     fn remove_key(ref self: T, issuer: Issuer, kid: ByteArray);
     /// How many keys and recovery auds were removed so far. A pending override finalizes only
     /// if this has not moved since it was queued.
     fn revocation_count(self: @T) -> u64;
+    /// Kamui: the block in which a key or a recovery aud was last revoked (removed, or a key
+    /// replaced with different material). 0 if that never happened. A recovery proof reads the
+    /// registry at its base block, so `recover` only accepts proofs based after this block.
+    fn last_revocation_block(self: @T) -> u64;
 }
 
 /// Four u96 limbs of one u384, low to high, widened to felts so storage can hold them.
@@ -191,6 +196,15 @@ pub mod JwkRegistry {
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             let iss = issuer.iss();
             let map_key = (slot(@iss), slot(@kid));
+            // Kamui: writing different material over an existing key withdraws trust from the
+            // old one, exactly as removing it would. Count it as a revocation, so that pending
+            // overrides and proofs made under the old key stop being usable. A new kid, or the
+            // same material written again, revokes nothing.
+            if let Some(old) = self.keys.read(map_key) {
+                if modulus_hash(old) != modulus_hash(key) {
+                    self.recovery_audience.bump_revocations();
+                }
+            }
             self.keys.write(map_key, Some(key));
             self.emit(KeySet { iss, kid, modulus_hash: modulus_hash(key) });
         }
@@ -206,6 +220,10 @@ pub mod JwkRegistry {
 
         fn revocation_count(self: @ContractState) -> u64 {
             self.recovery_audience.revocations()
+        }
+
+        fn last_revocation_block(self: @ContractState) -> u64 {
+            self.recovery_audience.last_revocation_block()
         }
     }
 

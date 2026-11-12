@@ -1,6 +1,10 @@
 //! The owner set, recovery and sessions together (plan D4 and D5): a login on a new device adds
 //! a key, and every change of the owner set revokes every session.
 use core::poseidon::poseidon_hash_span;
+use garaga::signatures::rsa::RSA2048PublicKey;
+use kamui::jwt::rec_aud_component::{
+    IWhitelistedAudienceRecoverableDispatcher, IWhitelistedAudienceRecoverableDispatcherTrait,
+};
 use kamui::jwt::registry::{IJwkRegistryDispatcher, IJwkRegistryDispatcherTrait};
 use kamui::jwt::types::Issuer;
 use kamui::owners::{IOwnersDispatcherTrait, MAX_OWNERS};
@@ -14,14 +18,15 @@ use snforge_std::signature::stark_curve::{StarkCurveKeyPairImpl, StarkCurveSigne
 use snforge_std::signature::{KeyPair, KeyPairTrait, SignerTrait};
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_number,
-    start_cheat_caller_address, start_cheat_proof_facts, stop_cheat_caller_address, store,
+    start_cheat_block_timestamp_global, start_cheat_caller_address, start_cheat_proof_facts,
+    stop_cheat_caller_address, store,
 };
 use starknet::account::Call;
-use starknet::{ContractAddress, SyscallResultTrait};
+use starknet::SyscallResultTrait;
 use super::test_sessions::{
     Env, FEE_CAP, NOW, add_session, as_owner, default_fees, ext, manager, new_owner_signature,
-    owner_key, owners, ping, recover_onto, recovery_facts, session_key, setup, validate_raw,
-    validate_session,
+    owner_key, owners, ping, recover_onto, recovery_facts, recovery_facts_at, registry_owner,
+    session_key, setup, validate_raw, validate_session,
 };
 
 fn device(n: felt252) -> KeyPair<felt252, felt252> {
@@ -288,13 +293,6 @@ fn a_recovery_onto_an_existing_owner_is_refused() {
 
 #[test]
 fn a_finalized_override_adds_a_key_and_revokes_sessions() {
-    let owner: ContractAddress = 'owner'.try_into().unwrap();
-    let class = declare("JwkRegistry").unwrap_syscall().contract_class();
-    class.deploy_at(@array![owner.into()], JWK_REGISTRY_ADDRESS).unwrap_syscall();
-    start_cheat_caller_address(JWK_REGISTRY_ADDRESS, owner);
-    IJwkRegistryDispatcher { contract_address: JWK_REGISTRY_ADDRESS }
-        .initialize(array![(Issuer::Google, "aud"), (Issuer::Google, "aud2")]);
-
     let env = setup();
     default_fees(env);
     add_session(env, 5, FEE_CAP, array![]);
@@ -340,4 +338,216 @@ fn a_session_signature_is_not_an_owner_signature() {
     default_fees(env);
     add_session(env, 5, FEE_CAP, array![]);
     assert!(!signs_as_owner(env, session_key()));
+}
+
+//
+// Registry revocations (audit findings #1 and #5)
+//
+
+fn registry() -> IJwkRegistryDispatcher {
+    IJwkRegistryDispatcher { contract_address: JWK_REGISTRY_ADDRESS }
+}
+
+/// An RSA key whose 24 limbs are `first`, `first + 1`, ... Distinct `first` values give keys
+/// with different material.
+fn rsa_key(first: felt252) -> RSA2048PublicKey {
+    let mut felts: Array<felt252> = array![];
+    let mut limb = first;
+    for _ in 0_u32..24 {
+        felts.append(limb);
+        limb += 1;
+    }
+    let mut span = felts.span();
+    Serde::<RSA2048PublicKey>::deserialize(ref span).unwrap()
+}
+
+/// Runs `change` on the registry as its owner, in block `block`.
+fn at_block(block: u64) {
+    start_cheat_block_number(JWK_REGISTRY_ADDRESS, block);
+    start_cheat_caller_address(JWK_REGISTRY_ADDRESS, registry_owner());
+}
+
+/// A recovery of `env.account` onto `key`, with a proof made on top of `base_block`.
+fn recover_with_base(env: Env, key: KeyPair<felt252, felt252>, base_block: u64) {
+    start_cheat_proof_facts(
+        env.account, recovery_facts_at(env.account, key.public_key, base_block, false),
+    );
+    start_cheat_block_number(env.account, base_block + 1);
+    stop_cheat_caller_address(env.account);
+    ISocialRecoverableDispatcher { contract_address: env.account }
+        .recover(key.public_key, new_owner_signature(env.account, key));
+}
+
+#[test]
+fn the_registry_records_the_block_of_each_revocation() {
+    setup();
+    assert_eq!(registry().last_revocation_block(), 0);
+    assert_eq!(registry().revocation_count(), 0);
+
+    // A new key revokes nothing.
+    at_block(50);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    assert_eq!(registry().last_revocation_block(), 0);
+    assert_eq!(registry().revocation_count(), 0);
+
+    // The same material written again revokes nothing.
+    at_block(60);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    assert_eq!(registry().last_revocation_block(), 0);
+
+    // Different material under the same kid withdraws trust from the old key.
+    at_block(70);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(100));
+    assert_eq!(registry().last_revocation_block(), 70);
+    assert_eq!(registry().revocation_count(), 1);
+
+    // So does removing a key, and removing a recovery aud.
+    at_block(80);
+    registry().remove_key(Issuer::Google, "kid-1");
+    assert_eq!(registry().last_revocation_block(), 80);
+    assert_eq!(registry().revocation_count(), 2);
+    at_block(90);
+    IWhitelistedAudienceRecoverableDispatcher { contract_address: JWK_REGISTRY_ADDRESS }
+        .remove_whitelisted(Issuer::Google, "aud2");
+    assert_eq!(registry().last_revocation_block(), 90);
+    assert_eq!(registry().revocation_count(), 3);
+}
+
+#[test]
+#[should_panic(expected: 'REVOKED_SINCE_PROOF')]
+fn a_proof_made_before_a_key_was_removed_cannot_recover() {
+    let env = setup();
+    at_block(40);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    // The key is compromised and removed in block 100.
+    at_block(100);
+    registry().remove_key(Issuer::Google, "kid-1");
+    // A proof based on block 99 saw the key as valid.
+    recover_with_base(env, device(1), 99);
+}
+
+#[test]
+#[should_panic(expected: 'REVOKED_SINCE_PROOF')]
+fn a_proof_based_in_the_revocation_block_is_refused_too() {
+    let env = setup();
+    at_block(40);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    at_block(100);
+    registry().remove_key(Issuer::Google, "kid-1");
+    recover_with_base(env, device(1), 100);
+}
+
+#[test]
+fn a_proof_made_after_the_revocation_recovers() {
+    let env = setup();
+    at_block(40);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    at_block(100);
+    registry().remove_key(Issuer::Google, "kid-1");
+    recover_with_base(env, device(1), 101);
+    assert!(owners(env.account).is_owner(device(1).public_key));
+}
+
+#[test]
+#[should_panic(expected: 'REVOKED_SINCE_PROOF')]
+fn a_proof_made_before_a_key_was_replaced_cannot_recover() {
+    let env = setup();
+    at_block(40);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    at_block(100);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(500));
+    recover_with_base(env, device(1), 99);
+}
+
+#[test]
+#[should_panic(expected: 'REVOKED_SINCE_PROOF')]
+fn a_proof_made_before_a_recovery_aud_was_removed_cannot_recover() {
+    let env = setup();
+    at_block(100);
+    IWhitelistedAudienceRecoverableDispatcher { contract_address: JWK_REGISTRY_ADDRESS }
+        .remove_whitelisted(Issuer::Google, "aud2");
+    recover_with_base(env, device(1), 99);
+}
+
+#[test]
+fn adding_a_key_or_rewriting_the_same_one_does_not_cancel_proofs() {
+    let env = setup();
+    at_block(100);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    at_block(110);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    at_block(120);
+    registry().set_key(Issuer::Google, "kid-2", rsa_key(9));
+    // A proof older than all of those writes is still good.
+    recover_with_base(env, device(1), 50);
+    assert!(owners(env.account).is_owner(device(1).public_key));
+}
+
+#[test]
+#[should_panic(expected: 'REVOKED_SINCE_PROOF')]
+fn an_override_cannot_be_queued_with_a_proof_made_before_a_revocation() {
+    let env = setup();
+    at_block(100);
+    IWhitelistedAudienceRecoverableDispatcher { contract_address: JWK_REGISTRY_ADDRESS }
+        .remove_whitelisted(Issuer::Google, "aud2");
+    // An override proof based before the aud was removed. Without the check it would be queued
+    // with a revocation count taken after the removal, and finalize a week later.
+    start_cheat_proof_facts(
+        env.account, recovery_facts_at(env.account, device(1).public_key, 99, true),
+    );
+    start_cheat_block_number(env.account, 101);
+    stop_cheat_caller_address(env.account);
+    ISocialRecoverableDispatcher { contract_address: env.account }
+        .recover(device(1).public_key, array![].span());
+}
+
+#[test]
+#[should_panic(expected: 'REVOKED_SINCE_PENDING')]
+fn replacing_a_key_cancels_an_override_queued_before_it() {
+    let env = setup();
+    at_block(40);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+
+    // An override is queued under the registry as it stands (one write, no revocation yet).
+    start_cheat_proof_facts(
+        env.account, recovery_facts_at(env.account, device(1).public_key, 60, true),
+    );
+    start_cheat_block_number(env.account, 61);
+    stop_cheat_caller_address(env.account);
+    ISocialRecoverableDispatcher { contract_address: env.account }
+        .recover(device(1).public_key, array![].span());
+
+    // The key it was proven under is replaced.
+    at_block(70);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(500));
+
+    // A week later the override must not finalize.
+    start_cheat_block_timestamp_global(NOW + 604800 + 1);
+    let signature = new_owner_signature(env.account, device(1));
+    ISocialRecoverableDispatcher { contract_address: env.account }
+        .finalize_override_recovery(device(1).public_key, signature);
+}
+
+#[test]
+fn an_override_survives_a_new_key_and_a_rewrite_of_the_same_key() {
+    let env = setup();
+    at_block(40);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    start_cheat_proof_facts(
+        env.account, recovery_facts_at(env.account, device(1).public_key, 60, true),
+    );
+    start_cheat_block_number(env.account, 61);
+    stop_cheat_caller_address(env.account);
+    ISocialRecoverableDispatcher { contract_address: env.account }
+        .recover(device(1).public_key, array![].span());
+
+    at_block(70);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    registry().set_key(Issuer::Google, "kid-2", rsa_key(9));
+
+    start_cheat_block_timestamp_global(NOW + 604800 + 1);
+    let signature = new_owner_signature(env.account, device(1));
+    ISocialRecoverableDispatcher { contract_address: env.account }
+        .finalize_override_recovery(device(1).public_key, signature);
+    assert!(owners(env.account).is_owner(device(1).public_key));
 }

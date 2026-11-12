@@ -1,5 +1,6 @@
 // Kamui: adapted from upstream. The account has an owner set, so `get_public_key` and
-// `set_public_key` became `is_owner`, `get_owners_anchor` and `add_owner` (4 call sites).
+// `set_public_key` became `is_owner`, `get_owners_anchor` and `add_owner` (4 call sites). One test
+// places its revocation before the proof's base block, which `recover` now requires.
 //! `recover` is the only part of SocialAccount that runs on the live chain. Without proof facts
 //! it must be refused everywhere, mainnet or not.
 
@@ -236,6 +237,9 @@ fn recover_refuses_stale_mismatched_or_foreign_facts() {
 #[feature("safe_dispatcher")]
 fn override_facts_queue_a_pending_recovery() {
     let registry = deploy_registry();
+    // Kamui: the revocation happens in block 5, before the proof's base block (10). `recover`
+    // now refuses a proof based at or before the latest revocation.
+    start_cheat_block_number(registry.contract_address, 5);
     IWhitelistedAudienceRecoverableDispatcher { contract_address: registry.contract_address }
         .remove_whitelisted(Issuer::Google, "aud2");
     let account = deploy();

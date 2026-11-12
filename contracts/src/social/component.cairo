@@ -189,6 +189,15 @@ pub mod SocialComponent {
                 get_block_number() <= facts.base_block_number + PROOF_VALIDITY_BLOCKS,
                 'STALE_PROOF',
             );
+            // Kamui: the token was checked against the registry as it stood at the proof's base
+            // block. If a key or a recovery aud has been revoked since, the proof rests on trust
+            // that was withdrawn, however recent it is. This holds for both paths: without it a
+            // normal recovery would go through, and an override would be queued with a
+            // revocation count taken after the revocation. Strictly after: a proof based in the
+            // revocation's own block is refused too, whichever way the prover orders that block.
+            assert(
+                facts.base_block_number > registry().last_revocation_block(), 'REVOKED_SINCE_PROOF',
+            );
 
             if is_override {
                 let ready_at = get_block_timestamp() + RECOVERY_DELAY;

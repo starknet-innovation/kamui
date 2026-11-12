@@ -8,7 +8,11 @@ use kamui::session::interface::{
     SESSION_KEY_INTERFACE_ID, SessionData,
 };
 use kamui::owners::{IOwnersDispatcher, IOwnersDispatcherTrait, new_owner_message_hash};
-use kamui::social::component::{ISocialRecoverableDispatcher, ISocialRecoverableDispatcherTrait};
+use kamui::jwt::registry::{IJwkRegistryDispatcher, IJwkRegistryDispatcherTrait};
+use kamui::jwt::types::Issuer;
+use kamui::social::component::{
+    ISocialRecoverableDispatcher, ISocialRecoverableDispatcherTrait, JWK_REGISTRY_ADDRESS,
+};
 use kamui::social::proof_facts::{VIRTUAL_SNOS, VIRTUAL_SNOS0};
 use openzeppelin_interfaces::introspection::{ISRC5Dispatcher, ISRC5DispatcherTrait};
 use openzeppelin_interfaces::src9::ISRC9_V2_ID;
@@ -44,8 +48,24 @@ pub struct Env {
     pub other: ContractAddress,
 }
 
+pub fn registry_owner() -> ContractAddress {
+    'owner'.try_into().unwrap()
+}
+
+/// The key registry at the address the account pins, with two recovery auds. `recover` reads
+/// its last revocation block, so every test that recovers needs it.
+pub fn deploy_registry() -> IJwkRegistryDispatcher {
+    let class = declare("JwkRegistry").unwrap_syscall().contract_class();
+    class.deploy_at(@array![registry_owner().into()], JWK_REGISTRY_ADDRESS).unwrap_syscall();
+    start_cheat_caller_address(JWK_REGISTRY_ADDRESS, registry_owner());
+    let registry = IJwkRegistryDispatcher { contract_address: JWK_REGISTRY_ADDRESS };
+    registry.initialize(array![(Issuer::Google, "aud"), (Issuer::Google, "aud2")]);
+    registry
+}
+
 pub fn setup() -> Env {
     start_cheat_block_timestamp_global(NOW);
+    deploy_registry();
     // The production account: deployed from (aud, identity) with no owner. The first owner key
     // arrives the way it does in production, through `recover`, with cheated proof facts.
     let account_class = declare("KamuiAccount").unwrap_syscall().contract_class();
@@ -75,10 +95,19 @@ pub fn new_owner_signature(account: ContractAddress, key: KeyPair<felt252, felt2
 /// Proof facts for a non-override recovery of `account` onto `new_key`, as the sequencer would
 /// attach them (format from upstream's tests).
 pub fn recovery_facts(account: ContractAddress, new_key: felt252) -> Span<felt252> {
+    recovery_facts_at(account, new_key, 10, false)
+}
+
+/// The same, for a proof made on top of `base_block`, for a normal or an override recovery.
+pub fn recovery_facts_at(
+    account: ContractAddress, new_key: felt252, base_block: u64, is_override: bool,
+) -> Span<felt252> {
     let anchor = owners(account).get_owners_anchor();
-    let message = array![account.into(), 0, 5, account.into(), IDENTITY, new_key, anchor, 0];
+    let message = array![
+        account.into(), 0, 5, account.into(), IDENTITY, new_key, anchor, is_override.into(),
+    ];
     array![
-        1, VIRTUAL_SNOS, 0x11, VIRTUAL_SNOS0, 10, 0x22, 0x33, 1,
+        1, VIRTUAL_SNOS, 0x11, VIRTUAL_SNOS0, base_block.into(), 0x22, 0x33, 1,
         core::poseidon::poseidon_hash_span(message.span()),
     ]
         .span()
