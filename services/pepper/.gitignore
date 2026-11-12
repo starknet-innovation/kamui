@@ -1,0 +1,5 @@
+node_modules/
+.env
+.env.*
+# The repo root ignores .env.*; the example file holds no secret and is tracked.
+!.env.example
