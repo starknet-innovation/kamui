@@ -22,7 +22,7 @@ pub const FINALIZE_WINDOW: u64 = 604800;
 
 /// Pinned Registry contract address
 pub const JWK_REGISTRY_ADDRESS: ContractAddress =
-    0x654508b46a551c5b3dd8425e0ec4f06af316d28c68500bb83f9b815ba3fb3db;
+    0x4bc2b2afcce053e788511a851e6aeb004d18adb243df4fe852e1b727bd09808;
 
 #[starknet::interface]
 pub trait ISocialRecoverable<T> {
