@@ -1,0 +1,6 @@
+# Copy to backend.hcl (ignored by git), fill in, then: terraform init -backend-config=backend.hcl
+bucket       = "<state bucket created by ../bootstrap in THIS account>"
+key          = "backend/terraform.tfstate"
+region       = "eu-west-1"
+encrypt      = true
+use_lockfile = true

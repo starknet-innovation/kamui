@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OnlyBreakGlassChangesWhoCanUseKeys",
+      "Effect": "Deny",
+      "Action": [
+        "kms:PutKeyPolicy",
+        "kms:CreateGrant",
+        "kms:UpdatePrimaryRegion"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "ArnNotLike": {
+          "aws:PrincipalArn": "arn:aws:iam::<PEPPER_ACCOUNT_ID>:role/<BREAK_GLASS_ROLE_NAME>"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+# Copy to terraform.tfvars (ignored by git) and fill in. Nothing here is a secret, but account
+# ids, ARNs and host names are not committed either.
+
+aws_account_id = "000000000000"
+aws_region     = "eu-west-1"
+
+# The existing key: its ARN (not the alias) and the key check value recorded at creation.
+kms_key_arn      = "arn:aws:kms:eu-west-1:000000000000:key/mrk-00000000000000000000000000000000"
+pepper_key_check = "0000000000000000"
+
+# An issued ACM certificate for the host name that will point at the load balancer.
+certificate_arn = "arn:aws:acm:eu-west-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+
+google_audiences = ["<google-oauth-client-id>"]
+apple_audiences  = []
+allowed_origins  = ["https://keychain.example"]
+
+# First apply: false. After the image is pushed: true, with its tag.
+deploy_service = false
+image_tag      = "unset"
+
+# Leave false until the key policy in kms.tf has been reviewed (README, "The key policy").
+manage_key_policy = false

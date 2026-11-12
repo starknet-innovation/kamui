@@ -1,0 +1,13 @@
+# Keep local configuration and anything that is not needed to run out of the build context.
+.env
+.env.*
+*.local
+node_modules
+test
+scripts
+licenses
+*.md
+.git
+.gitignore
+Dockerfile
+.dockerignore

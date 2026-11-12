@@ -1,0 +1,30 @@
+# Copy to terraform.tfvars (ignored by git) and fill in. No secret belongs in this file:
+# private keys and the RPC URL go into Secrets Manager by hand (README, runbook).
+
+aws_account_id = "000000000000"
+aws_region     = "eu-west-1"
+
+# An issued ACM certificate for the host name that will point at the api's load balancer.
+certificate_arn = "arn:aws:acm:eu-west-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+
+# Public Starknet addresses of the three accounts whose keys are in Secrets Manager.
+relayer_address        = "0x0"
+prover_account_address = "0x0"
+owner_address          = "0x0"
+
+google_recovery_client_id = "<google-oauth-client-id>"
+apple_recovery_client_id  = "<apple-services-id>"
+
+# The pepper service's public HTTPS URL, once it is up in the other account.
+pepper_service_url = "https://pepper.example"
+
+# First apply: false. After the images are pushed and the secrets filled in: true, with tags.
+deploy_services = false
+image_tags = {
+  api     = "unset"
+  rotator = "unset"
+  prover  = "unset"
+}
+
+# 0 stops the prover (and its cost) while nobody is testing.
+prover_desired_count = 1

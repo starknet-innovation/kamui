@@ -1,0 +1,11 @@
+# Terraform working files and anything that names a real account.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+# Real values (account ids, ARNs, host names) live in these and are never committed.
+*.tfvars
+*.tfvars.json
+backend.hcl
+!*.example
