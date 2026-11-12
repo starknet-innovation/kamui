@@ -5,6 +5,7 @@
 // accounts for made-up peppers, and a client bug could put a user on an account nobody can
 // find again. See services/pepper/DESIGN.md.
 import { HttpError } from '../../http';
+import { metrics } from '../../metrics';
 
 export type PepperSettings = {
   /** Base URL of the pepper service. Without it nothing is confirmed (testnets only). */
@@ -31,6 +32,17 @@ export function pepperSettings(chain: string, serviceUrl: string | undefined): P
   const mainnet = chain === 'SN_MAIN';
   if (mainnet && !serviceUrl) throw new Error('PEPPER_SERVICE_URL is required on mainnet');
   return { serviceUrl: serviceUrl || undefined, mainnet };
+}
+
+function unavailable(): HttpError {
+  metrics.outboundFailures.inc({ target: 'pepper' });
+  return new HttpError(502, 'PEPPER_SERVICE_UNAVAILABLE');
+}
+
+/** The checks that need no one else: a well-formed pepper, and never pepper 0 on mainnet. */
+export function assertPepperShape(pepper: string, settings: PepperSettings): void {
+  if (!HEX.test(pepper)) throw new HttpError(400, 'BAD_PEPPER');
+  if (settings.mainnet && BigInt(pepper) === 0n) throw new HttpError(400, 'PEPPER_REQUIRED');
 }
 
 /**
@@ -60,13 +72,13 @@ export async function confirmPepper(
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
-    throw new HttpError(502, 'PEPPER_SERVICE_UNAVAILABLE');
+    throw unavailable();
   }
   const body = (await response.json().catch(() => ({}))) as { pepper?: unknown; error?: unknown };
-  if (response.status >= 500) throw new HttpError(502, 'PEPPER_SERVICE_UNAVAILABLE');
+  if (response.status >= 500) throw unavailable();
   // The service's own refusals (bad token, bad key proof, rate limit) pass through by code.
   if (!response.ok) throw new HttpError(response.status === 429 ? 429 : 400, `PEPPER_SERVICE: ${typeof body.error === 'string' ? body.error : response.status}`);
-  if (typeof body.pepper !== 'string' || !HEX.test(body.pepper)) throw new HttpError(502, 'PEPPER_SERVICE_UNAVAILABLE');
+  if (typeof body.pepper !== 'string' || !HEX.test(body.pepper)) throw unavailable();
   // The message never includes either pepper.
   if (BigInt(body.pepper) !== BigInt(req.pepper)) throw new HttpError(400, 'WRONG_PEPPER');
 }

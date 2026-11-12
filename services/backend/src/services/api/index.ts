@@ -1,6 +1,6 @@
-// The backend API. Three endpoints:
+// The backend API. The routes are in app.ts; this file reads the settings and serves them.
 //
-// POST /recover {jwt, account, newPubkey, blinding, pepper, signature: [r, s], override?} => { address, identity, transaction_hash }
+// POST /recover {jwt, account, newPubkey, blinding, pepper, signature: [r, s], keyProof?, override?} => { address, identity, transaction_hash }
 //   Deploys the account when missing, runs prove_jwt, relays recover. See recovery/recover.ts.
 //   With override: true the account was created under another aud; it must exist and recover only
 //   records a pending recovery that finalize_override_recovery completes after the delay.
@@ -8,35 +8,52 @@
 //   Deploys the social account for a browser that proves locally. See recovery/deploy.ts.
 // POST /relay {account, newPubkey, signature: [r, s], proof, proofFacts, override?} => { address, identity, transaction_hash, override }
 //   Relays recover with a browser-generated proof. The JWT never arrives here. See recovery/relay.ts.
-// GET /health/api => { ok: true, chain, deploys }          this service; deploys: whether /deploy is enabled
+// Kamui: POST /sponsor {account, calldata}, optional x-kamui-app-key header => { transaction_hash }. See recovery/sponsor.ts.
+// Kamui: POST /registry/sessions, /registry/sessions/list, /registry/sessions/remove. See registry/registry.ts.
+// GET /health/api => { ok: true, chain, deploys, pepper_service, sponsor, proofs }
 // GET /health/prover => { ok, reason? }                     the docker prover answers its JSON-RPC ping
 // GET /health/rotator => { ok, chain?, issuers?, reason? }  the rotator's own /health, proxied (see rotator/jwk-rotator.ts)
+// Kamui: GET /live => { ok: true }, no dependencies.
+// Kamui: GET /metrics => Prometheus text, on METRICS_PORT (9464), not on the public port unless METRICS_TOKEN is set. See metrics.ts.
 //
-// Run: bun run service:api.
-// Env (.env.local): PORT (3000), RPC_URL, RELAYER_ADDRESS, RELAYER_PRIVATE_KEY (funded: deploys and relays),
-//   PROVER_URL (http://localhost:9900), PROVER_ACCOUNT_ADDRESS, PROVER_ACCOUNT_PRIVATE_KEY, ROTATOR_URL (http://localhost:3001),
-//   DEPLOYS_PER_HOUR (30; 0 disables /deploy)
-// Env (.env): AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID, AUTHORIZED_APPLE_RECOVERY_CLIENT_ID (the Services ID), KAMUI_ACCOUNT_CLASS_HASH
+// Run: bun run service:api. Settings: .env.example.
 
-import type { Server } from 'bun';
 import { Account } from 'starknet';
-import { chainName, env, makeProvider } from '../../env';
-import { HttpError } from '../../http';
-import { ProverError, proverHealth } from '../prover/prove';
-import { deployAccount, type DeployRequest } from '../recovery/deploy';
+import { env, exitOnWrongChain, makeProvider, resolveChain } from '../../env';
+import { JwksCache } from '../../jwk/verification';
+import { MemoryLimiter } from '../../limiter';
+import { log } from '../../log';
+import { fetchWithTimeout } from '../../net';
+import { secretSource } from '../../secrets';
+import { PROVER_TIMEOUT_MS, proverHealth } from '../prover/prove';
+import { ProofQueue } from '../prover/queue';
 import { pepperSettings } from '../recovery/pepper';
-import { recoverAccount, type RecoverContext, type RecoverRequest } from '../recovery/recover';
-import { relayProof, type RelayRequest } from '../recovery/relay';
-import { sponsorOutsideExecution, sponsoredPerHour, type SponsorRequest } from '../recovery/sponsor';
+import { type RecoverContext } from '../recovery/recover';
+import { RegistryStore } from '../registry/store';
+import { MemoryLedger, loadBudgets } from '../sponsor/budgets';
+import { buildApp, metricsResponse, parseLimits } from './app';
+
+const number = (name: string, fallback: number) => {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be a number`);
+  return value;
+};
 
 const provider = makeProvider();
-const chain = await chainName(provider);
+// Kamui: with CHAIN_ID set the api starts without the RPC and checks the chain in the background.
+const { chain, chainId, confirmed } = await resolveChain(provider);
+exitOnWrongChain(confirmed);
+// Kamui: signing keys come from the secret source (secrets.ts), not straight from the environment.
+const secrets = secretSource();
+// Kamui: in process. Replace both with shared implementations when the api is replicated.
+const limiter = new MemoryLimiter();
+const ledger = new MemoryLedger();
 
 const ctx: RecoverContext = {
   provider,
-  relayer: new Account({ provider, address: env('RELAYER_ADDRESS'), signer: env('RELAYER_PRIVATE_KEY') }),
+  relayer: new Account({ provider, address: env('RELAYER_ADDRESS'), signer: await secrets.get('RELAYER_PRIVATE_KEY') }),
   prover: {
-    account: new Account({ provider, address: env('PROVER_ACCOUNT_ADDRESS'), signer: env('PROVER_ACCOUNT_PRIVATE_KEY') }),
+    account: new Account({ provider, address: env('PROVER_ACCOUNT_ADDRESS'), signer: await secrets.get('PROVER_ACCOUNT_PRIVATE_KEY') }),
     url: process.env.PROVER_URL ?? 'http://localhost:9900',
   },
   classHash: env('KAMUI_ACCOUNT_CLASS_HASH'),
@@ -44,54 +61,64 @@ const ctx: RecoverContext = {
     'https://accounts.google.com': env('AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID'),
     'https://appleid.apple.com': env('AUTHORIZED_APPLE_RECOVERY_CLIENT_ID'),
   },
-  deploysPerHour: Number(process.env.DEPLOYS_PER_HOUR ?? 30),
+  deploysPerHour: number('DEPLOYS_PER_HOUR', 30),
   pepper: pepperSettings(chain, process.env.PEPPER_SERVICE_URL),
+  jwks: new JwksCache(),
+  limiter,
+  proofs: new ProofQueue({
+    concurrency: number('PROVER_CONCURRENCY', 1),
+    maxQueued: number('PROVER_QUEUE_MAX', 4),
+    maxWaitMs: number('PROVER_QUEUE_WAIT_MS', 5 * 60_000),
+  }),
+  proverTimeoutMs: number('PROVER_TIMEOUT_MS', PROVER_TIMEOUT_MS),
 };
-const sponsorCtx = { ...ctx, sponsoredPerHour: sponsoredPerHour(chain, process.env.SPONSORED_PER_HOUR) };
 const rotatorUrl = process.env.ROTATOR_URL ?? 'http://localhost:3001';
+const store = new RegistryStore(process.env.REGISTRY_DB || undefined, undefined, process.env.REGISTRY_JOURNAL_MODE || 'DELETE');
 
 /** The rotator's own answer, or why it could not be asked. */
 async function rotatorHealth(): Promise<unknown> {
   try {
-    const res = await fetch(`${rotatorUrl}/health`, { signal: AbortSignal.timeout(3_000) });
+    const res = await fetchWithTimeout(`${rotatorUrl}/health`, {}, 3_000);
     return await res.json();
   } catch (e) {
     return { ok: false, reason: (e as Error).message };
   }
 }
 
-/** JSON in, JSON out. A missing string field is 400, a prover failure is 502, an HttpError its status, anything else 400. */
-function route<T extends Record<string, unknown>>(fields: (keyof T & string)[], handler: (body: T, ip: string) => Promise<unknown>) {
-  return async (req: Request, srv: Server<undefined>) => {
-    const body = (await req.json().catch(() => null)) as T | null;
-    if (!body || fields.some((f) => typeof body[f] !== 'string'))
-      return Response.json({ error: 'BAD_REQUEST', detail: `body must be {${fields.join(', ')}}` }, { status: 400 });
-    try {
-      return Response.json(await handler(body, srv.requestIP(req)?.address ?? 'unknown'));
-    } catch (e) {
-      const message = (e as Error).message;
-      console.error(new Date().toISOString(), `${new URL(req.url).pathname} failed:`, message);
-      const status = e instanceof HttpError ? e.status : e instanceof ProverError ? 502 : 400;
-      return Response.json({ error: message }, { status });
-    }
-  };
-}
+const app = buildApp({
+  chain,
+  ctx,
+  sponsor: { ...ctx, budgets: loadBudgets(chain, { file: process.env.SPONSOR_BUDGETS_FILE, sponsoredPerHour: process.env.SPONSORED_PER_HOUR }), ledger },
+  registry: { provider, classHash: ctx.classHash, chainId, store },
+  limiter,
+  limits: parseLimits(process.env.RATE_LIMITS),
+  // TRUST_PROXY=true is the pepper service's spelling of one trusted proxy.
+  trustedProxyHops: process.env.TRUSTED_PROXY_HOPS ? number('TRUSTED_PROXY_HOPS', 0) : process.env.TRUST_PROXY === 'true' ? 1 : 0,
+  metricsToken: process.env.METRICS_TOKEN || undefined,
+  health: { prover: () => proverHealth(ctx.prover.url), rotator: rotatorHealth },
+});
+
+// Expired registry entries are also dropped whenever their account is read or written.
+store.dropExpired(Math.floor(Date.now() / 1000));
+setInterval(() => store.dropExpired(Math.floor(Date.now() / 1000)), 3_600_000).unref();
 
 const server = Bun.serve({
-  port: Number(process.env.PORT ?? 3000),
+  port: number('PORT', 3000),
   // A relayed proof is up to 480,000 bytes, 640 KB as base64.
   maxRequestBodySize: 1_000_000,
-  routes: {
-    '/recover': { POST: route<RecoverRequest>(['jwt', 'account', 'newPubkey', 'blinding', 'pepper'], (b) => recoverAccount(b, ctx)) },
-    '/deploy': { POST: route<DeployRequest>(['aud', 'identity'], (b, ip) => deployAccount(b, ip, ctx)) },
-    '/relay': { POST: route<RelayRequest>(['account', 'newPubkey', 'proof'], (b, ip) => relayProof(b, ip, ctx)) },
-    // Kamui: a development stand-in for the paymaster.
-    '/sponsor': { POST: route<SponsorRequest>(['account'], (b, ip) => sponsorOutsideExecution(b, ip, sponsorCtx)) },
-    '/health/api': { GET: () => Response.json({ ok: true, chain, deploys: ctx.deploysPerHour > 0 && !ctx.pepper.serviceUrl, pepper_service: Boolean(ctx.pepper.serviceUrl) }) },
-    '/health/prover': { GET: async () => Response.json(await proverHealth(ctx.prover.url)) },
-    '/health/rotator': { GET: async () => Response.json(await rotatorHealth()) },
-  },
+  // A backend proof takes a minute or more; 255 seconds is Bun's maximum. A client that needs
+  // longer than this should poll the chain for the recovery instead of holding the request.
+  idleTimeout: 255,
+  fetch: (req, srv) => app.handle(req, srv.requestIP(req)?.address),
 });
-console.log(
-  `api on http://localhost:${server.port} (${chain}), prover at ${ctx.prover.url}, pepper ${ctx.pepper.serviceUrl ? 'confirmed with the pepper service' : 'NOT confirmed (no PEPPER_SERVICE_URL)'}`,
-);
+// Kamui: metrics are served on their own port, which is not the public one. Do not publish it;
+// let the scraper reach it inside the network. METRICS_PORT=0 turns the listener off.
+const metricsPort = number('METRICS_PORT', 9464);
+if (metricsPort > 0) {
+  Bun.serve({
+    port: metricsPort,
+    hostname: process.env.METRICS_HOST ?? '0.0.0.0',
+    fetch: (req) => (new URL(req.url).pathname === '/metrics' && req.method === 'GET' ? metricsResponse() : new Response('not found\n', { status: 404 })),
+  });
+}
+log('info', 'api_started', { port: server.port ?? 0, metrics_port: metricsPort, journal_mode: store.journalMode, chain, confirmation_service: Boolean(ctx.pepper.serviceUrl) });

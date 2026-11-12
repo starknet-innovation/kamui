@@ -82,18 +82,23 @@ export async function proveJwt(
   provider: RpcProvider,
   proverAccount: Account,
   proverUrl: string,
+  // Kamui: the deadline is a setting (PROVER_TIMEOUT_MS), upstream's ten minutes by default.
+  timeoutMs = PROVER_TIMEOUT_MS,
 ): Promise<Proof> {
   const tx = await proverAccount.getSignedTransaction(call, { resourceBounds: NO_FEE, tip: 0n });
   const block_number = await provider.getBlockNumber();
-  return prove(proverUrl, block_number, tx);
+  return prove(proverUrl, block_number, tx, timeoutMs);
 }
+
+export const PROVER_TIMEOUT_MS = 10 * 60_000;
 
 type SignedTx = Awaited<ReturnType<Account['getSignedTransaction']>>;
 
 async function prove(
   url: string,
   blockNumber: number,
-  transaction: SignedTx
+  transaction: SignedTx,
+  timeoutMs: number,
 ): Promise<Proof> {
   const res = await fetch(url, {
     method: 'POST',
@@ -104,11 +109,14 @@ async function prove(
       method: 'starknet_proveTransaction',
       params: { block_id: { block_number: blockNumber }, transaction },
     }),
-    signal: AbortSignal.timeout(10 * 60_000),
+    signal: AbortSignal.timeout(timeoutMs),
   }).catch((e) => {
     throw new ProverError(`prover unreachable: ${(e as Error).message}`);
   });
-  const body = (await res.json()) as {
+  // Kamui: an answer that is not JSON (a proxy error page, a killed prover) is a prover failure, not a 400.
+  const body = (await res.json().catch(() => {
+    throw new ProverError(`prover: HTTP ${res.status}, not JSON`);
+  })) as {
     result?: Proof;
     error?: { message: string; data?: unknown };
   };

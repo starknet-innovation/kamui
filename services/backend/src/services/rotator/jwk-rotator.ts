@@ -10,6 +10,7 @@
 //
 // GET /health on ROTATOR_PORT (3001) => { ok, chain, issuers: { [iss]: { lastSync, nextSync, error } } }
 //   ok when every issuer has synced at least once and its last attempt succeeded.
+// GET /live => { ok: true } whenever the process is up (Kamui).
 //
 // Env: 
 // - RPC_URL, 
@@ -18,33 +19,18 @@
 // - <CHAIN>_REGISTRY_ADDRESS 
 // - <CHAIN>_REGISTRY_BLOCK.
 
-import { Account, CallData, RpcProvider, byteArray, hash, type Call } from 'starknet';
-import { chainName, env, makeProvider } from '../../env';
-import { ISSUERS, fetchJwks, type Jwk } from '../../jwk/verification';
+import { Account, CallData, byteArray, type Call } from 'starknet';
+import { env, exitOnWrongChain, makeProvider, resolveChain } from '../../env';
+import { byteArraysFromFelts, filterEligibleKeys, modulusHash, modulusLimbs, registryEvents, storedKey } from '../../jwk/modulus';
+import { ISSUERS, fetchJwks, type IssuerJwks } from '../../jwk/verification';
+import { errorCode, log } from '../../log';
+import { secretSource } from '../../secrets';
 
-// Garaga RSA2048PublicKey: 
-// - 6_u384 chunks x 4_u96 limbs, low to high
-const LIMB_BITS = 96n;
-const LIMBS = 24;
+// Kamui: the limb and hash arithmetic moved to jwk/modulus.ts, shared with the watcher.
+export { byteArraysFromFelts, filterEligibleKeys, modulusLimbs, storedKey };
+
 // Minimum retry time
 const RETRY_MS = 5 * 60_000;
-
-export function modulusLimbs(nBase64url: string): bigint[] {
-  const bytes = Buffer.from(nBase64url, 'base64url');
-  if (bytes.length !== 256) throw new Error(`modulus is ${bytes.length} bytes, need 256`);
-  const n = BigInt('0x' + bytes.toString('hex'));
-  const mask = (1n << LIMB_BITS) - 1n;
-  return Array.from({ length: LIMBS }, (_, i) => (n >> (LIMB_BITS * BigInt(i))) & mask);
-}
-
-export function filterEligibleKeys(keys: Jwk[]): Map<string, bigint[]> {
-  const out = new Map<string, bigint[]>();
-  for (const k of keys) {
-    if (k.kty !== 'RSA' || k.alg !== 'RS256' || k.use !== 'sig' || k.e !== 'AQAB') continue;
-    out.set(k.kid, modulusLimbs(k.n));
-  }
-  return out;
-}
 
 export function extractRefreshDelay(headers: Headers): number {
   const maxAgeHeader = headers.get('cache-control') ?? '';
@@ -53,50 +39,37 @@ export function extractRefreshDelay(headers: Headers): number {
   return Math.min(Math.max(maxAgeMS, RETRY_MS), 24 * 3_600_000); // delay in 5m..24h
 }
 
-/** Consecutive Cairo ByteArrays as they appear in event data: [len, ...words, pending_word, pending_word_len]... */
-export function byteArraysFromFelts(d: string[]): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < d.length;) {
-    const len = Number(BigInt(d[i]));
-    out.push(
-      byteArray.stringFromByteArray({
-        data: d.slice(i + 1, i + 1 + len),
-        pending_word: d[i + 1 + len],
-        pending_word_len: Number(BigInt(d[i + 2 + len])),
-      }),
-    );
-    i += len + 3;
+/** What the rotator needs from the chain and the issuer; tests pass fakes. */
+export type Ctx = {
+  registryOwner: { execute(calls: Call[]): Promise<{ transaction_hash: string }> };
+  provider: {
+    getEvents: Parameters<typeof registryEvents>[0]['getEvents'];
+    callContract(call: { contractAddress: string; entrypoint: string; calldata: string[] }): Promise<string[]>;
+    waitForTransaction(hash: string): Promise<unknown>;
+  };
+  registryContractAddress: string;
+  fromBlock: number;
+  fetchJwks?: (iss: string) => Promise<IssuerJwks>;
+};
+
+export type SyncPlan = { add: string[]; replace: string[]; remove: string[] };
+
+/**
+ * Kamui (audit finding #2): what to write, from key material and not from key ids.
+ * `issuer` is the issuer's current keys; `stored` is what the registry holds for each kid of
+ * interest (null: nothing). A kid is replaced only when a limb really differs.
+ */
+export function planSync(issuer: Map<string, bigint[]>, stored: Map<string, bigint[] | null>): SyncPlan {
+  const plan: SyncPlan = { add: [], replace: [], remove: [] };
+  for (const [kid, limbs] of issuer) {
+    const onChain = stored.get(kid) ?? null;
+    if (onChain === null) plan.add.push(kid);
+    else if (onChain.length !== limbs.length || onChain.some((limb, i) => limb !== limbs[i])) plan.replace.push(kid);
   }
-  return out;
-}
-
-const KEY_SET_SELECTOR = hash.getSelectorFromName('KeySet');
-const KEY_REMOVED_SELECTOR = hash.getSelectorFromName('KeyRemoved');
-
-type Ctx = { registryOwner: Account; provider: RpcProvider; registryContractAddress: string; fromBlock: number };
-
-/** The kids currently set on chain for `iss`. */
-async function onChainKids({ provider, registryContractAddress, fromBlock }: Ctx, iss: string) {
-  const kids = new Set<string>();
-  let continuation_token: string | undefined;
-  do {
-    const chunk = await provider.getEvents({
-      address: registryContractAddress,
-      from_block: { block_number: fromBlock },
-      to_block: 'latest',
-      keys: [[KEY_SET_SELECTOR, KEY_REMOVED_SELECTOR]],
-      chunk_size: 1000,
-      continuation_token,
-    });
-    for (const e of chunk.events) {
-      const [eventIss, kid] = byteArraysFromFelts(e.data);
-      if (eventIss !== iss) continue;
-      if (BigInt(e.keys[0]) === BigInt(KEY_SET_SELECTOR)) kids.add(kid);
-      else kids.delete(kid);
-    }
-    continuation_token = chunk.continuation_token;
-  } while (continuation_token);
-  return kids;
+  for (const [kid, onChain] of stored) {
+    if (onChain !== null && !issuer.has(kid)) plan.remove.push(kid);
+  }
+  return plan;
 }
 
 // ponytail: one owner account, one nonce. Issuer loops run concurrently, so submissions are serialized.
@@ -111,45 +84,73 @@ function submitKeyUpdates({ registryOwner, provider }: Ctx, calls: Call[]): Prom
   return run;
 }
 
-/** Mirrors one issuer's JWKS into the registry. Returns the delay until the next sync. */
-async function syncOnce(ctx: Ctx, iss: string) {
-  const { keys, headers } = await fetchJwks(iss);
+const hex = (value: bigint) => '0x' + value.toString(16);
+
+/**
+ * Mirrors one issuer's JWKS into the registry. Returns the delay until the next sync.
+ *
+ * Kamui (audit finding #2): upstream compared key ids only, so a different modulus published
+ * under an existing kid was never installed and the old key stayed trusted. Now:
+ * - the event history only says which kids to look at (it is the only way to list them);
+ * - what the registry holds for each kid is read from storage and compared limb by limb;
+ * - a kid whose material changed is removed and set again in one transaction. That counts as a
+ *   revocation: it cancels every recovery proof in flight and every pending override, for all
+ *   users. It happens only when the stored limbs differ, and it is logged at error level.
+ */
+export async function syncOnce(ctx: Ctx, iss: string) {
+  const { keys, headers } = await (ctx.fetchJwks ?? fetchJwks)(iss);
   const upToDateKeys = filterEligibleKeys(keys);
-  const onChainKeys = await onChainKids(ctx, iss);
   const issuer = ISSUERS.find((i) => i.iss === iss)!.variant;
-  let setCount = 0;
-  let removeCount = 0;
 
-  // Find keys to set
-  const calls: Call[] = [];
-  for (const [kid, limbs] of upToDateKeys) {
-    if (onChainKeys.has(kid)) continue;
-    // Key does not exist, use `set_key`
-    calls.push({
-      contractAddress: ctx.registryContractAddress,
-      entrypoint: 'set_key',
-      calldata: CallData.compile([issuer, byteArray.byteArrayFromString(kid), ...limbs]),
-    });
-    setCount++;
+  // The latest event per kid: the hash of the last key set, or null after a removal.
+  const history = new Map<string, bigint | null | undefined>();
+  for (const event of await registryEvents(ctx.provider, ctx.registryContractAddress, ctx.fromBlock)) {
+    if (event.iss === iss) history.set(event.kid, event.kind === 'set' ? event.modulusHash : null);
   }
 
-  // Find keys to remove
-  for (const kid of onChainKeys) {
-    if (upToDateKeys.has(kid)) continue;
-
-    calls.push({
-      contractAddress: ctx.registryContractAddress,
-      entrypoint: 'remove_key',
-      calldata: CallData.compile([issuer, byteArray.byteArrayFromString(kid)]),
-    });
-    removeCount++;
+  const stored = new Map<string, bigint[] | null>();
+  for (const kid of new Set([...upToDateKeys.keys(), ...history.keys()])) {
+    const onChain = await storedKey(ctx, iss, kid);
+    stored.set(kid, onChain);
+    // Storage is what the accounts read, so storage wins; a disagreement still deserves a look.
+    const fromEvents = history.has(kid) ? history.get(kid) : null;
+    const fromStorage = onChain ? modulusHash(onChain) : null;
+    // undefined: the contract emitted no hash for that write, so there is nothing to compare.
+    if (fromEvents !== undefined && fromEvents !== fromStorage) {
+      log('error', 'registry_history_mismatch', { iss, kid, events_hash: fromEvents === null ? 'none' : hex(fromEvents), storage_hash: fromStorage === null ? 'none' : hex(fromStorage) });
+    }
   }
+
+  const plan = planSync(upToDateKeys, stored);
+  const kidCalldata = (kid: string) => byteArray.byteArrayFromString(kid);
+  const setKey = (kid: string): Call => ({
+    contractAddress: ctx.registryContractAddress,
+    entrypoint: 'set_key',
+    calldata: CallData.compile([issuer, kidCalldata(kid), ...upToDateKeys.get(kid)!]),
+  });
+  const removeKey = (kid: string): Call => ({
+    contractAddress: ctx.registryContractAddress,
+    entrypoint: 'remove_key',
+    calldata: CallData.compile([issuer, kidCalldata(kid)]),
+  });
+
+  for (const kid of plan.replace) {
+    log('error', 'key_material_changed', {
+      iss,
+      kid,
+      old_hash: hex(modulusHash(stored.get(kid)!)),
+      new_hash: hex(modulusHash(upToDateKeys.get(kid)!)),
+      note: 'the issuer published different key material under an existing kid; replacing it revokes in-flight recovery proofs and pending overrides for every user',
+    });
+  }
+  // remove_key then set_key: exactly one revocation, on the deployed registry class and on the newer one.
+  const calls: Call[] = [...plan.add.map(setKey), ...plan.replace.flatMap((kid) => [removeKey(kid), setKey(kid)]), ...plan.remove.map(removeKey)];
 
   if (calls.length === 0) {
-    console.log(new Date().toISOString(), `${iss} in sync (${onChainKeys.size} keys)`);
+    log('info', 'registry_in_sync', { iss, keys: upToDateKeys.size });
   } else {
-    console.log(new Date().toISOString(), `${iss} updating keys:\n\t+${setCount} keys\n\t-${removeCount} keys`);
-    console.log('TX', await submitKeyUpdates(ctx, calls));
+    const tx = await submitKeyUpdates(ctx, calls);
+    log(plan.replace.length ? 'error' : 'info', 'registry_updated', { iss, added: plan.add.length, replaced: plan.replace.length, removed: plan.remove.length, tx });
   }
   return extractRefreshDelay(headers);
 }
@@ -168,8 +169,10 @@ async function syncForever(ctx: Ctx, iss: string, once: boolean) {
       s.lastSync = new Date().toISOString();
       s.error = null;
     } catch (e) {
-      s.error = (e as Error).message ?? String(e);
-      console.error(new Date().toISOString(), `${iss} sync failed:`, e);
+      // Kamui: a code or the error's class, in the log and in /health (which the api serves to
+      // anyone). The message itself can quote the RPC URL or the request.
+      s.error = errorCode(e);
+      log('error', 'registry_sync_failed', { iss, error: s.error });
     }
     if (once) break;
 
@@ -181,13 +184,15 @@ async function syncForever(ctx: Ctx, iss: string, once: boolean) {
 // MAIN SCRIPT
 if (import.meta.main) {
   const provider = makeProvider();
-  const chain = await chainName(provider);
+  const { chain, confirmed } = await resolveChain(provider);
+  exitOnWrongChain(confirmed);
   const ctx: Ctx = {
     provider,
     registryOwner: new Account({
       provider,
       address: env('OWNER_ADDRESS'),
-      signer: env('OWNER_PRIVATE_KEY'),
+      // Kamui: through the secret source (secrets.ts).
+      signer: await secretSource().get('OWNER_PRIVATE_KEY'),
     }),
     registryContractAddress: env(`${chain}_REGISTRY_ADDRESS`),
     fromBlock: Number(env(`${chain}_REGISTRY_BLOCK`)),
@@ -198,11 +203,13 @@ if (import.meta.main) {
     const server = Bun.serve({
       port: Number(process.env.ROTATOR_PORT ?? 3001),
       routes: {
+        // Kamui: for a platform's liveness check. 200 whenever the process serves; /health says whether the syncs work.
+        '/live': () => Response.json({ ok: true }),
         '/health': () =>
           Response.json({ ok: Object.values(state).every((s) => s.lastSync && !s.error), chain, issuers: state }),
       },
     });
-    console.log(`rotator health on http://localhost:${server.port}/health (${chain})`);
+    log('info', 'rotator_started', { port: server.port ?? 0, chain });
   }
 
   await Promise.all(ISSUERS.map((i) => syncForever(ctx, i.iss, once)));

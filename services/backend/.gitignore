@@ -1,3 +1,6 @@
 node_modules/
 # Public deployment addresses are in deployments.env (committed). Secrets go in .env.local.
 !.env.example
+# Kamui: the session registry database (REGISTRY_DB) and a local budgets file.
+data/
+sponsor-budgets.json

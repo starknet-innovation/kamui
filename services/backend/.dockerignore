@@ -1,2 +1,4 @@
 node_modules
 .env.local
+data
+sponsor-budgets.json

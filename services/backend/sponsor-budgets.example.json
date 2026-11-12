@@ -1,0 +1,18 @@
+{
+  "anonymous": {
+    "txPerPeriod": 120,
+    "periodSeconds": 3600,
+    "perAccountPerPeriod": 20,
+    "maxFeePerTx": "500000000000000000"
+  },
+  "apps": [
+    {
+      "name": "example-app",
+      "key": "kamui_app_example_replace_me_0000",
+      "txPerPeriod": 2000,
+      "periodSeconds": 3600,
+      "perAccountPerPeriod": 60,
+      "maxFeePerTx": "1000000000000000000"
+    }
+  ]
+}

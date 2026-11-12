@@ -1,9 +1,13 @@
 import { Account, CallData, RpcError, RpcProvider, type Call } from 'starknet';
 import { HttpError } from '../../http';
-import { extractJwt, fetchJwks, verifyJwt } from '../../jwk/verification';
+import { ISSUERS, extractJwt, verifyJwt, type Jwk, type Jwt } from '../../jwk/verification';
+import type { Limiter } from '../../limiter';
+import { errorCode, log } from '../../log';
+import { metrics } from '../../metrics';
 import { accountAddress, deployCall, expectedNonce, extractIdentity } from '../../social-account';
-import { proveJwt, proveJwtCalldata } from '../prover/prove';
-import { confirmPepper, type PepperSettings } from './pepper';
+import { proveJwt, proveJwtCalldata, type Proof } from '../prover/prove';
+import type { ProofQueue } from '../prover/queue';
+import { assertPepperShape, confirmPepper, type PepperSettings } from './pepper';
 
 export type RecoverContext = {
   provider: RpcProvider;
@@ -18,6 +22,16 @@ export type RecoverContext = {
   deploysPerHour: number;
   /** Kamui: how the pepper in a request is confirmed before anything is paid for. */
   pepper: PepperSettings;
+  /** Kamui: the issuers' keys, cached (jwk/verification.ts). */
+  jwks: { keys(iss: string, kid?: string): Promise<Jwk[]> };
+  /** Kamui: the limiter behind every cap in these routes (limiter.ts). */
+  limiter: Limiter;
+  /** Kamui: bounds how many proofs run and wait (prover/queue.ts). */
+  proofs: ProofQueue;
+  /** Kamui: deadline for one proof. Defaults to prove.ts's ten minutes. */
+  proverTimeoutMs?: number;
+  /** Kamui: replaces the call to the prover in tests. */
+  prove?: (call: Call) => Promise<Proof>;
 };
 export type RecoverRequest = {
   jwt: string;
@@ -41,49 +55,112 @@ export type RecoverResult = { address: string; identity: string; transaction_has
 
 export const HEX = /^0x[0-9a-fA-F]+$/;
 
+/** Longer than any Google or Apple ID token; bounds what is parsed before anything is verified. */
+export const MAX_JWT_LENGTH = 8_192;
+
+/**
+ * Kamui (audit finding #3): everything that can be checked from the request alone, before any
+ * outbound call. The claims are not trusted yet; a token that fails here would fail later too.
+ */
+export function precheckRecover(req: RecoverRequest, ctx: Pick<RecoverContext, 'audiences'>, now = Date.now()): Jwt {
+  if (!Array.isArray(req.signature) || req.signature.length !== 2 || !req.signature.every((s) => typeof s === 'string' && HEX.test(s)))
+    throw new HttpError(400, 'BAD_SIGNATURE_FORMAT');
+  if (!HEX.test(req.newPubkey)) throw new HttpError(400, 'BAD_PUBLIC_KEY');
+  if (!HEX.test(req.blinding)) throw new HttpError(400, 'BAD_BLINDING');
+  if (!HEX.test(req.pepper)) throw new HttpError(400, 'BAD_PEPPER');
+  if (!HEX.test(req.account)) throw new HttpError(400, 'BAD_ACCOUNT');
+  if (req.jwt.length > MAX_JWT_LENGTH) throw new HttpError(400, 'BAD_JWT');
+
+  let token: Jwt;
+  try {
+    token = extractJwt(req.jwt);
+  } catch (e) {
+    // A JSON error would echo part of the token; only our own codes pass.
+    const code = errorCode(e);
+    throw new HttpError(400, ['BAD_JWT', 'UNSUPPORTED_ALG', 'BAD_PAYLOAD'].includes(code) ? code : 'BAD_JWT');
+  }
+  if (!ISSUERS.some((i) => i.iss === token.iss)) throw new HttpError(400, 'WRONG_ISSUER');
+  if (token.aud !== ctx.audiences[token.iss]) throw new HttpError(400, 'WRONG_AUDIENCE');
+  if (typeof token.exp !== 'number' || token.exp <= now / 1000) throw new HttpError(400, 'TOKEN_EXPIRED');
+  if (typeof token.nonce !== 'string' || !/^0x[0-9a-f]{1,64}$/.test(token.nonce)) throw new HttpError(400, 'BAD_NONCE');
+  if (BigInt(token.nonce) !== expectedNonce(req.newPubkey, req.blinding)) throw new HttpError(400, 'NONCE_MISMATCH');
+  return token;
+}
+
+// Kamui: one recovery per account at a time, so two requests cannot both deploy or both queue a proof.
+const recovering = new Set<string>();
+
 export async function recoverAccount(req: RecoverRequest, ctx: RecoverContext): Promise<RecoverResult> {
-  if (!Array.isArray(req.signature) || req.signature.length !== 2 || !req.signature.every((s) => HEX.test(s)))
-    throw new Error('BAD_SIGNATURE_FORMAT');
-  if (!HEX.test(req.newPubkey)) throw new Error('BAD_PUBLIC_KEY');
-  if (!HEX.test(req.blinding)) throw new Error('BAD_BLINDING');
-  if (!HEX.test(req.pepper)) throw new Error('BAD_PEPPER');
-
-  const token = extractJwt(req.jwt);
-  const jwk = await verifyJwt(token, (await fetchJwks(token.iss)).keys);
-  if (token.aud !== ctx.audiences[token.iss]) throw new Error('WRONG_AUDIENCE');
-  if (!/^0x[0-9a-f]+$/.test(token.nonce)) throw new Error('BAD_NONCE');
-  if (BigInt(token.nonce) !== expectedNonce(req.newPubkey, req.blinding)) throw new Error('NONCE_MISMATCH');
-  // Kamui: before a deployment or a proof is paid for.
-  await confirmPepper(req, ctx.pepper);
-  let address: string;
-  let identity: string;
-  if (req.override) {
-    // The account belongs to another aud. prove_jwt checks h(iss, original_aud, sub) and the whitelist.
-    if (!/^0x[0-9a-fA-F]+$/.test(req.account)) throw new Error('BAD_ACCOUNT');
-    if (!(await isDeployed(ctx.provider, req.account))) throw new Error('ACCOUNT_NOT_DEPLOYED');
-    address = req.account;
-    [identity] = await ctx.provider.callContract({ contractAddress: address, entrypoint: 'identity' });
-  } else {
-    identity = extractIdentity(token, req.pepper);
-    address = accountAddress(token.aud, identity, ctx.classHash);
-    if (BigInt(address) !== BigInt(req.account)) throw new Error('WRONG_ACCOUNT');
-
-    if (!(await isDeployed(ctx.provider, address))) {
-      const { transaction_hash } = await ctx.relayer.execute(deployCall(token.aud, identity, ctx.classHash));
-      await ctx.provider.waitForTransaction(transaction_hash);
-      console.log(new Date().toISOString(), `deployed ${address} tx ${transaction_hash}`);
-    }
+  const token = precheckRecover(req, ctx);
+  // Kamui: cached keys; see JwksCache for what one request can cost.
+  const jwk = await verifyJwt(token, await ctx.jwks.keys(token.iss, token.kid));
+  // Kamui: the pepper service is asked further down, and only when an account would be deployed.
+  assertPepperShape(req.pepper, ctx.pepper);
+  // Kamui: refuse now, before a deployment, if the proof could not even be queued.
+  if (ctx.proofs.full) {
+    metrics.proofs.inc({ result: 'refused' });
+    throw new HttpError(503, 'PROVER_BUSY');
   }
 
-  const prove: Call = {
-    contractAddress: address,
-    entrypoint: 'prove_jwt',
-    calldata: proveJwtCalldata(req.jwt, token, jwk, req.newPubkey, req.blinding, req.pepper),
-  };
-  const { proof, proof_facts } = await proveJwt(prove, ctx.provider, ctx.prover.account, ctx.prover.url);
-  const transaction_hash = await relayRecover(address, req.newPubkey, req.signature, proof, proof_facts, ctx);
-  console.log(new Date().toISOString(), `${req.override ? 'pending override recovery for' : 'recovered'} ${address} tx ${transaction_hash}`);
-  return { address, identity, transaction_hash };
+  const inFlightKey = BigInt(req.account).toString(16);
+  if (recovering.has(inFlightKey)) throw new HttpError(409, 'IN_PROGRESS');
+  recovering.add(inFlightKey);
+  try {
+    let address: string;
+    let identity: string;
+    if (req.override) {
+      // The account belongs to another aud. prove_jwt checks h(iss, original_aud, sub) and the whitelist.
+      if (!(await isDeployed(ctx.provider, req.account))) throw new Error('ACCOUNT_NOT_DEPLOYED');
+      address = req.account;
+      [identity] = (await ctx.provider.callContract({ contractAddress: address, entrypoint: 'identity' })) as [string];
+    } else {
+      identity = extractIdentity(token, req.pepper);
+      address = accountAddress(token.aud, identity, ctx.classHash);
+      if (BigInt(address) !== BigInt(req.account)) throw new Error('WRONG_ACCOUNT');
+
+      if (!(await isDeployed(ctx.provider, address))) {
+        // Kamui: the pepper is confirmed with the pepper service before the relayer deploys an
+        // account for it, so nobody can have accounts deployed for made-up peppers. An account
+        // that already exists needs no confirmation: its address was derived from this very
+        // pepper, and `prove_jwt` checks the identity again on chain. That is also what lets a
+        // user sign in from a recovery file when the pepper service is unavailable or lost.
+        await confirmPepper(req, ctx.pepper);
+        const { transaction_hash } = await ctx.relayer.execute(deployCall(token.aud, identity, ctx.classHash));
+        metrics.relayerTransactions.inc({ kind: 'deploy' });
+        await ctx.provider.waitForTransaction(transaction_hash);
+        log('info', 'account_deployed', { account: address, tx: transaction_hash });
+      }
+    }
+
+    const prove: Call = {
+      contractAddress: address,
+      entrypoint: 'prove_jwt',
+      calldata: proveJwtCalldata(req.jwt, token, jwk, req.newPubkey, req.blinding, req.pepper),
+    };
+    const { proof, proof_facts } = await ctx.proofs.run(() => timedProof(prove, ctx));
+    const transaction_hash = await relayRecover(address, req.newPubkey, req.signature, proof, proof_facts, ctx);
+    log('info', req.override ? 'override_recovery_pending' : 'recovered', { account: address, tx: transaction_hash, proving: 'backend' });
+    return { address, identity, transaction_hash };
+  } finally {
+    recovering.delete(inFlightKey);
+  }
+}
+
+/** One proof, counted and timed. */
+async function timedProof(call: Call, ctx: RecoverContext): Promise<Proof> {
+  const started = Date.now();
+  metrics.proofs.inc({ result: 'started' });
+  try {
+    const proof = await (ctx.prove ? ctx.prove(call) : proveJwt(call, ctx.provider, ctx.prover.account, ctx.prover.url, ctx.proverTimeoutMs));
+    metrics.proofs.inc({ result: 'succeeded' });
+    metrics.proofSeconds.observe((Date.now() - started) / 1000);
+    return proof;
+  } catch (e) {
+    metrics.proofs.inc({ result: 'failed' });
+    metrics.outboundFailures.inc({ target: 'prover' });
+    metrics.proofSeconds.observe((Date.now() - started) / 1000);
+    throw e;
+  }
 }
 
 /**
@@ -100,7 +177,7 @@ export async function relayRecover(
   ctx: Pick<RecoverContext, 'relayer' | 'provider'>,
 ): Promise<string> {
   // The gateway rejects a decoded proof above max_proof_size (480,000 bytes on 0.14.5).
-  console.log(new Date().toISOString(), `proof for ${address}: ${Buffer.from(proof, 'base64').length} bytes, ${proofFacts.length} facts`);
+  log('debug', 'proof_ready', { account: address, bytes: Buffer.from(proof, 'base64').length, facts: proofFacts.length });
   let transaction_hash: string;
   try {
     ({ transaction_hash } = await ctx.relayer.execute(
@@ -111,6 +188,7 @@ export async function relayRecover(
     if (e instanceof RpcError) throw new HttpError(400, `REVERTED: ${revertReason(e)}`);
     throw e;
   }
+  metrics.relayerTransactions.inc({ kind: 'recover' });
   await ctx.provider.waitForTransaction(transaction_hash);
   return transaction_hash;
 }

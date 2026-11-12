@@ -3,7 +3,10 @@
 // deploy the account its own class and audiences describe. Capped per IP and globally; this costs gas.
 import type { RpcProvider } from 'starknet';
 import { accountAddress, deployCall } from '../../social-account';
-import { HOUR, HttpError, allow } from '../../http';
+import { HttpError } from '../../http';
+import { HOUR } from '../../limiter';
+import { log } from '../../log';
+import { metrics } from '../../metrics';
 import { HEX, isDeployed, type RecoverContext } from './recover';
 
 export type DeployRequest = { aud: string; identity: string };
@@ -20,11 +23,13 @@ export async function deployAccount(req: DeployRequest, ip: string, ctx: Recover
   // Kamui: this route has no token, so the pepper behind `identity` cannot be confirmed. With a
   // pepper service configured, deployments only happen through /recover.
   if (ctx.deploysPerHour === 0 || ctx.pepper.serviceUrl) throw new HttpError(403, 'DEPLOY_DISABLED');
-  if (!allow(`deploy:${ip}`, DEPLOYS_PER_IP, HOUR)) throw new HttpError(429, 'RATE_LIMITED');
-  if (!allow('deploy', ctx.deploysPerHour, HOUR)) throw new HttpError(429, 'DEPLOY_CAP');
+  if (!(await ctx.limiter.take(`deploy:${ip}`, DEPLOYS_PER_IP, HOUR))) throw new HttpError(429, 'RATE_LIMITED');
+  if (!(await ctx.limiter.take('deploy', ctx.deploysPerHour, HOUR))) throw new HttpError(429, 'DEPLOY_CAP');
 
   const { transaction_hash } = await ctx.relayer.execute(deployCall(req.aud, req.identity, ctx.classHash));
   await ctx.provider.waitForTransaction(transaction_hash);
-  console.log(new Date().toISOString(), `deployed ${address} tx ${transaction_hash} for ${ip}`);
+  metrics.relayerTransactions.inc({ kind: 'deploy' });
+  // Kamui: the client address is not logged.
+  log('info', 'account_deployed', { account: address, tx: transaction_hash });
   return { address, transaction_hash };
 }

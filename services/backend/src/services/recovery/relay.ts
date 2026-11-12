@@ -5,7 +5,9 @@
 // still reverts at the free fee estimate in relayRecover.
 import { RpcError, shortString } from 'starknet';
 import { accountAddress, recoverMessageHash } from '../../social-account';
-import { HOUR, HttpError, allow } from '../../http';
+import { HttpError } from '../../http';
+import { HOUR } from '../../limiter';
+import { log } from '../../log';
 import { HEX, relayRecover, type RecoverContext } from './recover';
 
 export type RelayRequest = {
@@ -126,12 +128,12 @@ export async function relayProof(body: RelayRequest, ip: string, ctx: RecoverCon
 
     checkRelay(req, { head, classHash, identity, currentPubkey }, ctx);
 
-    if (req.override && !allow(`override:${ip}`, OVERRIDES_PER_IP, HOUR)) {
+    if (req.override && !(await ctx.limiter.take(`override:${ip}`, OVERRIDES_PER_IP, HOUR))) {
       throw new HttpError(429, 'RATE_LIMITED');
     }
 
     const transaction_hash = await relayRecover(req.account, req.newPubkey, req.signature, req.proof, req.proofFacts, ctx);
-    console.log(new Date().toISOString(), `${req.override ? 'pending override recovery for' : 'recovered'} ${req.account} tx ${transaction_hash} (local proof, ${req.proofBytes} bytes)`);
+    log('info', req.override ? 'override_recovery_pending' : 'recovered', { account: req.account, tx: transaction_hash, proving: 'browser', bytes: req.proofBytes });
 
     return {
       address: req.account,

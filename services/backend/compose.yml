@@ -10,7 +10,10 @@ services:
     environment:
       PROVER_URL: http://prover:9900
       ROTATOR_URL: http://rotator:3001
+    # Kamui: 3000 only. The metrics port (9464) is deliberately not published.
     ports: ["3000:3000"]
+    # Kamui: the session registry database (REGISTRY_DB defaults to /app/data/registry.sqlite).
+    volumes: ["registry-data:/app/data"]
     restart: unless-stopped
 
   rotator:
@@ -18,6 +21,16 @@ services:
     env_file: .env.local
     # Loopback only: lets `bun run service:api` on this machine read its /health.
     ports: ["127.0.0.1:3001:3001"]
+    restart: unless-stopped
+
+  # Kamui: checks every key written to the registry against the issuers (plan D8). It gets the
+  # RPC URL and nothing else: no key. In production run it apart from the rotator, under another
+  # identity; it is here so a local stack has one.
+  watcher:
+    build: { context: ., dockerfile: src/services/watcher/Dockerfile }
+    environment:
+      RPC_URL: ${RPC_URL}
+      WATCHER_WEBHOOK_URL: ${WATCHER_WEBHOOK_URL:-}
     restart: unless-stopped
 
   prover:
@@ -34,3 +47,6 @@ services:
     # true need is somewhere between; see spikes/s1/results/RESULTS.md. One proof at a time.
     mem_limit: 20g
     restart: unless-stopped
+
+volumes:
+  registry-data:
