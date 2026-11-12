@@ -2,7 +2,7 @@
 // the keychain (tests/fakes.ts).
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { beginConnect, finishConnect, parsePepperFile, pepperFileMatchesLogin, type ConnectOptions, type KeyValueStore } from '../../sdk/src';
+import { beginConnect, beginExecute, finishConnect, finishExecute, parsePepperFile, pepperFileMatchesLogin, type ConnectOptions, type KeyValueStore } from '../../sdk/src';
 import { ACCOUNT, CHAIN_ID, CLAIMS, CLASS_HASH, KEYCHAIN, PEPPER, installApp, installFakes, newWorld, selectorOf, type World } from './fakes';
 
 const APP = 'http://localhost:5199';
@@ -336,6 +336,129 @@ test.describe('connection requests', () => {
   });
 });
 
+test.describe('transaction requests', () => {
+  /** An app on `from` asks the keychain to approve one transaction. */
+  async function transactionFrom(page: Page, from: string, calls = [{ contractAddress: TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x64', '0x0'] }]) {
+    const store = memoryStore();
+    const url = beginExecute({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/`, appName: 'Example Game', calls }, store);
+    await page.goto(`${from}/`);
+    await page.evaluate((target) => location.assign(target), url);
+    await page.waitForURL(`${KEYCHAIN}/execute`);
+    return store;
+  }
+
+  async function transactionAnswer(page: Page, store: KeyValueStore) {
+    await page.waitForURL(`${APP}/**`);
+    try {
+      return { ok: true as const, ...finishExecute(new URL(page.url()).hash, store)! };
+    } catch (error) {
+      return { ok: false as const, error: (error as Error).message };
+    }
+  }
+
+  test('an approved transaction is sent as asked and its hash returned', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const store = await transactionFrom(page, APP);
+
+    await expect(page.getByRole('heading', { name: 'Transaction request' })).toBeVisible();
+    await expect(page.locator('.origin')).toHaveText(APP);
+    await expect(page.getByText('This uses your full authority')).toBeVisible();
+    await expect(page.getByText('Sends 100 units of a token out of your account.')).toBeVisible();
+    await expect(page.getByRole('cell', { name: TOKEN })).toBeVisible();
+    await expect(page.getByRole('cell', { name: GAME })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Approve' }).click();
+    const answer = await transactionAnswer(page, store);
+    expect(answer).toEqual({ ok: true, transactionHash: '0xbbb' });
+
+    expect(world.sponsorRequests).toHaveLength(1);
+    const [call] = world.sponsorRequests[0]!.calls;
+    expect(world.sponsorRequests[0]!.calls).toHaveLength(1);
+    expect(BigInt(call!.to)).toBe(BigInt(TOKEN));
+    expect(call!.selector).toBe(selectorOf('transfer'));
+    expect(call!.data.map(BigInt)).toEqual([BigInt(GAME), 100n, 0n]);
+  });
+
+  test('an allowance is described as letting someone else spend', async ({ page, context }) => {
+    await setup(context);
+    await signIn(page);
+    await transactionFrom(page, APP, [{ contractAddress: TOKEN, entrypoint: 'approve', calldata: [GAME, '0x5', '0x0'] }]);
+    await expect(page.getByText('Lets another address spend up to 5 units of a token from your account.')).toBeVisible();
+  });
+
+  test('an unrecognised call is shown with its raw arguments, and several calls are all shown', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const store = await transactionFrom(page, APP, [
+      { contractAddress: GAME, entrypoint: 'move', calldata: ['0x7', '0x9'] },
+      { contractAddress: GAME, entrypoint: 'end_turn', calldata: [] },
+    ]);
+    await expect(page.getByRole('heading', { name: 'Call 1 of 2' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Call 2 of 2' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '0x7, 0x9' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: 'end_turn' })).toBeVisible();
+    await page.getByRole('button', { name: 'Approve' }).click();
+    expect((await transactionAnswer(page, store)).ok).toBe(true);
+    expect(world.sponsorRequests[0]!.calls.map((call) => call.selector)).toEqual([selectorOf('move'), selectorOf('end_turn')]);
+  });
+
+  test('a denied transaction tells the app and sends nothing', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const store = await transactionFrom(page, APP);
+    await page.getByRole('button', { name: 'Deny' }).click();
+    expect(await transactionAnswer(page, store)).toEqual({ ok: false, error: 'keychain: denied by the user' });
+    expect(world.sponsorRequests).toHaveLength(0);
+  });
+
+  test('a site cannot ask for a new device key, or any call to the account itself', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const store = await transactionFrom(page, APP, [{ contractAddress: ACCOUNT, entrypoint: 'add_owner', calldata: ['0x666', '0x2', '0x1', '0x2'] }]);
+    await expect(page.getByText('Kamui will not approve this request')).toBeVisible();
+    await expect(page.getByText("'add_owner' targets your account itself")).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Go back' }).click();
+    expect((await transactionAnswer(page, store)).ok).toBe(false);
+    expect(world.sponsorRequests).toHaveLength(0);
+    expect(world.owners).toHaveLength(1);
+  });
+
+  test('one bad call among good ones refuses the whole request', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    await transactionFrom(page, APP, [
+      { contractAddress: GAME, entrypoint: 'move', calldata: [] },
+      { contractAddress: ACCOUNT, entrypoint: 'remove_owner', calldata: ['0x1'] },
+    ]);
+    await expect(page.getByText('Kamui will not approve this request')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    expect(world.sponsorRequests).toHaveLength(0);
+  });
+
+  test('a transaction request from another site in the app\'s name is refused', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    await transactionFrom(page, OTHER_SITE);
+    await expect(page.getByText('this request was not sent by the site it names')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    expect(page.url()).toBe(`${KEYCHAIN}/execute`);
+    expect(world.sponsorRequests).toHaveLength(0);
+  });
+
+  test('a transaction request before any sign-in goes through sign-in, then to approval', async ({ page, context }) => {
+    const world = await setup(context);
+    const store = await transactionFrom(page, APP);
+    await expect(page.getByText(`${APP} asks you to approve a transaction. Sign in first.`)).toBeVisible();
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(page.getByRole('heading', { name: 'Transaction request' })).toBeVisible();
+    await page.getByRole('button', { name: 'Approve' }).click();
+    expect((await transactionAnswer(page, store)).ok).toBe(true);
+    expect(world.sponsorRequests).toHaveLength(1);
+  });
+});
+
 test.describe('the account page', () => {
   test('removing another device key sends remove_owner and updates the list', async ({ page, context }) => {
     const world = await setup(context);
@@ -385,7 +508,7 @@ test.describe('the account page', () => {
 
 test.describe('page security', () => {
   test('pages are served with a strict content security policy and cannot be framed', async ({ request }) => {
-    for (const path of ['/', '/connect', '/callback', '/main.js']) {
+    for (const path of ['/', '/connect', '/execute', '/callback', '/main.js']) {
       const response = await request.get(path);
       const policy = response.headers()['content-security-policy']!;
       expect(policy).toContain("default-src 'none'");

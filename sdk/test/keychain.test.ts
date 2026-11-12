@@ -2,8 +2,17 @@
 // only reaches the request it belongs to.
 import { describe, expect, test } from 'bun:test';
 import {
+  MAX_EXECUTE_CALLDATA,
+  MAX_EXECUTE_CALLS,
   beginConnect,
+  beginExecute,
+  callsFromWire,
+  describeCall,
+  executeProblems,
   finishConnect,
+  finishExecute,
+  parseExecuteRequest,
+  pendingRequestKind,
   forgetConnection,
   loadConnection,
   parseConnectRequest,
@@ -183,6 +192,89 @@ describe('keychain to app', () => {
 
   test('a fragment that is not an answer is ignored', () => {
     expect(finishConnect('#section', memoryStore())).toBeNull();
+  });
+});
+
+describe('transaction requests', () => {
+  const transfer = { contractAddress: TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x64', '0x0'] };
+
+  function executeFrom(store: KeyValueStore, calls = [transfer]) {
+    const url = new URL(beginExecute({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/play`, appName: 'Example Game', calls }, store));
+    return { url, request: parseExecuteRequest(url.hash, `${APP}/shop`)! };
+  }
+
+  test('the request reaches the keychain intact', () => {
+    const store = memoryStore();
+    const { url, request } = executeFrom(store);
+    expect(url.origin + url.pathname).toBe(`${KEYCHAIN}/execute`);
+    expect(request.kind).toBe('execute');
+    expect(request.calls).toEqual([{ to: TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x64', '0x0'] }]);
+    expect(callsFromWire(request.calls)).toEqual([transfer]);
+    expect(pendingRequestKind(store)).toBe('execute');
+  });
+
+  test('the same checks on who is asking as for a session', () => {
+    const fragment = executeFrom(memoryStore()).url.hash;
+    expect(() => parseExecuteRequest(fragment, 'https://evil.example/')).toThrow(/not sent by the site/);
+    expect(() => parseExecuteRequest(fragment, '')).toThrow(/cannot tell which site/);
+    expect(parseExecuteRequest('#other', `${APP}/`)).toBeNull();
+  });
+
+  test('malformed or oversized requests are refused', () => {
+    const base = executeFrom(memoryStore()).request;
+    const bad = (change: (r: any) => void, reason: RegExp) => {
+      const copy = JSON.parse(JSON.stringify(base));
+      change(copy);
+      expect(() => parseExecuteRequest(toFragment(copy), `${APP}/`)).toThrow(reason);
+    };
+    bad((r) => (r.kind = 'connect'), /not a transaction request/);
+    bad((r) => (r.calls = []), /no call/);
+    bad((r) => (r.calls = Array.from({ length: MAX_EXECUTE_CALLS + 1 }, () => r.calls[0])), /more than/);
+    bad((r) => (r.calls[0].to = 'x'), /bad call/);
+    bad((r) => (r.calls[0].entrypoint = 'drop table'), /bad call/);
+    bad((r) => (r.calls[0].calldata = ['1']), /arguments/);
+    bad((r) => (r.calls[0].calldata = Array.from({ length: MAX_EXECUTE_CALLDATA + 1 }, () => '0x1')), /arguments/);
+    // A connect request is not accepted as a transaction request, and the reverse.
+    const connect = new URL(beginConnect(options(), memoryStore())).hash;
+    expect(() => parseExecuteRequest(connect, `${APP}/`)).toThrow(/not a transaction request/);
+    expect(() => parseConnectRequest(executeFrom(memoryStore()).url.hash, `${APP}/`)).toThrow(/no session/);
+  });
+
+  test('a site can never ask for a call to the account itself', () => {
+    const toAccount = (entrypoint: string) => [{ to: ACCOUNT, entrypoint, calldata: [] }];
+    for (const entrypoint of ['add_owner', 'remove_owner', 'add_or_update_session_key', 'set_spending_policy', 'anything_else']) {
+      expect(executeProblems(ACCOUNT, toAccount(entrypoint))).toHaveLength(1);
+    }
+    // The address is compared as a number, whatever its formatting.
+    expect(executeProblems(ACCOUNT, [{ to: '0x0' + ACCOUNT.slice(2), entrypoint: 'x', calldata: [] }])).toHaveLength(1);
+    expect(executeProblems(ACCOUNT, [{ to: TOKEN, entrypoint: 'transfer', calldata: [] }])).toEqual([]);
+  });
+
+  test('token calls are recognised, with the full 256-bit amount', () => {
+    expect(describeCall({ to: TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x64', '0x0'] })).toEqual({ kind: 'transfer', token: TOKEN, recipient: GAME, amount: 100n });
+    expect(describeCall({ to: TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x5', '0x1'] })).toMatchObject({ amount: (1n << 128n) + 5n });
+    for (const entrypoint of ['approve', 'increase_allowance', 'increaseAllowance']) {
+      expect(describeCall({ to: TOKEN, entrypoint, calldata: [GAME, '0x1', '0x0'] })).toEqual({ kind: 'approve', token: TOKEN, spender: GAME, amount: 1n });
+    }
+    expect(describeCall({ to: TOKEN, entrypoint: 'move', calldata: [GAME, '0x1', '0x0'] })).toEqual({ kind: 'other' });
+    expect(describeCall({ to: TOKEN, entrypoint: 'transfer', calldata: [GAME] })).toEqual({ kind: 'other' });
+  });
+
+  test('an approval returns the transaction hash to the request it belongs to', () => {
+    const store = memoryStore();
+    const { request } = executeFrom(store);
+    const back = new URL(resultUrl(request, { v: 1, id: request.id, ok: true, transactionHash: '0xabc' }));
+    expect(back.origin + back.pathname).toBe(`${APP}/play`);
+    expect(finishExecute(back.hash, store)).toEqual({ transactionHash: '0xabc' });
+    expect(pendingRequestKind(store)).toBeNull();
+    expect(() => finishExecute(back.hash, store)).toThrow(/nothing was asked/);
+  });
+
+  test('a refusal, and an answer for another request, both throw', () => {
+    const store = memoryStore();
+    const { request } = executeFrom(store);
+    expect(() => finishExecute(toFragment({ v: 1, id: '0xabc', ok: true, transactionHash: '0x1' }), store)).toThrow(/not for this request/);
+    expect(() => finishExecute(toFragment({ v: 1, id: request.id, ok: false, error: 'denied by the user' }), store)).toThrow(/denied by the user/);
   });
 });
 

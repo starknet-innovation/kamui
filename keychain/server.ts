@@ -84,7 +84,7 @@ Bun.serve({
         body: request.method === 'GET' ? undefined : await request.text(),
       });
     }
-    if (url.pathname === '/' || url.pathname === '/connect' || url.pathname === '/callback') {
+    if (url.pathname === '/' || url.pathname === '/connect' || url.pathname === '/execute' || url.pathname === '/callback') {
       return respond(page, 'text/html; charset=utf-8');
     }
     return new Response('not found', { status: 404 });

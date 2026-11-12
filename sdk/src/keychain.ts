@@ -1,5 +1,8 @@
-// How an app talks to the Kamui keychain: the connect request and its answer, and the
-// app-side helpers that build one and read the other.
+// How an app talks to the Kamui keychain: its two requests and their answers, and the app-side
+// helpers that build one and read the other.
+//
+//   connect   approve a session: what a key held by the app may do without asking again
+//   execute   approve one transaction, with the account's full authority
 //
 // Version 1 uses full-page redirects, like an OAuth login: the app sends the user to the
 // keychain with a request in the URL fragment, and the keychain sends them back with the
@@ -14,11 +17,11 @@
 // of `redirectUri`, which is where the answer goes, and requires that the request came from a
 // page on that same origin (the browser's referrer). That stops a link on another site from
 // asking in an app's name with its own session key.
-import type { BigNumberish, Call, ProviderInterface } from 'starknet';
+import { CallData, type BigNumberish, type Call, type ProviderInterface } from 'starknet';
 import { nextSessionNonce, sessionOutsideExecution } from './outside';
 import { KamuiReader } from './reader';
 import { assertValidSession, unlimitedTokenCalls, type ScopedCall, type SessionParams, type SpendingLimit } from './sessions';
-import { newKeyPair, randomFelt, toHex } from './utils';
+import { newKeyPair, randomFelt, sameFelt, toHex } from './utils';
 
 export const KEYCHAIN_PROTOCOL_VERSION = 1;
 
@@ -47,6 +50,26 @@ export type ConnectResult =
   | { v: 1; id: string; ok: true; account: string; chainId: string; classHash: string }
   | { v: 1; id: string; ok: false; error: string };
 
+/** One call of an execute request, as it travels: calldata as hex felts. */
+export type WireCall = { to: string; entrypoint: string; calldata: string[] };
+
+export type ExecuteRequest = {
+  v: 1;
+  kind: 'execute';
+  id: string;
+  redirectUri: string;
+  appName?: string;
+  calls: WireCall[];
+};
+
+export type ExecuteResult =
+  | { v: 1; id: string; ok: true; transactionHash: string }
+  | { v: 1; id: string; ok: false; error: string };
+
+/** Bounds on an execute request, so the approval screen can show all of it. */
+export const MAX_EXECUTE_CALLS = 10;
+export const MAX_EXECUTE_CALLDATA = 100;
+
 const FRAGMENT_KEY = 'kamui';
 const isHex = (value: unknown): value is string => typeof value === 'string' && /^0x[0-9a-fA-F]{1,64}$/.test(value);
 const isPositiveInt = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value > 0;
@@ -65,7 +88,7 @@ function decode(text: string): unknown {
 }
 
 /** `#kamui=<payload>` for a request or an answer. */
-export function toFragment(value: ConnectRequest | ConnectResult): string {
+export function toFragment(value: ConnectRequest | ConnectResult | ExecuteRequest | ExecuteResult): string {
   return `#${FRAGMENT_KEY}=${encode(value)}`;
 }
 
@@ -77,6 +100,39 @@ function fromFragment(fragment: string): unknown | null {
   } catch {
     throw new Error('keychain: the request cannot be read');
   }
+}
+
+/**
+ * What every request must get right before the keychain looks at what it asks for: the version,
+ * the id, where the answer goes, and that it came from a page on that same origin.
+ */
+function envelope(data: any, referrer: string): { redirect: URL } {
+  if (typeof data !== 'object' || data === null || data.v !== KEYCHAIN_PROTOCOL_VERSION) throw new Error('keychain: unsupported request version');
+  if (typeof data.id !== 'string' || !/^0x[0-9a-f]{1,64}$/.test(data.id)) throw new Error('keychain: bad request id');
+
+  let redirect: URL;
+  try {
+    redirect = new URL(data.redirectUri);
+  } catch {
+    throw new Error('keychain: bad redirect address');
+  }
+  if (redirect.protocol !== 'https:' && !(redirect.protocol === 'http:' && redirect.hostname === 'localhost')) {
+    throw new Error('keychain: the redirect address must be https');
+  }
+  if (redirect.hash !== '') throw new Error('keychain: the redirect address must not have a fragment');
+
+  let from: string;
+  try {
+    from = new URL(referrer).origin;
+  } catch {
+    throw new Error('keychain: cannot tell which site sent this request');
+  }
+  if (from !== redirect.origin) throw new Error('keychain: this request was not sent by the site it names');
+
+  if (data.appName !== undefined && (typeof data.appName !== 'string' || data.appName.length > 60)) {
+    throw new Error('keychain: bad app name');
+  }
+  return { redirect };
 }
 
 /** The session a request asks for, in SDK terms. */
@@ -108,31 +164,7 @@ export function sessionFromWire(session: WireSession): { params: SessionParams; 
 export function parseConnectRequest(fragment: string, referrer: string): ConnectRequest | null {
   const data = fromFragment(fragment) as any;
   if (data === null) return null;
-  if (typeof data !== 'object' || data.v !== KEYCHAIN_PROTOCOL_VERSION) throw new Error('keychain: unsupported request version');
-  if (typeof data.id !== 'string' || !/^0x[0-9a-f]{1,64}$/.test(data.id)) throw new Error('keychain: bad request id');
-
-  let redirect: URL;
-  try {
-    redirect = new URL(data.redirectUri);
-  } catch {
-    throw new Error('keychain: bad redirect address');
-  }
-  if (redirect.protocol !== 'https:' && !(redirect.protocol === 'http:' && redirect.hostname === 'localhost')) {
-    throw new Error('keychain: the redirect address must be https');
-  }
-  if (redirect.hash !== '') throw new Error('keychain: the redirect address must not have a fragment');
-
-  let from: string;
-  try {
-    from = new URL(referrer).origin;
-  } catch {
-    throw new Error('keychain: cannot tell which site sent this request');
-  }
-  if (from !== redirect.origin) throw new Error('keychain: this request was not sent by the site it names');
-
-  if (data.appName !== undefined && (typeof data.appName !== 'string' || data.appName.length > 60)) {
-    throw new Error('keychain: bad app name');
-  }
+  const { redirect } = envelope(data, referrer);
 
   const s = data.session;
   if (typeof s !== 'object' || s === null) throw new Error('keychain: the request has no session');
@@ -191,8 +223,71 @@ export function sessionProblems(account: string, session: WireSession, now = Mat
   return problems;
 }
 
+/**
+ * Keychain side: reads and checks an execute request. Same rules as a connect request for who
+ * is asking; the calls must be few and small enough to show in full.
+ */
+export function parseExecuteRequest(fragment: string, referrer: string): ExecuteRequest | null {
+  const data = fromFragment(fragment) as any;
+  if (data === null) return null;
+  const { redirect } = envelope(data, referrer);
+  if (data.kind !== 'execute') throw new Error('keychain: not a transaction request');
+  if (!Array.isArray(data.calls) || data.calls.length === 0) throw new Error('keychain: the request has no call');
+  if (data.calls.length > MAX_EXECUTE_CALLS) throw new Error(`keychain: more than ${MAX_EXECUTE_CALLS} calls in one request`);
+  const calls: WireCall[] = [];
+  for (const call of data.calls) {
+    if (!isHex(call?.to) || typeof call?.entrypoint !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(call.entrypoint)) {
+      throw new Error('keychain: bad call');
+    }
+    if (!Array.isArray(call.calldata) || call.calldata.length > MAX_EXECUTE_CALLDATA || !call.calldata.every(isHex)) {
+      throw new Error('keychain: bad call arguments');
+    }
+    calls.push({ to: call.to, entrypoint: call.entrypoint, calldata: [...call.calldata] });
+  }
+  return { v: 1, kind: 'execute', id: data.id, redirectUri: redirect.toString(), appName: data.appName, calls };
+}
+
+/**
+ * Keychain side: what the keychain refuses to put in front of the user as a transaction.
+ * An app may never ask for a call to the account itself: adding or removing device keys,
+ * sessions and spending limits are only ever changed from the keychain's own pages.
+ */
+export function executeProblems(account: string, calls: WireCall[]): string[] {
+  const problems: string[] = [];
+  for (const call of calls) {
+    if (sameFelt(call.to, account)) problems.push(`'${call.entrypoint}' targets your account itself`);
+  }
+  return problems;
+}
+
+export type CallDescription =
+  | { kind: 'transfer'; token: string; recipient: string; amount: bigint }
+  | { kind: 'approve'; token: string; spender: string; amount: bigint }
+  | { kind: 'other' };
+
+/**
+ * Recognises the standard token calls, so the approval screen can say what they do. Anything
+ * else is shown raw. The amount is in the token's smallest unit.
+ */
+export function describeCall(call: WireCall): CallDescription {
+  if (call.calldata.length !== 3) return { kind: 'other' };
+  const [party, low, high] = call.calldata as [string, string, string];
+  if (BigInt(low) >= 1n << 128n || BigInt(high) >= 1n << 128n) return { kind: 'other' };
+  const amount = (BigInt(high) << 128n) + BigInt(low);
+  if (call.entrypoint === 'transfer') return { kind: 'transfer', token: call.to, recipient: party, amount };
+  if (call.entrypoint === 'approve' || call.entrypoint === 'increase_allowance' || call.entrypoint === 'increaseAllowance') {
+    return { kind: 'approve', token: call.to, spender: party, amount };
+  }
+  return { kind: 'other' };
+}
+
+/** The calls of an execute request, as starknet.js calls. */
+export function callsFromWire(calls: WireCall[]): Call[] {
+  return calls.map((call) => ({ contractAddress: call.to, entrypoint: call.entrypoint, calldata: call.calldata }));
+}
+
 /** The address the keychain sends the user back to, with the answer in the fragment. */
-export function resultUrl(request: ConnectRequest, result: ConnectResult): string {
+export function resultUrl(request: { redirectUri: string }, result: ConnectResult | ExecuteResult): string {
   return request.redirectUri + toFragment(result);
 }
 
@@ -291,6 +386,60 @@ export function loadConnection(store: KeyValueStore): Connection | null {
 export function forgetConnection(store: KeyValueStore): void {
   store.removeItem(CONNECTION);
   store.removeItem(PENDING);
+  store.removeItem(PENDING_EXECUTE);
+}
+
+const PENDING_EXECUTE = 'kamui.pending.execute';
+
+/** Which answer the app is waiting for, if any. Tells it which `finish…` to call. */
+export function pendingRequestKind(store: KeyValueStore): 'connect' | 'execute' | null {
+  if (store.getItem(PENDING_EXECUTE)) return 'execute';
+  if (store.getItem(PENDING)) return 'connect';
+  return null;
+}
+
+/**
+ * App side: asks the user to approve one transaction in the keychain. Returns the keychain
+ * address to send the user to. Use it for anything a session does not cover.
+ */
+export function beginExecute(
+  options: { keychainUrl: string; redirectUri: string; appName?: string; calls: Call[] },
+  store: KeyValueStore,
+): string {
+  const request: ExecuteRequest = {
+    v: 1,
+    kind: 'execute',
+    id: randomFelt(),
+    redirectUri: options.redirectUri,
+    appName: options.appName,
+    calls: options.calls.map((call) => ({
+      to: call.contractAddress,
+      entrypoint: call.entrypoint,
+      calldata: CallData.compile(call.calldata ?? []).map((felt) => toHex(felt)),
+    })),
+  };
+  store.setItem(PENDING_EXECUTE, JSON.stringify({ id: request.id }));
+  return `${options.keychainUrl.replace(/\/$/, '')}/execute${toFragment(request)}`;
+}
+
+/**
+ * App side: reads the keychain's answer to an execute request. Returns the transaction hash, or
+ * null when the fragment is not an answer. Throws if the user refused or the keychain reported
+ * an error. The transaction has been accepted by the network when the user comes back.
+ */
+export function finishExecute(fragment: string, store: KeyValueStore): { transactionHash: string } | null {
+  const data = fromFragment(fragment) as any;
+  if (data === null) return null;
+  const pendingText = store.getItem(PENDING_EXECUTE);
+  if (!pendingText) throw new Error('keychain: an answer arrived but nothing was asked');
+  const pending = JSON.parse(pendingText) as { id: string };
+  if (typeof data !== 'object' || data.v !== KEYCHAIN_PROTOCOL_VERSION || data.id !== pending.id) {
+    throw new Error('keychain: the answer is not for this request');
+  }
+  store.removeItem(PENDING_EXECUTE);
+  if (data.ok !== true) throw new Error(`keychain: ${typeof data.error === 'string' ? data.error : 'refused'}`);
+  if (!isHex(data.transactionHash)) throw new Error('keychain: the answer is malformed');
+  return { transactionHash: data.transactionHash };
 }
 
 /** Whether the session still exists on the account. It dies with any change of owners. */

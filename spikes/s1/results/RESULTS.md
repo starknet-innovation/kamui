@@ -164,3 +164,16 @@ Not covered: the pepper recovery file used for a login, override recovery, Apple
 One thing the run exposed, now fixed: the sign-in happened twice, so two keys were added for the same device and the first is unused. The likely cause is that a keychain page drawn before the first sign-in still offered "Continue with Google" afterwards. The keychain now looks at its stored login again before starting a sign-in. The account has four owners as a result; the unused key can be removed from the home page.
 
 Not exercised: removing a device, the recovery file download, "forget this device", a refused request (covered by tests), and any browser other than the one in the Claude desktop app.
+
+## Run 7: one transaction approved in the keychain
+
+2026-11-12. The keychain, the demo app and the backend's `/sponsor`, local, on Sepolia. Same account as runs 5 and 6. No sign-in was needed: the keychain still had its device key.
+
+| Step | Result |
+|---|---|
+| The demo app connects | Works without a sign-in; the session is registered (`0x4a8ecbeb5da707d2193b7e208a6c258c29a283fb06bac1139e83a99d60ac22d`). |
+| The app asks for a call outside its session | The keychain shows the site, the call and that it uses the account's full authority. |
+| The user approves | The call is sent as an owner-signed outside execution paid by the relayer (`0x567f7a3819b98865f4faa2db39032d2ee2cd7c322676cdbff31c4485a0c5f03`), and the user returns to the app with the hash. The contract's count went from 7 to 8. |
+| The session afterwards | Still live: an owner transaction that does not change the owners leaves sessions alone. |
+
+Not exercised live: a denied transaction, and a request for a call to the account itself (both covered by the browser tests).

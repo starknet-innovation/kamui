@@ -10,7 +10,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 
 | Module | What it does |
 |---|---|
-| `keychain` | The keychain protocol and the app side of it: `beginConnect`, `finishConnect`, `sessionCall`, `sponsor`, and for the keychain `parseConnectRequest`, `sessionProblems`. |
+| `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `sessionProblems`, `executeProblems`, `describeCall`. |
 | `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |
 | `reader` | `KamuiReader`: owners, anchor, session epoch, session data and scope, spending policies, nonces. |
@@ -111,7 +111,7 @@ const login = await completeLogin({
 bun install
 bun test test/unit.test.ts            # 19 tests, no network
 bun test test/login.test.ts           # 19 tests, no network; runs the pepper service in process
-bun test test/keychain.test.ts        # 16 tests, no network
+bun test test/keychain.test.ts        # 23 tests, no network
 
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0

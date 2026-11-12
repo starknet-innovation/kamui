@@ -3,10 +3,13 @@
 import { RpcProvider, type Call } from 'starknet';
 import {
   beginConnect,
+  beginExecute,
   finishConnect,
+  finishExecute,
   forgetConnection,
   isConnectionAlive,
   loadConnection,
+  pendingRequestKind,
   sessionCall,
   sponsor,
   type Connection,
@@ -84,6 +87,20 @@ async function ready(connection: Connection) {
     // transfer() is not in the session's scope: the account must refuse it.
     await send(connection, [{ contractAddress: config.target, entrypoint: 'transfer', calldata: ['0x1', '0x1', '0x0'] }], 'out-of-scope call');
   });
+  button('Send a one-off call (asks you in Kamui)', () => {
+    // transfer() is outside the session, so the user approves this one transaction in the keychain.
+    location.assign(
+      beginExecute(
+        {
+          keychainUrl: config.keychainUrl,
+          redirectUri: `${location.origin}/`,
+          appName: 'Ping demo',
+          calls: [{ contractAddress: config.target, entrypoint: 'transfer', calldata: ['0x1', '0x1', '0x0'] }],
+        },
+        sessionStorage,
+      ),
+    );
+  });
   button('Disconnect', () => {
     forgetConnection(sessionStorage);
     location.assign('/');
@@ -91,10 +108,20 @@ async function ready(connection: Connection) {
 }
 
 try {
-  const fresh = finishConnect(location.hash, sessionStorage);
-  if (fresh) {
-    history.replaceState(null, '', '/');
-    log('the keychain approved the session');
+  // The keychain answers in the URL fragment. Which request it answers was noted before leaving.
+  let fresh: Connection | null = null;
+  if (pendingRequestKind(sessionStorage) === 'execute') {
+    const sent = finishExecute(location.hash, sessionStorage);
+    if (sent) {
+      history.replaceState(null, '', '/');
+      log(`you approved the one-off call in Kamui: ${sent.transactionHash}`);
+    }
+  } else {
+    fresh = finishConnect(location.hash, sessionStorage);
+    if (fresh) {
+      history.replaceState(null, '', '/');
+      log('the keychain approved the session');
+    }
   }
   const connection = fresh ?? loadConnection(sessionStorage);
   if (connection) await ready(connection);

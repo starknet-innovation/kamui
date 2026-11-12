@@ -2,6 +2,7 @@
 //
 // Pages:
 //   /connect   an app asks to connect; the request is in the URL fragment
+//   /execute   an app asks for one transaction to be approved
 //   /callback  the issuer returns here after a sign-in
 //   /          this device's account: owners, recovery file
 //
@@ -11,14 +12,18 @@ import {
   KamuiReader,
   authUrl,
   beginLogin,
+  callsFromWire,
   completeLogin,
   createSessionCalls,
+  describeCall,
+  executeProblems,
   exportPepper,
   fetchPepper,
   httpRecoverBackend,
   newKeyPair,
   ownerOutsideExecution,
   parseConnectRequest,
+  parseExecuteRequest,
   parseLoginRedirect,
   removeOwnerCall,
   resultUrl,
@@ -27,6 +32,7 @@ import {
   sessionProblems,
   sponsor,
   type ConnectRequest,
+  type ExecuteRequest,
   type KeyPair,
   type LoginAttempt,
 } from '../../sdk/src';
@@ -100,12 +106,19 @@ const code = (text: string) => el('code', text);
 // Pending connect request (survives the trip to the issuer)
 //
 
-function pendingRequest(): ConnectRequest | null {
+type Pending = { kind: 'connect'; request: ConnectRequest } | { kind: 'execute'; request: ExecuteRequest };
+
+function pendingRequest(): Pending | null {
   const text = sessionStorage.getItem(REQUEST);
-  return text ? (JSON.parse(text) as ConnectRequest) : null;
+  return text ? (JSON.parse(text) as Pending) : null;
 }
 
-function answer(request: ConnectRequest, result: { ok: true; account: string; chainId: string; classHash: string } | { ok: false; error: string }) {
+type Answer =
+  | { ok: true; account: string; chainId: string; classHash: string }
+  | { ok: true; transactionHash: string }
+  | { ok: false; error: string };
+
+function answer(request: { id: string; redirectUri: string }, result: Answer) {
   sessionStorage.removeItem(REQUEST);
   location.assign(resultUrl(request, { v: 1, id: request.id, ...result }));
 }
@@ -129,9 +142,13 @@ async function startLogin() {
 }
 
 function showSignIn(reason = '') {
-  const request = pendingRequest();
+  const pending = pendingRequest();
+  const request = pending?.request;
   const nodes: Node[] = [el('h2', 'Sign in')];
-  if (request) nodes.push(el('p', `${new URL(request.redirectUri).origin} wants to connect. Sign in first.`));
+  if (pending) {
+    const origin = new URL(pending.request.redirectUri).origin;
+    nodes.push(el('p', pending.kind === 'connect' ? `${origin} wants to connect. Sign in first.` : `${origin} asks you to approve a transaction. Sign in first.`));
+  }
   if (reason) nodes.push(el('p', reason, 'note'));
   nodes.push(
     el('p', 'Signing in on a new device adds a key for this device to your account. It takes about a minute, and it ends every session your apps have, on all your devices.', 'warn'),
@@ -255,6 +272,69 @@ function showApproval(request: ConnectRequest, device: KeyPair, record: AccountR
 }
 
 //
+// Transaction approval
+//
+
+function showTransaction(request: ExecuteRequest, device: KeyPair, record: AccountRecord) {
+  const origin = new URL(request.redirectUri).origin;
+  const problems = executeProblems(record.account, request.calls);
+
+  const nodes: Node[] = [
+    el('h2', 'Transaction request'),
+    el('p', origin, 'origin'),
+    el('p', request.appName ? `It calls itself "${request.appName}". Trust the address above, not the name.` : 'Check that this is the site you came from.', 'note'),
+    el('p', 'It asks you to approve one transaction from your account. This uses your full authority: no session limit or spending limit applies to it.', 'warn'),
+  ];
+
+  request.calls.forEach((call, index) => {
+    nodes.push(el('h2', request.calls.length > 1 ? `Call ${index + 1} of ${request.calls.length}` : 'What it does'));
+    const what = describeCall(call);
+    if (what.kind === 'transfer') {
+      nodes.push(el('p', `Sends ${what.amount} units of a token out of your account.`, 'warn'));
+    } else if (what.kind === 'approve') {
+      nodes.push(el('p', `Lets another address spend up to ${what.amount} units of a token from your account.`, 'warn'));
+    }
+    const rows: (string | Node)[][] = [
+      ['Contract', code(call.to)],
+      ['Function', code(call.entrypoint)],
+    ];
+    if (what.kind === 'transfer') rows.push(['To', code(what.recipient)], ['Amount', `${what.amount} (smallest unit)`]);
+    else if (what.kind === 'approve') rows.push(['Spender', code(what.spender)], ['Amount', `${what.amount} (smallest unit)`]);
+    else rows.push(['Arguments', call.calldata.length ? code(call.calldata.join(', ')) : 'none']);
+    nodes.push(table([], rows));
+  });
+
+  if (problems.length) {
+    const list = el('ul');
+    for (const problem of problems) list.append(el('li', problem));
+    const box = el('div', '', 'error');
+    box.append(el('p', 'Kamui will not approve this request. Device keys, sessions and limits can only be changed here in Kamui, never by a site.'), list);
+    nodes.push(box, button('Go back', () => answer(request, { ok: false, error: `refused by the keychain: ${problems[0]}` }), true));
+    show(...nodes);
+    return;
+  }
+
+  nodes.push(
+    button('Approve', async () => {
+      status('Sending the transaction…');
+      const call = ownerOutsideExecution({
+        chainId: record.chainId,
+        account: record.account,
+        calls: callsFromWire(request.calls),
+        ownerPrivateKey: device.privateKey,
+        window: { executeBefore: Math.floor(Date.now() / 1000) + 600 },
+      });
+      const transactionHash = await sponsor(`${config.apiUrl}/sponsor`, call);
+      status('Waiting for the network…');
+      await provider.waitForTransaction(transactionHash);
+      answer(request, { ok: true, transactionHash });
+    }, true),
+    button('Deny', () => answer(request, { ok: false, error: 'denied by the user' })),
+  );
+  show(...nodes);
+}
+
+//
 // Home
 //
 
@@ -319,8 +399,9 @@ async function resume() {
   if (!(await new KamuiReader(provider, login.account.account).isOwner(login.device.publicKey))) {
     return showSignIn('This device no longer has access to your account. Sign in again to add it back.');
   }
-  const request = pendingRequest();
-  if (request) return showApproval(request, login.device, login.account);
+  const pending = pendingRequest();
+  if (pending?.kind === 'connect') return showApproval(pending.request, login.device, login.account);
+  if (pending?.kind === 'execute') return showTransaction(pending.request, login.device, login.account);
   return showHome(login.device, login.account);
 }
 
@@ -331,7 +412,12 @@ async function main() {
     const fragment = location.hash;
     history.replaceState(null, '', '/connect');
     const request = parseConnectRequest(fragment, document.referrer);
-    if (request) sessionStorage.setItem(REQUEST, JSON.stringify(request));
+    if (request) sessionStorage.setItem(REQUEST, JSON.stringify({ kind: 'connect', request } satisfies Pending));
+  } else if (location.pathname === '/execute') {
+    const fragment = location.hash;
+    history.replaceState(null, '', '/execute');
+    const request = parseExecuteRequest(fragment, document.referrer);
+    if (request) sessionStorage.setItem(REQUEST, JSON.stringify({ kind: 'execute', request } satisfies Pending));
   } else if (location.pathname === '/callback') {
     await finishLogin();
   }
@@ -341,8 +427,8 @@ async function main() {
 main().catch((error) => {
   status('');
   const nodes: Node[] = [el('h2', 'Something went wrong'), el('p', (error as Error).message, 'error')];
-  const request = pendingRequest();
-  if (request) nodes.push(button('Go back to the site', () => answer(request, { ok: false, error: 'the keychain could not complete the request' }), true));
+  const pending = pendingRequest();
+  if (pending) nodes.push(button('Go back to the site', () => answer(pending.request, { ok: false, error: 'the keychain could not complete the request' }), true));
   nodes.push(button('Start again', () => location.assign('/')));
   show(...nodes);
 });
