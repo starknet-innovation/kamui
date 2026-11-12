@@ -1,0 +1,59 @@
+{
+  "checkedAt": "2026-11-12T17:26:16.221Z",
+  "events": [
+    {
+      "at": "2026-11-12T17:14:50.563Z",
+      "path": "/api/registry/sessions/list",
+      "httpStatus": 200,
+      "method": "POST"
+    },
+    {
+      "at": "2026-11-12T17:16:37.271Z",
+      "path": "/api/wallet/sponsor",
+      "httpStatus": 200,
+      "method": "POST",
+      "transaction_hash": "0x3cf1511e52169d7492a280ccd70315393fede2c9402959c6c39ca44742d623d"
+    },
+    {
+      "at": "2026-11-12T17:16:40.316Z",
+      "path": "/api/registry/sessions",
+      "httpStatus": 200,
+      "method": "POST"
+    },
+    {
+      "at": "2026-11-12T17:18:08.573Z",
+      "path": "/api/sponsor",
+      "httpStatus": 503,
+      "method": "POST",
+      "error": "SPENDING_PAUSED"
+    },
+    {
+      "at": "2026-11-12T17:18:51.525Z",
+      "path": "/api/sponsor",
+      "httpStatus": 503,
+      "method": "POST",
+      "error": "SPENDING_PAUSED"
+    },
+    {
+      "at": "2026-11-12T17:19:05.661Z",
+      "path": "/api/sponsor",
+      "httpStatus": 429,
+      "method": "POST",
+      "error": "FUNDING_CAP"
+    },
+    {
+      "at": "2026-11-12T17:19:36.356Z",
+      "path": "/api/sponsor",
+      "httpStatus": 200,
+      "method": "POST",
+      "transaction_hash": "0x6131830584adc23b746d802335825ed2951571b78331b9866882b2b6beb3893"
+    },
+    {
+      "at": "2026-11-12T17:26:16.216Z",
+      "path": "/api/sponsor",
+      "httpStatus": 400,
+      "method": "POST",
+      "error": "REVERTED"
+    }
+  ]
+}

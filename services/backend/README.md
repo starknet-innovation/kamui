@@ -1,6 +1,6 @@
 # Kamui backend
 
-The services behind a login: the API that authenticates deployments and relays browser-generated proofs, the rotator that keeps the on-chain key registry in step with Google and Apple, and the watcher that checks the rotator's work. The api also sponsors transactions and keeps the session registry.
+The services behind a login: the API authenticates deployments and relays browser-generated proofs; the selected hosted beta uses manual Google registry administration off-server and an independent read-only watcher. Historical automatic rotator code remains for local tooling/tests and is excluded from the lean host. The api also sponsors transactions and keeps the session registry.
 
 It started as upstream's backend (keep-starknet-strange/social-account, MIT). The Kamui changes are listed in `THIRD_PARTY.md`. It has had one audit pass (findings #2, #3 and #4 are fixed here) and is not production-ready: see "Not done".
 
@@ -13,6 +13,7 @@ It started as upstream's backend (keep-starknet-strange/social-account, MIT). Th
 | `POST /relay` | Takes a client-generated `jobId` and completed pinned V2 proof, validates recovery bindings, and returns `202 { jobId }`. A durable job journals the paid recovery before broadcast. No JWT or pepper is sent to this route. |
 | `POST /deploy/authenticated` | Authenticates the token and device nonce, derives the account and confirms the pepper before a capped paid deployment; returns a polled durable job. No server proving. |
 | `POST /deploy` | Legacy unauthenticated deployment is disabled: `410 AUTHENTICATED_DEPLOYMENT_REQUIRED`. |
+| `POST /wallet/sponsor` | Funds only exact account-self management calls with a current owner signature, unused nonce and separate durable wallet limits; no app bearer. |
 | `POST /sponsor` | The relayer pays for an `execute_from_outside_v2` call on a Kamui account, out of a budget. The default development relayer, or the optional AVNU transport (Sepolia only; see `PAYMASTER.md`). |
 | `POST /registry/sessions`, `/list`, `/remove` | The session registry: which sessions an account approved, and for which site. |
 | `GET /health/api`, `/health/prover`, `/health/rotator`, `/live` | Health. `/live` depends on nothing. |
@@ -72,7 +73,7 @@ This protocol replaces the old synchronous response; deploy the backend and SDK/
 
 ## Durable hosted funding
 
-PostgreSQL mode now uses [FUNDING.md](FUNDING.md): global/operation/app/account count and fee limits, separate deployment/recovery budgets, conservative pre-send debits and a persisted pause. New databases start paused and the example policy is all zero. Approved app servers need a private credential distinct from the public app identifier. The hosted keychain's own wallet-management sponsorship remains off pending a dedicated owner-authenticated funding route; no credential is embedded in public pages.
+PostgreSQL mode now uses [FUNDING.md](FUNDING.md): global/operation/app/account count and fee limits, separate deployment/recovery budgets, conservative pre-send debits and a persisted pause. New databases start paused and the example policy is all zero. Approved app servers need a private credential distinct from the public app identifier. The keychain uses the separately budgeted `/wallet/sponsor` owner-authorized management route; all wallet limits default to zero and no credential is embedded in public pages.
 
 Hosted runtime supports `SECRET_SOURCE=files` for scoped signing-key mounts, `DATABASE_URL_FILE` and optional `PAYMASTER_API_KEY_FILE`; values and files cannot be configured ambiguously. The restore gate blocks startup, POST admission and paid sends when missing/blocked, and guards JWK rotator writes. [Lean package](../../infra/aws/lean/README.md), [backup/restore](../../infra/aws/lean/backup/README.md).
 
@@ -108,7 +109,7 @@ Every request, including a read, is signed by an owner key over `poseidon('kamui
 
 **Watcher** (plan decision D8). `bun run service:watcher` keeps watching; `bun run watch:once` makes one pass and exits 0 (all keys in effect verified), 1 (an alert) or 2 (something could not be checked). For each `KeySet` event it fetches the issuer's keys itself, recomputes the modulus hash as `registry.cairo` does, and alerts when the hash differs, the issuer does not publish the key id, or the issuer is unknown. An alert is an error-level log line (`registry_key_alert`) and, when `WATCHER_WEBHOOK_URL` is set, a JSON POST. The rules for historical writes are at the top of `src/services/watcher/key-watcher.ts`.
 
-The watcher holds no key and shares no state with the rotator, only the arithmetic in `src/jwk/modulus.ts`. Run it apart from the rotator, under another identity. The registry on Sepolia today is an older class whose `KeySet` carries no hash; for those writes the watcher hashes the key it reads from the registry's storage.
+The watcher holds no key and shares no cache/state with signing tooling, only arithmetic in `src/jwk/modulus.ts`. Its production process also checks every currently published eligible Google key directly against registry storage, including absent keys with no event history; missing/mismatched keys alert, and fetch/RPC failures never report healthy. Run it apart from the rotator, under another identity. The registry on Sepolia today is an older class whose `KeySet` carries no hash; for those writes the watcher hashes the key it reads from the registry's storage.
 
 ## Logs and metrics
 
@@ -137,7 +138,7 @@ bun run service:watcher
 
 `deployments.env` points at upstream's registry and prover executor on Sepolia and at the Kamui class declared there on 2026-11-12. The browser RPC must serve the fixed-block state/proofs required by the Wasm executor; see `../../spikes/s1/README.md`.
 
-Set `CHAIN_ID` (for example `SN_SEPOLIA`) to let the api, rotator and watcher start while the RPC is down; they then check the node's chain in the background and stop if it differs.
+In development, `CHAIN_ID` (for example `SN_SEPOLIA`) lets services resolve their configured chain before background RPC confirmation. The selected hosted API additionally requires its read-only offline-admin startup check to succeed, so it will not start or read its signer while those registry views are unavailable.
 
 The scripts under `src/scripts/` build the contracts with `scarb`. Put the pinned version first on `PATH` as described in `../../contracts/README.md`.
 
@@ -161,7 +162,15 @@ The selected lean target runs PostgreSQL on the backend server, with pepper in i
 - **Recovery jobs and AVNU ran live** on Sepolia on 2026-11-12 (run 9): recovery after a dropped submission response, AVNU owner/session calls, scope/replay refusals and a budget refusal after a lost success response. No mainnet claim follows from this.
 - **Recovery metadata is durable; proof work is not.** Results and transaction intents survive restart on a retained database volume. Interrupted proving needs a fresh sign-in, unknown transaction intents stay locked, and reloading a keychain page does not resume polling. PostgreSQL paid-attempt count/fee budgets survive restarts; generic HTTP rate limits remain in memory. SQLite development retains its historical memory ledger.
 - **The registry's replay check is per database.** It is enforced in the selected database, including PostgreSQL and explicit SQLite imports. Restoring stale history requires the external host fence and conservative reconciliation.
-- **Budgets:** PostgreSQL now enforces both counts and worst-case fee totals per period; no per-app usage UI is implemented. AVNU actual fees remain external to signed local bounds. Funding policy thresholds/app approval and the keychain wallet-management funding route still need review.
+- **Budgets:** PostgreSQL now enforces both counts and worst-case fee totals per period; no per-app usage UI is implemented. AVNU actual fees remain external to signed local bounds. Hosted funding thresholds/app approval and the owner-authorized wallet route still need security review; only the bounded run-12 local test policy is authorized.
 - **Keys:** hosted processes support scoped private file mounts, while development may use environment values. Neither is a non-extractable Stark-curve signer; host compromise, custody and role isolation need security review.
 - **Client-side V2 acceptance.** The pinned Wasm integration passed an existing-account Google recovery on Sepolia in run 11. Hosted-origin, first-deployment, broader browser/resource and cloud restore acceptance remain pending. See [CLIENT_PROVING.md](../../keychain/CLIENT_PROVING.md) for browser/resources/assets and remaining acceptance.
 - **Override recovery with a pepper** has not been exercised.
+
+## Off-server registry administration
+
+The lean package has no unattended rotator or registry-administrator key. Set `ROTATOR_URL` empty for manual-mode health. Its mandatory `REQUIRE_OFFLINE_REGISTRY_ADMIN=true` gate checks actual/configured Sepolia chain, the pinned registry and absence of both registry roles on the API relayer before reading that signer file. The current shared test relayer must complete the operator's unsigned grant/confirm/renounce/verify workflow first. This does not prove new-controller custody or continuous role absence. [Review and handoff](../../infra/aws/lean/readiness/README.md).
+
+## Live PostgreSQL regression — run 12
+
+[Run 12](../../spikes/s1/results/run-12-postgres-regression.md) passed wallet-authorized session approval/revoke-all, approved-app Ping and Google browser-proof recovery on Sepolia using an isolated persistent PostgreSQL database. Pause and cap refusals survived API/database restarts; an accepted recovery with an unfinished journal row reconciled after restart. Four paid attempts cost 2.116362690347488448 test STRK; final local funding is paused and the test account has five owners. Original SQLite configuration was retained. This used the existing local test relayer with no unattended rotator, not AVNU or the hosted off-server-controller setup; registry role handoff and AWS acceptance remain pending.

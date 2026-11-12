@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { HttpError } from '../../http';
 
 export const SPONSOR_TOKEN_HEADER = 'x-kamui-sponsor-token';
-export type FundingKind = 'sponsor' | 'deployment' | 'recovery';
+export type FundingKind = 'sponsor' | 'deployment' | 'recovery' | 'wallet';
 export type FundingLimit = {
   periodSeconds: number;
   txPerPeriod: number;
@@ -17,7 +17,7 @@ export type FundingLimit = {
 export type FundingApp = FundingLimit & { credentialHash: string };
 export type FundingPolicy = {
   global: FundingLimit;
-  operations: Record<FundingKind, FundingLimit>;
+  operations: Record<Exclude<FundingKind, 'wallet'>, FundingLimit> & { wallet?: FundingLimit };
   apps: Record<string, FundingApp>;
   /** External fees are not bounded by our signed resource bounds. Requires separate review. */
   allowExternalPaymaster: boolean;
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS funding_control (
 INSERT INTO funding_control (key, paused) VALUES ('global', true) ON CONFLICT (key) DO NOTHING;
 CREATE TABLE IF NOT EXISTS funding_debits (
   id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('sponsor','deployment','recovery')),
+  kind TEXT NOT NULL CHECK (kind IN ('sponsor','deployment','recovery','wallet')),
   account TEXT NOT NULL,
   app TEXT,
   fee NUMERIC(80,0) NOT NULL CHECK (fee >= 0),
@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS funding_debits (
 CREATE INDEX IF NOT EXISTS funding_debits_time ON funding_debits(created_at);
 CREATE INDEX IF NOT EXISTS funding_debits_account ON funding_debits(account, created_at);
 CREATE INDEX IF NOT EXISTS funding_debits_app ON funding_debits(app, created_at);
+`;
+/** Run inside the shared versioned schema transaction for pre-wallet databases. */
+export const FUNDING_V3_MIGRATION_SQL = `
+ALTER TABLE funding_debits DROP CONSTRAINT IF EXISTS funding_debits_kind_check;
+ALTER TABLE funding_debits ADD CONSTRAINT funding_debits_kind_check CHECK (kind IN ('sponsor','deployment','recovery','wallet'));
 `;
 const FRI_MAX = 2n ** 256n - 1n;
 const keyPattern = /^[A-Za-z0-9_-]{16,64}$/;
@@ -74,7 +79,7 @@ const limit = (v: any): FundingLimit => {
 };
 export function disabledFundingPolicy(): FundingPolicy {
   const off = (): FundingLimit => ({ periodSeconds: 3600, txPerPeriod: 0, perAccountPerPeriod: 0, maxFeePerTx: 0n, maxFeePerPeriod: 0n, perAccountMaxFeePerPeriod: 0n });
-  return { global: off(), operations: { sponsor: off(), deployment: off(), recovery: off() }, apps: {}, allowExternalPaymaster: false };
+  return { global: off(), operations: { sponsor: off(), deployment: off(), recovery: off(), wallet: off() }, apps: {}, allowExternalPaymaster: false };
 }
 export function parseFundingPolicy(v: any): FundingPolicy {
   if (!v || typeof v !== 'object' || Array.isArray(v) || !v.operations || !v.apps || Array.isArray(v.apps) || typeof v.apps !== 'object' || typeof v.allowExternalPaymaster !== 'boolean') return failPolicy();
@@ -83,7 +88,7 @@ export function parseFundingPolicy(v: any): FundingPolicy {
     if (!keyPattern.test(key) || typeof entry?.credentialHash !== 'string' || !/^[0-9a-f]{64}$/.test(entry.credentialHash) || entry.credentialHash === createHash('sha256').update('').digest('hex')) return failPolicy();
     apps[key] = { ...limit(entry), credentialHash: entry.credentialHash };
   }
-  return { global: limit(v.global), operations: { sponsor: limit(v.operations.sponsor), deployment: limit(v.operations.deployment), recovery: limit(v.operations.recovery) }, apps, allowExternalPaymaster: v.allowExternalPaymaster };
+  return { global: limit(v.global), operations: { sponsor: limit(v.operations.sponsor), deployment: limit(v.operations.deployment), recovery: limit(v.operations.recovery), wallet: v.operations.wallet === undefined ? disabledFundingPolicy().operations.wallet! : limit(v.operations.wallet) }, apps, allowExternalPaymaster: v.allowExternalPaymaster };
 }
 export function loadFundingPolicy(path?: string): FundingPolicy {
   if (!path) return disabledFundingPolicy();
@@ -108,14 +113,14 @@ export class PostgresFunding implements FundingController {
   }
 
   async debit(request: FundingDebit): Promise<void> {
-    if (!['sponsor', 'deployment', 'recovery'].includes(request.kind)) throw new Error('FUNDING_KIND_INVALID');
+    if (!['sponsor', 'deployment', 'recovery', 'wallet'].includes(request.kind)) throw new Error('FUNDING_KIND_INVALID');
     if (typeof request.account !== 'string' || !/^0x[0-9a-fA-F]{1,64}$/.test(request.account) || typeof request.maxFee !== 'bigint' || request.maxFee < 0n || request.maxFee > FRI_MAX) throw new Error('FUNDING_DEBIT_INVALID');
     if (request.kind === 'sponsor') this.authorizeApp(request.appKey, request.credential);
     if (request.external && !this.policy.allowExternalPaymaster) throw new HttpError(403, 'EXTERNAL_SPENDING_CONTROLS_REQUIRED');
     const account = '0x' + BigInt(request.account).toString(16);
     const app = request.kind === 'sponsor' ? digest(request.appKey!) : null;
     if (request.id && !/^0x[0-9a-fA-F]{1,64}$/.test(request.id)) throw new Error('FUNDING_DEBIT_ID_INVALID');
-    const id = request.id ? 'tx:' + BigInt(request.id).toString(16) : 'attempt:' + randomUUID();
+    const id = request.id ? (request.kind === 'wallet' ? 'wallet:' : 'tx:') + BigInt(request.id).toString(16) : 'attempt:' + randomUUID();
     const now = this.now();
     if (!Number.isSafeInteger(now) || now < 0) throw new Error('FUNDING_CLOCK_INVALID');
     await this.sql.begin(async tx => {
@@ -136,7 +141,7 @@ export class PostgresFunding implements FundingController {
         if (BigInt(counts.account_n) >= BigInt(bound.perAccountPerPeriod) || BigInt(counts.account_fee) + request.maxFee > bound.perAccountMaxFeePerPeriod) throw new HttpError(429, 'ACCOUNT_FUNDING_CAP');
       };
       await check(this.policy.global, 'global');
-      await check(this.policy.operations[request.kind], 'operation');
+      await check(this.policy.operations[request.kind] ?? disabledFundingPolicy().operations.wallet!, 'operation');
       if (request.kind === 'sponsor') await check(this.policy.apps[request.appKey!]!, 'app');
       await tx`INSERT INTO funding_debits (id, kind, account, app, fee, created_at, external) VALUES (${id}, ${request.kind}, ${account}, ${app}, ${request.maxFee.toString()}, ${now}, ${request.external ?? false})`;
     });

@@ -6,6 +6,7 @@ Cairo contracts for the Kamui account. Not audited. Do not deploy with real fund
 
 | File | What it is |
 |---|---|
+| `src/kms_admin.cairo` | Separate immutable secp256k1 registry administrator for manual AWS KMS signing; local implementation, not deployed or audited. See [operator adapter and custody limits](../infra/aws/registry-admin/README.md). |
 | `src/account.cairo` | `KamuiAccount`: social login and recovery, an owner set, session keys, outside execution. Deployed from `(aud, identity)` with no owner until the first recovery. Not upgradeable (plan D1). |
 | `src/owners.cairo` | `OwnersComponent`: up to 5 owner keys, one per device (plan D4). |
 | `src/core.cairo` | `KamuiCoreComponent`: `__validate__`, `__execute__`, `is_valid_signature` and Kamui's own SNIP-9 `execute_from_outside_v2`, for owner and session signatures. |

@@ -34,7 +34,7 @@ async function withDatabase(work: (sql: SQL, other: SQL) => Promise<void>, initi
 function sponsorContext(sql: SQL, p: FundingPolicy, execute: () => Promise<{ transaction_hash: string }>): SponsorContext {
   return { funding: new PostgresFunding(sql, p), budgets: sponsorBudgetsFromFundingPolicy(p), ledger: new MemoryLedger(), classHash: '0x99',
     provider: { getClassHashAt: async () => '0x99' },
-    relayer: { estimateInvokeFee: async () => ({ overall_fee: 10n, resourceBounds: { l2_gas: { max_amount: 2n, max_price_per_unit: 5n } } }), execute },
+    relayer: { estimateInvokeFee: async () => ({ overall_fee: 10n, resourceBounds: { l1_gas: { max_amount: 0n, max_price_per_unit: 1n }, l2_gas: { max_amount: 2n, max_price_per_unit: 5n }, l1_data_gas: { max_amount: 0n, max_price_per_unit: 1n } } }), execute },
   } as unknown as SponsorContext;
 }
 

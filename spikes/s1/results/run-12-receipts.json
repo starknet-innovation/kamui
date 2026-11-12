@@ -1,0 +1,54 @@
+[
+  {
+    "kind": "wallet_session_approval",
+    "transaction_hash": "0x3cf1511e52169d7492a280ccd70315393fede2c9402959c6c39ca44742d623d",
+    "execution_status": "SUCCEEDED",
+    "finality_status": "ACCEPTED_ON_L2",
+    "block_number": 18039567,
+    "actual_fee": {
+      "amount": "0x1402aa0cd976f80",
+      "unit": "FRI"
+    },
+    "maximum_signed_fri": "202767441026767680",
+    "sender_address": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e"
+  },
+  {
+    "kind": "approved_app_ping",
+    "transaction_hash": "0x6131830584adc23b746d802335825ed2951571b78331b9866882b2b6beb3893",
+    "execution_status": "SUCCEEDED",
+    "finality_status": "ACCEPTED_ON_L2",
+    "block_number": 18039672,
+    "actual_fee": {
+      "amount": "0xbc786be7525810",
+      "unit": "FRI"
+    },
+    "maximum_signed_fri": "119361826031948880",
+    "sender_address": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e"
+  },
+  {
+    "kind": "client_recovery",
+    "transaction_hash": "0x6d5b8c8d81ba7b3c21942646fa57c151952ab978540384b79aa0db19e2f3cd7",
+    "execution_status": "SUCCEEDED",
+    "finality_status": "ACCEPTED_ON_L2",
+    "block_number": 18039851,
+    "actual_fee": {
+      "amount": "0x1a93fbe7a2385520",
+      "unit": "FRI"
+    },
+    "maximum_signed_fri": "4296060911539796640",
+    "sender_address": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e"
+  },
+  {
+    "kind": "wallet_revoke_all",
+    "transaction_hash": "0x3acce144315d938c553d7024741aae44e0f0183c8298490e6f3d7fa23718987",
+    "execution_status": "SUCCEEDED",
+    "finality_status": "ACCEPTED_ON_L2",
+    "block_number": 18039929,
+    "actual_fee": {
+      "amount": "0xce35b30eeb3810",
+      "unit": "FRI"
+    },
+    "maximum_signed_fri": "130596498826458000",
+    "sender_address": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e"
+  }
+]

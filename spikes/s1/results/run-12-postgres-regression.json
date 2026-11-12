@@ -1,0 +1,184 @@
+{
+  "date": "2026-11-12",
+  "network": "SN_SEPOLIA",
+  "status": "passed",
+  "scope": "Local PostgreSQL with live Sepolia transactions; not hosted AWS acceptance",
+  "approvedMaximum": {
+    "paidAttempts": 4,
+    "totalMaximumFri": "12000000000000000000",
+    "perTransactionMaximumFri": "5000000000000000000"
+  },
+  "transport": "local relayer; external AVNU controls not assumed",
+  "preflight": {
+    "network": "SN_SEPOLIA",
+    "checkedAt": "2026-11-12T17:09:33.292Z",
+    "block": 18039318,
+    "account": "0x133739e82cd76b5a6446848ae0cbbbb8cc4762fbb8e0eb5ebc417209423e0e9",
+    "classHash": "0x1e128dae2cb709cac9263afa1c6fdb33f7f1f5c2d969547d9739326d08399f6",
+    "ownerCount": 4,
+    "sessionEpoch": 7,
+    "relayer": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e",
+    "relayerBalanceFri": "2856019262249998873472",
+    "readOnly": true
+  },
+  "paidAttempts": 4,
+  "checks": {
+    "walletManagement": {
+      "sessionApproval": "SUCCEEDED",
+      "revokeAll": "SUCCEEDED",
+      "walletPaidAttempts": 2
+    },
+    "approvedAppSponsorship": "SUCCEEDED",
+    "pausePersistence": {
+      "postgresContainerRestart": true,
+      "apiRestarts": 2,
+      "freshUnusedNonceRefusals": [
+        "SPENDING_PAUSED",
+        "SPENDING_PAUSED"
+      ],
+      "noAdditionalPaidDebit": true
+    },
+    "budgetPersistence": {
+      "tightenedCap": 1,
+      "alreadyDebitedAttempts": 1,
+      "freshUnusedNonceRefusal": "FUNDING_CAP",
+      "httpStatus": 429,
+      "noAdditionalPaidDebit": true,
+      "approvedCapRestored": 4
+    },
+    "clientProofRecovery": {
+      "status": "SUCCEEDED",
+      "ownerCountBefore": 4,
+      "ownerCountAfter": 5,
+      "allPriorOwnersRetained": true,
+      "addedKeysConfirmedOwner": true,
+      "accountClassUnchanged": true
+    },
+    "recoveryRestartReconciliation": {
+      "acceptedSuccessfulReceiptBeforeStop": true,
+      "unfinishedJobAfterApiStopped": true,
+      "sameHashReconciledAfterRestart": true,
+      "relaySubmissionsObserved": 1,
+      "statusConnectionFailuresRetried": 9,
+      "originalBrowserFlowCompleted": true
+    },
+    "revokeAll": "pending",
+    "googleRegistryPreflight": {
+      "currentKeysChecked": 2,
+      "allCurrentModuliMatchPinnedRegistry": true
+    },
+    "sessionInvalidation": {
+      "beforeRecoveryExists": true,
+      "afterRecoveryExists": false,
+      "afterRevokeExists": false,
+      "epochs": [
+        7,
+        8,
+        9
+      ],
+      "staleSessionPreflightHttpStatus": 400,
+      "staleSessionPreflightError": "REVERTED",
+      "staleSessionAdditionalPaidDebit": false
+    }
+  },
+  "privacy": "No JWT, pepper, private key, signature, proof bytes, browser profile, server credential or raw job capability retained in public evidence.",
+  "storage": {
+    "engine": "PostgreSQL",
+    "schemaVersion": 3,
+    "isolatedLocalDatabase": true,
+    "originalSqliteUnchanged": true,
+    "persistentLocalVolume": true
+  },
+  "setup": {
+    "oldUnfinishedRecoveryJobs": 0,
+    "rotatorRunning": false,
+    "keychainGoogleOnly": true,
+    "externalPaymasterDisabled": true,
+    "approvedAppServerCredentialConfigured": true
+  },
+  "receipts": [
+    {
+      "kind": "wallet_session_approval",
+      "transaction_hash": "0x3cf1511e52169d7492a280ccd70315393fede2c9402959c6c39ca44742d623d",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18039567,
+      "actual_fee": {
+        "amount": "0x1402aa0cd976f80",
+        "unit": "FRI"
+      },
+      "maximum_signed_fri": "202767441026767680",
+      "sender_address": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e"
+    },
+    {
+      "kind": "approved_app_ping",
+      "transaction_hash": "0x6131830584adc23b746d802335825ed2951571b78331b9866882b2b6beb3893",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18039672,
+      "actual_fee": {
+        "amount": "0xbc786be7525810",
+        "unit": "FRI"
+      },
+      "maximum_signed_fri": "119361826031948880",
+      "sender_address": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e"
+    },
+    {
+      "kind": "client_recovery",
+      "transaction_hash": "0x6d5b8c8d81ba7b3c21942646fa57c151952ab978540384b79aa0db19e2f3cd7",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18039851,
+      "actual_fee": {
+        "amount": "0x1a93fbe7a2385520",
+        "unit": "FRI"
+      },
+      "maximum_signed_fri": "4296060911539796640",
+      "sender_address": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e"
+    },
+    {
+      "kind": "wallet_revoke_all",
+      "transaction_hash": "0x3acce144315d938c553d7024741aae44e0f0183c8298490e6f3d7fa23718987",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18039929,
+      "actual_fee": {
+        "amount": "0xce35b30eeb3810",
+        "unit": "FRI"
+      },
+      "maximum_signed_fri": "130596498826458000",
+      "sender_address": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e"
+    }
+  ],
+  "maximumDebitedFri": "4748786677424971200",
+  "actualFeeFri": "2116362690347488448",
+  "finalState": {
+    "fundingPaused": true,
+    "fundingAttempts": 4,
+    "recoveryJobs": [
+      {
+        "state": "succeeded",
+        "jobs": "1"
+      }
+    ],
+    "registryRows": 0,
+    "pgVolumePreserved": true,
+    "privatePgDumpCreated": true,
+    "bothDeviceProfilesPreserved": true,
+    "originalSqliteUnchanged": true,
+    "normalLaunchConfigStillLegacySqlite": true,
+    "noFurtherPaidAttemptsAuthorized": true,
+    "ownerCount": 5,
+    "sessionEpoch": 9,
+    "accountClassUnchanged": true,
+    "relayerBalanceDeltaMatchesReceipts": true
+  },
+  "notEstablished": [
+    "AWS hosting/deployment or actual Linux boot",
+    "AVNU external spending controls or live AVNU transport in this run",
+    "First-account deployment with browser proving",
+    "Physical power-loss or hosted backup/S3 restore guarantees",
+    "Any old owner removal or registry-admin handoff"
+  ],
+  "relayerBalanceDeltaFri": "2116362690347488448"
+}

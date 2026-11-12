@@ -1,0 +1,41 @@
+[
+  {
+    "stage": "after_recovery",
+    "checkedAt": "2026-11-12T17:24:51.633Z",
+    "block": 18039853,
+    "sessionPublicKey": "0x2a84956a3e32831f634d614d8cc86dc671e70f5cd85ab2ef658a134c85da3c0",
+    "exists": false,
+    "validUntil": 0,
+    "maxCalls": 0,
+    "maxFeePerTxFri": "0",
+    "scopeEntries": 0,
+    "sessionEpoch": 8,
+    "source": "public SessionKeySet event and account getters; no browser storage read"
+  },
+  {
+    "stage": "before_recovery",
+    "checkedAt": "2026-11-12T17:25:42.282Z",
+    "block": 18039834,
+    "sessionPublicKey": "0x2a84956a3e32831f634d614d8cc86dc671e70f5cd85ab2ef658a134c85da3c0",
+    "exists": true,
+    "validUntil": 1794510890,
+    "maxCalls": 20,
+    "maxFeePerTxFri": "0",
+    "scopeEntries": 1,
+    "sessionEpoch": 7,
+    "source": "public SessionKeySet event and account getters; no browser storage read"
+  },
+  {
+    "stage": "after_revoke",
+    "checkedAt": "2026-11-12T17:27:08.909Z",
+    "block": 18039933,
+    "sessionPublicKey": "0x2a84956a3e32831f634d614d8cc86dc671e70f5cd85ab2ef658a134c85da3c0",
+    "exists": false,
+    "validUntil": 0,
+    "maxCalls": 0,
+    "maxFeePerTxFri": "0",
+    "scopeEntries": 0,
+    "sessionEpoch": 9,
+    "source": "public SessionKeySet event and account getters; no browser storage read"
+  }
+]

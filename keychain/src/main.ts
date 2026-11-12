@@ -201,7 +201,7 @@ async function sendAsOwner(device: KeyPair, record: AccountRecord, calls: Parame
     ownerPrivateKey: device.privateKey,
     window: { executeBefore: Math.floor(Date.now() / 1000) + 600 },
   });
-  const transaction = await sponsor(`${config.apiUrl}/sponsor`, call);
+  const transaction = await sponsor(`${config.apiUrl}/wallet/sponsor`, call);
   status('Waiting for the network…');
   await provider.waitForTransaction(transaction);
   return transaction;
@@ -527,7 +527,7 @@ async function showApproval(request: ConnectRequest, device: KeyPair, record: Ac
         ownerPrivateKey: device.privateKey,
         window: { executeBefore: Math.floor(Date.now() / 1000) + 600 },
       });
-      const transaction = await sponsor(`${config.apiUrl}/sponsor`, call);
+      const transaction = await sponsor(`${config.apiUrl}/wallet/sponsor`, call);
       status('Waiting for the network…');
       await provider.waitForTransaction(transaction);
       const stored = await new KamuiReader(provider, record.account).session(session.publicKey);

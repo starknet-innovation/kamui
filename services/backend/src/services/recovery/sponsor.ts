@@ -57,6 +57,24 @@ export function maxFee(estimate: { overall_fee: bigint | string | number; resour
   return worst > estimated ? worst : estimated;
 }
 
+/** Require every signed V3 resource bound before durable local paid work.
+ * Malformed RPC output is a fixed refusal, never a partial bound that the signer
+ * could complete later outside our fee accounting.
+ */
+export function requireSignedFeeBounds(estimate: { overall_fee: bigint | string | number; resourceBounds?: Record<string, Bound | undefined> }): void {
+  const bounds=estimate.resourceBounds;
+  const expected=['l1_gas','l2_gas','l1_data_gas'];
+  const unsigned=(value:unknown,bits:number):boolean=>{
+    if (typeof value !== 'string' && typeof value !== 'bigint' && typeof value !== 'number') return false;
+    if (typeof value === 'number' && !Number.isSafeInteger(value)) return false;
+    if (typeof value === 'string' && !/^(0x[0-9a-fA-F]+|[0-9]+)$/.test(value)) return false;
+    try {const n=BigInt(value);return n>=0n && n<(1n<<BigInt(bits));} catch {return false;}
+  };
+  if (!bounds || Array.isArray(bounds) || expected.some(key => !(key in bounds)) || Object.keys(bounds).some(key=>!expected.includes(key))
+    || !Object.values(bounds).every(bound=>bound && unsigned(bound.max_amount,64) && unsigned(bound.max_price_per_unit,128))
+    || !unsigned(estimate.overall_fee,256)) throw new HttpError(503,'SIGNED_FEE_BOUNDS_REQUIRED');
+}
+
 export async function sponsorOutsideExecution(body: SponsorRequest, appKey: string | null, ctx: SponsorContext, credential?: string | null): Promise<SponsorResult> {
   const req = parseSponsorRequest(body);
   await ctx.assertPaidAvailable?.();
@@ -101,7 +119,7 @@ export async function sponsorOutsideExecution(body: SponsorRequest, appKey: stri
     const call = { contractAddress: req.account, entrypoint: 'execute_from_outside_v2', calldata: req.calldata };
     let estimate: Awaited<ReturnType<typeof ctx.relayer.estimateInvokeFee>>;
     try {
-      estimate = await ctx.relayer.estimateInvokeFee(call);
+      estimate = await ctx.relayer.estimateInvokeFee(call, { skipValidate: false, tip: 0n });
     } catch (e) {
       if (e instanceof RpcError) {
         decide('reverted');
@@ -109,11 +127,11 @@ export async function sponsorOutsideExecution(body: SponsorRequest, appKey: stri
       }
       throw e;
     }
+    if (ctx.funding && !ctx.paymaster) requireSignedFeeBounds(estimate);
     if (maxFee(estimate) > budget.maxFeePerTx) {
       decide('refused_fee');
       throw new HttpError(402, 'FEE_ABOVE_CEILING');
     }
-    if (ctx.funding && !ctx.paymaster && (!estimate.resourceBounds || Object.keys(estimate.resourceBounds).length === 0)) throw new HttpError(503, 'SIGNED_FEE_BOUNDS_REQUIRED');
     let transaction_hash: string;
     try {
       // Both local and external sends are debited before the call that may submit.

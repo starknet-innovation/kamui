@@ -1,0 +1,29 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReviewedPolicyAdministrationAndRecovery",
+      "Effect": "Allow",
+      "Principal": { "AWS": ["<REVIEWED_KEY_ADMIN_ROLE>", "<REVIEWED_KEY_RECOVERY_ROLE>"] },
+      "Action": ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:PutKeyPolicy"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReviewedOperatorPublicKey",
+      "Effect": "Allow",
+      "Principal": { "AWS": "<REVIEWED_OPERATOR_SIGNING_ROLE>" },
+      "Action": "kms:GetPublicKey",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReviewedOperatorK1DigestSigning",
+      "Effect": "Allow",
+      "Principal": { "AWS": "<REVIEWED_OPERATOR_SIGNING_ROLE>" },
+      "Action": "kms:Sign",
+      "Resource": "*",
+      "Condition": { "StringEquals": {
+        "kms:SigningAlgorithm": "ECDSA_SHA_256", "kms:MessageType": "DIGEST"
+      } }
+    }
+  ]
+}

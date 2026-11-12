@@ -1,0 +1,17 @@
+{
+  "checkedAt": "2026-11-12T17:24:47.775Z",
+  "transaction_hash": "0x6d5b8c8d81ba7b3c21942646fa57c151952ab978540384b79aa0db19e2f3cd7",
+  "independentReceipt": {
+    "execution_status": "SUCCEEDED",
+    "finality_status": "ACCEPTED_ON_L2",
+    "block_number": 18039851,
+    "actual_fee": {
+      "amount": "0x1a93fbe7a2385520",
+      "unit": "FRI"
+    }
+  },
+  "unfinishedObservedBeforeStop": true,
+  "unfinishedAfterStop": true,
+  "apiStopped": true,
+  "manualRestartRequired": true
+}

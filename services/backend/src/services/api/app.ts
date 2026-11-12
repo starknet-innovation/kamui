@@ -20,6 +20,7 @@ import { listSessions, putSession, removeSession, type RegistryContext } from '.
 import { type RecoveryJobsService, RecoveryJobs } from '../recovery/jobs';
 import { prepareDeployment } from '../recovery/authenticated-deploy';
 import { APP_KEY_HEADER } from '../sponsor/budgets';
+import { sponsorWalletManagement } from '../recovery/wallet-sponsor';
 
 /** Attempts per minute: one client, and everyone together. */
 export type RouteLimit = { perClient: number; global: number };
@@ -137,6 +138,7 @@ export function buildApp(deps: AppDeps) {
       await jobs.submit(b.jobId, request, (journal) => relayProof(b, client, { ...ctx, journal }), describeJobError);
       return { jobId: b.jobId };
     } },
+    '/wallet/sponsor': { limit: 'sponsor', fields: ['account'], handler: (b: SponsorRequest) => sponsorWalletManagement(b, { ...deps.sponsor, chainId: deps.registry.chainId }) },
     '/sponsor': { limit: 'sponsor', fields: ['account'], handler: (b: SponsorRequest, _client, req) => sponsorOutsideExecution(b, req.headers.get(APP_KEY_HEADER), deps.sponsor, req.headers.get('x-kamui-sponsor-token')) },
     '/registry/sessions': { limit: 'registry', fields: ['account'], handler: (b) => putSession(b, deps.registry) },
     '/registry/sessions/list': { limit: 'registry', fields: ['account'], handler: (b) => listSessions(b, deps.registry) },

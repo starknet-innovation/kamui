@@ -1,0 +1,35 @@
+{
+  "schema": "kamui.kms-operator.v1",
+  "region": "eu-west-1",
+  "keyId": "FILL_PRIVATE_IMMUTABLE_KMS_KEY_REFERENCE",
+  "publicKey": "FILL_0x04_FOLLOWED_BY_FULL_PUBLIC_X_AND_Y",
+  "accountAddress": "FILL_REVIEWED_ADMIN_ACCOUNT_ADDRESS",
+  "classHash": "FILL_REVIEWED_KMS_K1_ADMIN_CLASS_HASH",
+  "maxFeeFri": "FILL_APPROVED_PER_TRANSACTION_FRI_LIMIT",
+  "rpcUrl": "https://api.zan.top/public/starknet-sepolia/rpc/v0_10",
+  "transaction": {
+    "kind": "invoke",
+    "calls": [{
+      "contractAddress": "FILL_REVIEWED_TARGET_ADDRESS",
+      "entrypoint": "FILL_REVIEWED_ENTRYPOINT",
+      "calldata": []
+    }],
+    "details": {
+      "walletAddress": "FILL_SAME_ADMIN_ACCOUNT_ADDRESS",
+      "cairoVersion": "1",
+      "chainId": "0x534e5f5345504f4c4941",
+      "version": "0x3",
+      "nonce": "FILL_CURRENT_NONCE",
+      "tip": "0",
+      "resourceBounds": {
+        "l1_gas": { "max_amount": "FILL_VALIDATED_ESTIMATE", "max_price_per_unit": "FILL_VALIDATED_ESTIMATE" },
+        "l2_gas": { "max_amount": "FILL_VALIDATED_ESTIMATE", "max_price_per_unit": "FILL_VALIDATED_ESTIMATE" },
+        "l1_data_gas": { "max_amount": "FILL_VALIDATED_ESTIMATE", "max_price_per_unit": "FILL_VALIDATED_ESTIMATE" }
+      },
+      "paymasterData": [],
+      "accountDeploymentData": [],
+      "nonceDataAvailabilityMode": "L1",
+      "feeDataAvailabilityMode": "L1"
+    }
+  }
+}

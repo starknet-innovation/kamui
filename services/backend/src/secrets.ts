@@ -13,7 +13,8 @@ import { isAbsolute, join } from 'node:path';
 // The stronger option does not use this interface at all: starknet.js accepts any
 // `SignerInterface` where a private key is given, so the relayer can sign through a service
 // that holds the key and never returns it (an HSM-backed signer, an enclave). The Stark curve is
-// not offered by the cloud KMS products, so that is a service to build or buy.
+// not offered by AWS KMS for these existing accounts. A separate KMS secp256k1 admin
+// account is implemented in infra/aws/registry-admin; it does not change relayer signatures.
 export interface SecretSource {
   /** The secret called `name`. Throws when it is missing. Never log the result. */
   get(name: string): Promise<string>;

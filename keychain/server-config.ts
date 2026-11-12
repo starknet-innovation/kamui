@@ -22,7 +22,7 @@ export function keychainOrigin(settings: { port: number; publicOrigin?: string }
   return { origin: url.origin, redirectUri: `${url.origin}/callback` };
 }
 
-const publicPosts = new Set(['/recover/status', '/deploy/authenticated', '/relay', '/sponsor', '/registry/sessions', '/registry/sessions/list', '/registry/sessions/remove']);
+const publicPosts = new Set(['/recover/status', '/deploy/authenticated', '/relay', '/sponsor', '/wallet/sponsor', '/registry/sessions', '/registry/sessions/list', '/registry/sessions/remove']);
 /** Explicit routes only: never expose metrics, operator commands, or legacy proving. */
 export function apiProxyAllowed(path: string, method: string): boolean {
   return method === 'POST' ? publicPosts.has(path) : method === 'GET' && (path === '/live' || path === '/health/api');

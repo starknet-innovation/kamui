@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "3",
+  "paused": true,
+  "totals": [
+    {
+      "kind": "recovery",
+      "attempts": "1",
+      "maximum_debited_fri": "4296060911539796640"
+    },
+    {
+      "kind": "sponsor",
+      "attempts": "1",
+      "maximum_debited_fri": "119361826031948880"
+    },
+    {
+      "kind": "wallet",
+      "attempts": "2",
+      "maximum_debited_fri": "333363939853225680"
+    }
+  ],
+  "jobs": [
+    {
+      "state": "succeeded",
+      "jobs": "1"
+    }
+  ],
+  "registryRows": "0"
+}

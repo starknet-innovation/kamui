@@ -11,6 +11,8 @@
 // Run it somewhere else, under another identity, with another RPC provider if possible.
 //
 // What is checked:
+// - Every currently published Google signing key is compared with registry storage, even
+//   before a KeySet event exists. Missing keys or wrong moduli are availability alerts.
 // - A write still in effect (the last event for its kid) is always checked. A mismatch, or a
 //   kid the issuer does not publish, is an alert.
 // - A write seen while watching (in a block after the watcher started) is checked the same way
@@ -38,16 +40,18 @@ import { ISSUERS, fetchJwks, type Jwk } from '../../jwk/verification';
 import { log } from '../../log';
 import { fetchWithTimeout, type Fetch } from '../../net';
 
-export type AlertReason = 'MODULUS_MISMATCH' | 'KID_NOT_PUBLISHED' | 'UNKNOWN_ISSUER' | 'NO_MODULUS_HASH';
+export type AlertReason = 'MODULUS_MISMATCH' | 'KID_NOT_PUBLISHED' | 'UNKNOWN_ISSUER' | 'NO_MODULUS_HASH' | 'REGISTRY_KEY_MISSING';
 export type Alert = {
+  /** Event incidents and current issuer publication lag have different evidence. */
+  source: 'event' | 'issuer';
   reason: AlertReason;
   iss: string;
   kid: string;
-  /** The hash in the event, and the hash of the issuer's key for that kid when it publishes one. */
+  /** Event/storage hash and current issuer hash; publication alerts need no event. */
   onChainHash?: string;
   issuerHash?: string;
-  blockNumber: number;
-  transactionHash: string;
+  blockNumber?: number;
+  transactionHash?: string;
   /** False when a later event removed or replaced this write. */
   inEffect: boolean;
 };
@@ -71,7 +75,7 @@ export function checkEvents(events: RegistryEvent[], jwks: Map<string, Jwk[] | n
     const inEffect = lastIndex.get(`${event.iss}\n${event.kid}`) === i;
     const live = event.blockNumber > liveAfterBlock;
     const alert = (reason: AlertReason, extra: Partial<Alert> = {}) =>
-      result.alerts.push({ reason, iss: event.iss, kid: event.kid, blockNumber: event.blockNumber, transactionHash: event.transactionHash, inEffect, ...extra });
+      result.alerts.push({ source: 'event', reason, iss: event.iss, kid: event.kid, blockNumber: event.blockNumber, transactionHash: event.transactionHash, inEffect, ...extra });
 
     if (!ISSUERS.some((issuer) => issuer.iss === event.iss)) return alert('UNKNOWN_ISSUER');
     const keys = jwks.get(event.iss);
@@ -111,6 +115,8 @@ export type WatcherDeps = {
   provider: Parameters<typeof registryEvents>[0] & Parameters<typeof storedKey>[0]['provider'] & { getBlockNumber(): Promise<number> };
   registryAddress: string;
   fromBlock: number;
+  /** Independently check every currently published key, even with no KeySet history. */
+  publishedIssuers?: string[];
   /** One issuer's published keys. Throws when they cannot be fetched. */
   fetchKeys?: (iss: string) => Promise<Jwk[]>;
   webhookUrl?: string;
@@ -142,6 +148,53 @@ export async function fillMissingHashes(events: RegistryEvent[], deps: Pick<Watc
   }
 }
 
+/** Current issuer publications are availability evidence, not historical transactions.
+ * Reads storage directly; an UNKNOWN_KID is absence, while all other RPC failures
+ * propagate so a broken check can never be reported as healthy.
+ */
+export async function checkPublishedKeys(deps: WatcherDeps, jwks: Map<string, Jwk[] | null>): Promise<CheckResult> {
+  const result: CheckResult = { alerts: [], unverifiable: [], verified: 0, issuersUnavailable: [] };
+  for (const iss of new Set(deps.publishedIssuers ?? [])) {
+    if (!ISSUERS.some(issuer => issuer.iss === iss)) throw new Error('WATCHER_ISSUER_UNSUPPORTED');
+    const published = jwks.get(iss);
+    if (!published) { result.issuersUnavailable.push(iss); continue; }
+    let keys: Map<string, bigint[]>;
+    try { keys = filterEligibleKeys(published); }
+    catch { result.issuersUnavailable.push(iss); continue; }
+    if (!keys.size) { result.issuersUnavailable.push(iss); continue; }
+    for (const [kid, limbs] of keys) {
+      const issuerHash = hex(modulusHash(limbs));
+      const stored = await storedKey({ provider: deps.provider, registryContractAddress: deps.registryAddress }, iss, kid);
+      if (!stored) {
+        result.alerts.push({ source: 'issuer', reason: 'REGISTRY_KEY_MISSING', iss, kid, issuerHash, inEffect: true });
+      } else {
+        const onChainHash = hex(modulusHash(stored));
+        if (onChainHash !== issuerHash) result.alerts.push({ source: 'issuer', reason: 'MODULUS_MISMATCH', iss, kid, onChainHash, issuerHash, inEffect: true });
+        else result.verified++;
+      }
+    }
+  }
+  return result;
+}
+
+/** One fresh independent JWKS fetch per wanted issuer per pass; never use rotator state. */
+async function checkPass(deps: WatcherDeps, liveAfterBlock = Infinity): Promise<CheckResult> {
+  const events = await history(deps);
+  const wanted = new Set([...events.map(event => event.iss), ...(deps.publishedIssuers ?? [])]);
+  const jwks = await issuerKeys(deps, wanted);
+  const result = checkEvents(events, jwks, liveAfterBlock);
+  const current = await checkPublishedKeys(deps, jwks);
+  result.alerts.push(...current.alerts);
+  result.verified += current.verified;
+  result.issuersUnavailable = [...new Set([...result.issuersUnavailable, ...current.issuersUnavailable])];
+  return result;
+}
+
+/** Include source and comparison material so a changed issuer key is a new incident. */
+export function alertIdentity(alert: Alert): string {
+  return JSON.stringify([alert.source, alert.reason, alert.transactionHash ?? null, alert.iss, alert.kid, alert.onChainHash ?? null, alert.issuerHash ?? null]);
+}
+
 async function history(deps: WatcherDeps): Promise<RegistryEvent[]> {
   const events = await registryEvents(deps.provider, deps.registryAddress, deps.fromBlock);
   await fillMissingHashes(events, deps);
@@ -151,11 +204,11 @@ async function history(deps: WatcherDeps): Promise<RegistryEvent[]> {
 /** Tells the outside world. The log line is the alert of record; the webhook is best effort and its failure is logged. */
 export async function raise(alerts: Alert[], deps: Pick<WatcherDeps, 'webhookUrl' | 'send'>): Promise<void> {
   for (const alert of alerts) {
-    log('error', 'registry_key_alert', { reason: alert.reason, iss: alert.iss, kid: alert.kid, on_chain_hash: alert.onChainHash, issuer_hash: alert.issuerHash, block: alert.blockNumber, tx: alert.transactionHash, in_effect: alert.inEffect });
+    log('error', 'registry_key_alert', { source: alert.source, reason: alert.reason, iss: alert.iss, kid: alert.kid, on_chain_hash: alert.onChainHash, issuer_hash: alert.issuerHash, block: alert.blockNumber, tx: alert.transactionHash, in_effect: alert.inEffect });
   }
   if (!alerts.length || !deps.webhookUrl) return;
   try {
-    const text = `Kamui key registry: ${alerts.length} alert(s). ${alerts.map((a) => `${a.reason} ${a.iss} kid ${a.kid} tx ${a.transactionHash}`).join('; ')}`;
+    const text = `Kamui key registry: ${alerts.length} alert(s). ${alerts.map((a) => `${a.reason} ${a.source} ${a.iss} kid ${a.kid}${a.transactionHash ? ` tx ${a.transactionHash}` : ''}`).join('; ')}`;
     const res = await fetchWithTimeout(deps.webhookUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, alerts }) }, 10_000, deps.send);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch {
@@ -168,8 +221,7 @@ export async function raise(alerts: Alert[], deps: Pick<WatcherDeps, 'webhookUrl
  * is verified, 1 at least one alert, 2 something could not be checked.
  */
 export async function watchOnce(deps: WatcherDeps): Promise<{ code: 0 | 1 | 2; result: CheckResult }> {
-  const events = await history(deps);
-  const result = checkEvents(events, await issuerKeys(deps, new Set(events.map((e) => e.iss))));
+  const result = await checkPass(deps);
   report(result);
   await raise(result.alerts, deps);
   return { code: result.alerts.length ? 1 : result.issuersUnavailable.length ? 2 : 0, result };
@@ -193,11 +245,10 @@ export async function watchForever(deps: WatcherDeps, pollMs: number, repeatMs =
   log('info', 'watcher_started', { from_block: deps.fromBlock, live_after_block: startBlock });
   while (true) {
     try {
-      const events = await history(deps);
-      const result = checkEvents(events, await issuerKeys(deps, new Set(events.map((e) => e.iss))), startBlock);
+      const result = await checkPass(deps, startBlock);
       const now = Date.now();
       const fresh = result.alerts.filter((alert) => {
-        const id = `${alert.reason}:${alert.transactionHash}:${alert.iss}:${alert.kid}`;
+        const id = alertIdentity(alert);
         const last = raised.get(id);
         if (last !== undefined && (!alert.inEffect || now - last < repeatMs)) return false;
         raised.set(id, now);
@@ -224,6 +275,7 @@ async function main(): Promise<void> {
     provider,
     registryAddress: env(`${chain}_REGISTRY_ADDRESS`),
     fromBlock: Number(env(`${chain}_REGISTRY_BLOCK`)),
+    publishedIssuers: ['https://accounts.google.com'],
     webhookUrl: process.env.WATCHER_WEBHOOK_URL || undefined,
   };
   if (process.argv.includes('--once')) {

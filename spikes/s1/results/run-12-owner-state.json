@@ -1,0 +1,12 @@
+{
+  "beforeBlock": 18039834,
+  "afterBlock": 18039901,
+  "beforeOwnerCount": 4,
+  "afterOwnerCount": 5,
+  "allPreviousOwnersRetained": true,
+  "addedPublicKeys": [
+    "0x31704220bfc421335e4d2295a2e133bdd56ee636bc23ecca9afbf9a3c484f19"
+  ],
+  "addedKeysConfirmedOwner": true,
+  "classHash": "0x1e128dae2cb709cac9263afa1c6fdb33f7f1f5c2d969547d9739326d08399f6"
+}

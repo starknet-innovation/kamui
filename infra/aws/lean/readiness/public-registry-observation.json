@@ -1,0 +1,13 @@
+{
+  "checkedDate": "2026-11-12",
+  "mode": "public_rpc_read_only",
+  "network": "SN_SEPOLIA",
+  "registry": "0x4bc2b2afcce053e788511a851e6aeb004d18adb243df4fe852e1b727bd09808",
+  "registryClassHash": "0x105b5dc6709f9afbb8cd0b3b99fdc9a518c938c17badfd317c9076d189577c7",
+  "observedBlock": 18039390,
+  "accessControlAbiMethodsObserved": true,
+  "bothRoleAdminsAreDefaultAdmin": true,
+  "rolesTransferred": false,
+  "newSignerControlVerified": false,
+  "note": "ABI/role-admin observation only; implementation, custody and transfer not approved"
+}

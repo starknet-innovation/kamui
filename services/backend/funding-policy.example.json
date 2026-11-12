@@ -31,6 +31,14 @@
       "maxFeePerTx": "0",
       "maxFeePerPeriod": "0",
       "perAccountMaxFeePerPeriod": "0"
+    },
+    "wallet": {
+      "periodSeconds": 3600,
+      "txPerPeriod": 0,
+      "perAccountPerPeriod": 0,
+      "maxFeePerTx": "0",
+      "maxFeePerPeriod": "0",
+      "perAccountMaxFeePerPeriod": "0"
     }
   },
   "apps": {},

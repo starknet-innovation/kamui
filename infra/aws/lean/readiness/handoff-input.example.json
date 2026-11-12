@@ -1,0 +1,9 @@
+{
+  "registry": "0x4bc2b2afcce053e788511a851e6aeb004d18adb243df4fe852e1b727bd09808",
+  "oldAdministratorAccount": "",
+  "newAdministratorAccount": "",
+  "expectedRegistryClassHash": "",
+  "expectedNewAdministratorClassHash": "",
+  "expectedNewAdministratorPublicKey": "",
+  "controllerProofTransactionHash": ""
+}

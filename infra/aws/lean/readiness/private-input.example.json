@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "region": "eu-west-1",
+  "backend": {
+    "aws_profile": "kamui-backend-test",
+    "expected_account": "",
+    "ami_id": "",
+    "approved_ami_owner": "",
+    "subnet_id": "",
+    "security_group_id": "",
+    "instance_profile_name": "",
+    "backup_bucket": ""
+  },
+  "pepper": {
+    "aws_profile": "kamui-pepper-test",
+    "expected_account": "",
+    "ami_id": "",
+    "approved_ami_owner": "",
+    "subnet_id": "",
+    "security_group_id": "",
+    "instance_profile_name": "",
+    "pepper_key_id": ""
+  }
+}

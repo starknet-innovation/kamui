@@ -63,6 +63,8 @@ test('served callback stays pinned when Host and forwarding headers are spoofed'
 test('public proxy admits only reviewed API methods and exact paths', async () => {
   const { apiProxyAllowed, publicHttpsUrl } = await import('./server-config');
   expect(apiProxyAllowed('/relay', 'POST')).toBe(true);
+  expect(apiProxyAllowed('/wallet/sponsor', 'POST')).toBe(true);
+  expect(apiProxyAllowed('/wallet/sponsor', 'GET')).toBe(false);
   expect(apiProxyAllowed('/recover/status', 'POST')).toBe(true);
   expect(apiProxyAllowed('/health/api', 'GET')).toBe(true);
   for (const path of ['/metrics', '/metrics/', '/recover', '/deploy', '/registry/sessions/../metrics', '/relay?next=x', '//relay']) {
@@ -93,14 +95,14 @@ test('proxy forwards a caller sponsor credential only to sponsor and strips upst
       await Bun.sleep(20);
     }
     if(!ready) throw Error('TEST_KEYCHAIN_UNAVAILABLE');
-    for (const path of ['/api/sponsor','/api/registry/sessions/list']) {
+    for (const path of ['/api/sponsor','/api/wallet/sponsor','/api/registry/sessions/list']) {
       const response=await fetch(`http://127.0.0.1:${port}${path}`, { method:'POST', headers:{'x-kamui-sponsor-token':'fixture-server-token'},body:'{}' });
       expect(response.status).toBe(200);
       expect(response.headers.get('x-kamui-sponsor-token')).toBeNull();
       expect(response.headers.get('set-cookie')).toBeNull();
       expect(await response.json()).toEqual({ok:true});
     }
-    expect(seen).toEqual(['fixture-server-token',null]);
+    expect(seen).toEqual(['fixture-server-token',null,null]);
     expect((await fetch(`http://127.0.0.1:${port}/api/metrics`)).status).toBe(404);
   } finally { child.kill(); await child.exited; backend.stop(true); }
 },10_000);

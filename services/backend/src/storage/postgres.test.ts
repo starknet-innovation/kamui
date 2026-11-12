@@ -102,12 +102,26 @@ integration('version-one upgrade preserves replay state and initializes spending
   await sql`UPDATE kamui_storage_meta SET value = '1' WHERE key = 'schema_version'`;
   await sql`INSERT INTO registry_used_messages(message, expires) VALUES ('0x777', 9999999999)`;
   await initializePostgres(sql);
-  expect((await sql`SELECT value FROM kamui_storage_meta WHERE key = 'schema_version'`)[0].value).toBe('2');
+  expect((await sql`SELECT value FROM kamui_storage_meta WHERE key = 'schema_version'`)[0].value).toBe('3');
   expect((await sql`SELECT message FROM registry_used_messages WHERE message = '0x777'`)).toHaveLength(1);
   expect((await sql`SELECT paused FROM funding_control WHERE key = 'global'`)[0].paused).toBe(true);
   await sql`UPDATE funding_control SET paused = false WHERE key = 'global'`;
   await initializePostgres(sql);
   expect((await sql`SELECT paused FROM funding_control WHERE key = 'global'`)[0].paused).toBe(false);
+});
+
+integration('version-two wallet migration preserves paid history and operator pause choice', async () => {
+  await initializePostgres(sql);
+  await sql.unsafe("ALTER TABLE funding_debits DROP CONSTRAINT funding_debits_kind_check; ALTER TABLE funding_debits ADD CONSTRAINT funding_debits_kind_check CHECK (kind IN ('sponsor','deployment','recovery'))");
+  await sql`UPDATE kamui_storage_meta SET value = '2' WHERE key = 'schema_version'`;
+  await sql`INSERT INTO funding_debits(id,kind,account,fee,created_at,external) VALUES ('migration-existing','recovery','0x1',123,1,false)`;
+  await sql`UPDATE funding_control SET paused = false WHERE key = 'global'`;
+  await initializePostgres(sql);
+  expect((await sql`SELECT value FROM kamui_storage_meta WHERE key = 'schema_version'`)[0].value).toBe('3');
+  expect((await sql`SELECT fee::text AS fee FROM funding_debits WHERE id = 'migration-existing'`)[0].fee).toBe('123');
+  expect((await sql`SELECT paused FROM funding_control WHERE key = 'global'`)[0].paused).toBe(false);
+  await sql`INSERT INTO funding_debits(id,kind,account,fee,created_at,external) VALUES ('migration-wallet','wallet','0x1',1,2,false)`;
+  expect((await sql`SELECT kind FROM funding_debits WHERE id = 'migration-wallet'`)[0].kind).toBe('wallet');
 });
 
 integration('schema initialization is repeatable and refuses unknown versions', async () => {

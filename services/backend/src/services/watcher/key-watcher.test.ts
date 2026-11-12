@@ -1,10 +1,10 @@
 // Kamui: the registry key watcher, with fake chain events and a fake issuer.
 import { describe, expect, test } from 'bun:test';
 import { CallData, byteArray, hash } from 'starknet';
-import { modulusHash, modulusLimbs, parseRegistryEvent } from '../../jwk/modulus';
+import { byteArraysFromFelts, modulusHash, modulusLimbs, parseRegistryEvent } from '../../jwk/modulus';
 import { setLogSink } from '../../log';
 import { TEST_JWK, cairoFixture } from '../../test-fixtures';
-import { checkEvents, watchOnce, type WatcherDeps } from './key-watcher';
+import { alertIdentity, checkEvents, watchOnce, type WatcherDeps } from './key-watcher';
 
 const GOOGLE = 'https://accounts.google.com';
 const APPLE = 'https://appleid.apple.com';
@@ -146,5 +146,50 @@ describe('watcher', () => {
     const { code, lines } = await once(deps);
     expect(code).toBe(1);
     expect(lines.some((l) => l.event === 'watcher_webhook_failed')).toBe(true);
+  });
+});
+
+describe('current issuer publication freshness', () => {
+  test('new Google kid absent from empty registry alerts without fabricated chain evidence', async () => {
+    const {deps,posts}=watcher([], {[GOOGLE]:[jwk('new-google-kid')]}, 'https://hooks.test/x');deps.publishedIssuers=[GOOGLE];
+    const {code,result,lines}=await once(deps);
+    expect(code).toBe(1);
+    expect(result.alerts).toEqual([{source:'issuer',reason:'REGISTRY_KEY_MISSING',iss:GOOGLE,kid:'new-google-kid',issuerHash:hashOf(TEST_JWK.n),inEffect:true}]);
+    const line=lines.find(line=>line.event==='registry_key_alert');expect(line.source).toBe('issuer');expect(line.tx).toBeUndefined();expect(line.block).toBeUndefined();
+    expect(posts[0]!.body.text).not.toContain('undefined');expect(posts[0]!.body.alerts[0].transactionHash).toBeUndefined();
+  });
+  test('every eligible publication is checked directly even without any historical writes', async () => {
+    const {deps}=watcher([], {[GOOGLE]:[jwk('one'),jwk('two',OTHER_N)]});deps.publishedIssuers=[GOOGLE,GOOGLE];
+    const read:string[]=[];let fetches=0;
+    deps.fetchKeys=async iss=>{fetches++;expect(iss).toBe(GOOGLE);return[jwk('one'),jwk('two',OTHER_N)];};
+    deps.provider.callContract=async call=>{expect(call.entrypoint).toBe('get_key');const [iss,kid]=byteArraysFromFelts(call.calldata);expect(iss).toBe(GOOGLE);read.push(kid!);return modulusLimbs(kid==='one'?TEST_JWK.n:OTHER_N).map(limb=>'0x'+limb.toString(16));};
+    const {code,result}=await once(deps);expect(code).toBe(0);expect(result.verified).toBe(2);expect(fetches).toBe(1);expect(read).toEqual(['one','two']);
+  });
+  test('storage mismatch is visible even when historical event hash matches issuer', async () => {
+    const {deps}=watcher([keySet('one',TEST_JWK.n)], {[GOOGLE]:[jwk('one')]},undefined,()=>modulusLimbs(OTHER_N).map(limb=>'0x'+limb.toString(16)));deps.publishedIssuers=[GOOGLE];
+    const {code,result}=await once(deps);expect(code).toBe(1);
+    expect(result.alerts).toEqual([{source:'issuer',reason:'MODULUS_MISMATCH',iss:GOOGLE,kid:'one',onChainHash:hashOf(OTHER_N),issuerHash:hashOf(TEST_JWK.n),inEffect:true}]);
+  });
+  test('fresh fetch on each pass detects a later publication absent from event history', async () => {
+    const {deps}=watcher([],{});deps.publishedIssuers=[GOOGLE];let fetches=0;
+    deps.fetchKeys=async()=>++fetches===1?[jwk('existing')]:[jwk('existing'),jwk('later')];
+    deps.provider.callContract=async call=>{if(byteArraysFromFelts(call.calldata)[1]==='later')throw Error("'UNKNOWN_KID'");return modulusLimbs(TEST_JWK.n).map(limb=>'0x'+limb.toString(16));};
+    expect((await once(deps)).code).toBe(0);const next=await once(deps);expect(next.code).toBe(1);expect(fetches).toBe(2);expect(next.result.alerts[0]!.kid).toBe('later');
+  });
+  test('fetch failures, malformed JWKS and no eligible keys fail rather than report healthy', async () => {
+    for(const keys of [new Error('issuer unavailable'),[],[{...jwk('kid'),use:'enc'}],[{...jwk('kid'),n:'not-a-modulus'}]]){
+      const {deps}=watcher([],{[GOOGLE]:keys});deps.publishedIssuers=[GOOGLE];
+      const {code,result}=await once(deps);expect(code).toBe(2);expect(result.issuersUnavailable).toEqual([GOOGLE]);expect(result.verified).toBe(0);
+    }
+  });
+  test('RPC and malformed-storage failures never become missing-key or healthy results', async () => {
+    for(const stored of [()=>{throw Error('RPC_SOCKET_UNAVAILABLE');},()=>['0x1']]){
+      const {deps}=watcher([],{[GOOGLE]:[jwk('kid')]},undefined,stored);deps.publishedIssuers=[GOOGLE];await expect(once(deps)).rejects.toThrow();
+    }
+  });
+  test('source and changed comparison hashes separate alert deduplication identities', () => {
+    const issuer={source:'issuer' as const,reason:'MODULUS_MISMATCH' as const,iss:GOOGLE,kid:'kid',inEffect:true,onChainHash:'0x1',issuerHash:'0x2'};
+    const event={...issuer,source:'event' as const,transactionHash:'0x3',blockNumber:1};
+    expect(alertIdentity(issuer)).not.toBe(alertIdentity(event));expect(alertIdentity(issuer)).not.toBe(alertIdentity({...issuer,issuerHash:'0x4'}));expect(alertIdentity(issuer)).toBe(alertIdentity({...issuer}));
   });
 });

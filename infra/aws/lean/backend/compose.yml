@@ -52,19 +52,21 @@ services:
       HOST: 0.0.0.0
       PORT: "3000"
       STORAGE_BACKEND: postgres
+      REQUIRE_OFFLINE_REGISTRY_ADMIN: "true"
       DATABASE_URL_FILE: /run/secrets/DATABASE_URL
       SECRET_SOURCE: files
       RESTORE_GATE_FILE: /run/kamui/restore-gate/state.json
       FUNDING_POLICY_FILE: /etc/kamui/funding-policy.json
       TRUSTED_PROXY_HOPS: "2"
       METRICS_HOST: 0.0.0.0
-      ROTATOR_URL: http://rotator:3001
+      # Manual/off-server registry administration: no hot signing service.
+      ROTATOR_URL: ""
       AUTHORIZED_APPLE_RECOVERY_CLIENT_ID: ""
     secrets: [DATABASE_URL, RELAYER_PRIVATE_KEY]
     volumes:
       - ${STATE_DIRECTORY:-/var/lib/kamui}/restore-gate:/run/kamui/restore-gate:ro
       - ${CONFIG_DIRECTORY:-/etc/kamui}/funding-policy.json:/etc/kamui/funding-policy.json:ro
-    networks: [api, database, rotator, api_egress]
+    networks: [api, database, api_egress]
     mem_limit: 512m
     depends_on: { postgres: { condition: service_healthy } }
     stop_grace_period: 30s
@@ -99,17 +101,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-  rotator:
-    <<: *runtime
-    image: ${BACKEND_IMAGE:?Digest-pinned BACKEND_IMAGE required}
-    command: ["bun", "run", "service:rotator"]
-    env_file: ["${CONFIG_DIRECTORY:-/etc/kamui}/rotator.public.env"]
-    environment: { NODE_ENV: production, SECRET_SOURCE: files, RESTORE_GATE_FILE: /run/kamui/restore-gate/state.json }
-    volumes:
-      - ${STATE_DIRECTORY:-/var/lib/kamui}/restore-gate:/run/kamui/restore-gate:ro
-    secrets: [OWNER_PRIVATE_KEY]
-    networks: [rotator, rotator_egress]
-    mem_limit: 192m
   watcher:
     <<: *runtime
     image: ${BACKEND_IMAGE:?Digest-pinned BACKEND_IMAGE required}
@@ -143,7 +134,6 @@ secrets:
   OPERATOR_DATABASE_URL: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/OPERATOR_DATABASE_URL" }
   DATABASE_URL: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/DATABASE_URL" }
   RELAYER_PRIVATE_KEY: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/RELAYER_PRIVATE_KEY" }
-  OWNER_PRIVATE_KEY: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/OWNER_PRIVATE_KEY" }
   POSTGRES_PASSWORD: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/POSTGRES_PASSWORD" }
   APP_DATABASE_PASSWORD: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/APP_DATABASE_PASSWORD" }
 networks:
@@ -151,8 +141,6 @@ networks:
   frontend: { internal: true }
   api: { internal: true }
   database: { internal: true }
-  rotator: { internal: true }
   api_egress: {}
   backup_egress: {}
-  rotator_egress: {}
   watcher_egress: {}

@@ -45,7 +45,7 @@ export type World = {
   tokens: Map<bigint, { symbol: string; decimals: number }>;
   /** What the keychain asked the outside world to do. */
   recoverRequests: any[];
-  sponsorRequests: { account: string; calls: { to: string; selector: bigint; data: string[] }[] }[];
+  sponsorRequests: { endpoint: string; account: string; calls: { to: string; selector: bigint; data: string[] }[] }[];
   pepperRequests: any[];
   issuerVisits: number;
   /** The query of each visit to Apple's sign-in page. */
@@ -286,7 +286,7 @@ export async function installFakes(context: BrowserContext, world: World) {
     return json(route, { status: 'succeeded', result: { transaction_hash: '0xaaa' } });
   });
 
-  await context.route(`${KEYCHAIN}/api/sponsor`, async (route) => {
+  await context.route(new RegExp(`^${KEYCHAIN}/api/(wallet/)?sponsor$`), async (route) => {
     const request = route.request().postDataJSON();
     if (world.sponsorError) {
       const error = world.sponsorError;
@@ -294,7 +294,7 @@ export async function installFakes(context: BrowserContext, world: World) {
       return json(route, { error }, 400);
     }
     const calls = outsideCalls(request.calldata);
-    world.sponsorRequests.push({ account: request.account, calls });
+    world.sponsorRequests.push({ endpoint: new URL(route.request().url()).pathname, account: request.account, calls });
     applySponsored(world, calls);
     return json(route, { transaction_hash: '0xbbb' });
   });

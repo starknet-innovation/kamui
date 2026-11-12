@@ -294,6 +294,7 @@ test.describe('connection requests', () => {
     // One sponsored call, to the account, registering exactly the session the app asked for.
     expect(world.sponsorRequests).toHaveLength(1);
     const [sent] = world.sponsorRequests;
+    expect(sent!.endpoint).toBe('/api/wallet/sponsor');
     expect(BigInt(sent!.account)).toBe(BigInt(ACCOUNT));
     expect(sent!.calls).toHaveLength(1);
     expect(sent!.calls[0]!.selector).toBe(selectorOf('add_or_update_scoped_session_key'));
@@ -521,6 +522,7 @@ test.describe('transaction requests', () => {
     await expect(page.getByRole('cell', { name: 'end_turn' })).toBeVisible();
     await page.getByRole('button', { name: 'Approve' }).click();
     expect((await transactionAnswer(page, store)).ok).toBe(true);
+    expect(world.sponsorRequests[0]!.endpoint).toBe('/api/sponsor');
     expect(world.sponsorRequests[0]!.calls.map((call) => call.selector)).toEqual([selectorOf('move'), selectorOf('end_turn')]);
   });
 
@@ -871,6 +873,7 @@ test.describe('sessions', () => {
     await answer(page, true);
     await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
     expect(world.sponsorRequests).toHaveLength(1);
+    expect(world.sponsorRequests[0]!.endpoint).toBe('/api/wallet/sponsor');
     expect(world.sponsorRequests[0]!.calls.map((call) => call.selector)).toEqual([selectorOf('revoke_all_sessions')]);
     expect(world.sessions.size).toBe(0);
     await expect.poll(() => world.registry.size).toBe(0);

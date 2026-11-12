@@ -68,6 +68,7 @@ const BODIES: Record<string, unknown> = {
   '/relay': { account: ACCOUNT, newPubkey: '0x1', proof: 'AAAA', signature: ['0x1', '0x2'], proofFacts: [] },
   '/deploy': { aud: 'not-ours', identity: '0x1' },
   '/sponsor': { account: ACCOUNT, calldata: ['0x1'] },
+  '/wallet/sponsor': { account: ACCOUNT, calldata: ['0x1'] },
   '/registry/sessions': { account: ACCOUNT, timestamp: 1, nonce: '0x1', signature: ['0x1', '0x2'], session: {} },
   '/registry/sessions/list': { account: ACCOUNT, timestamp: 1, nonce: '0x1', signature: ['0x1', '0x2'] },
   '/registry/sessions/remove': { account: ACCOUNT, timestamp: 1, nonce: '0x1', signature: ['0x1', '0x2'], publicKey: '0x1' },
@@ -259,7 +260,7 @@ test('HTTP sponsorship forwards the approved server credential and never logs it
   const sponsor:any = {
     classHash: CLASS,
     provider:{getClassHashAt:async()=>{reads++;return CLASS;}},
-    relayer:{estimateInvokeFee:async()=>({overall_fee:10n,resourceBounds:{l2_gas:{max_amount:2n,max_price_per_unit:5n}}}),execute:async()=>{sends++;return{transaction_hash:'0xabc'};}},
+    relayer:{estimateInvokeFee:async()=>({overall_fee:10n,resourceBounds:{l1_gas:{max_amount:0n,max_price_per_unit:1n},l2_gas:{max_amount:2n,max_price_per_unit:5n},l1_data_gas:{max_amount:0n,max_price_per_unit:1n}}}),execute:async()=>{sends++;return{transaction_hash:'0xabc'};}},
     budgets:{anonymous:{...budget,txPerPeriod:0},byKey:new Map([[APP_KEY,budget]])},ledger:new MemoryLedger(),
     funding:{authorizeApp:(key:string,token:string)=>{if(key!==APP_KEY||token!==credential)throw new HttpError(403,'APP_AUTH_REQUIRED');},debit:async()=>{debits++;}},
   };
@@ -272,4 +273,20 @@ test('HTTP sponsorship forwards the approved server credential and never logs it
     expect(reads).toBe(1);expect(debits).toBe(1);expect(sends).toBe(1);
     expect(lines.join('')).not.toContain(credential);
   } finally {setLogSink(previous);}
+});
+
+
+test('wallet maintenance HTTP path uses owner authorization and its separate funding kind without app credentials', async () => {
+  const chainId='0x534e5f5345504f4c4941';
+  const before='0x'+(Math.floor(Date.now()/1000)+600).toString(16);
+  const calldata=[shortString.encodeShortString('ANY_CALLER'),'0x42','0x0',before,'0x1',ACCOUNT,'0x'+BigInt((await import('starknet')).hash.getSelectorFromName('revoke_all_sessions')).toString(16),'0x0','0x2','0x1','0x2'];
+  let debits=0,sends=0;
+  const sponsor:any={
+    classHash:CLASS, funding:{authorizeApp:()=>{throw Error('APP_AUTH_MUST_NOT_BE_USED');},debit:async(request:any)=>{expect(request.kind).toBe('wallet');debits++;}},
+    provider:{getChainId:async()=>chainId,getClassHashAt:async()=>CLASS,callContract:async(call:any)=>call.entrypoint==='is_valid_signature'?[shortString.encodeShortString('VALID')]:['0x1']},
+    relayer:{estimateInvokeFee:async()=>({overall_fee:30n,resourceBounds:{l1_gas:{max_amount:1n,max_price_per_unit:10n},l2_gas:{max_amount:1n,max_price_per_unit:10n},l1_data_gas:{max_amount:1n,max_price_per_unit:10n}}}),execute:async()=>{sends++;return{transaction_hash:'0xabc'};}},
+  };
+  const {post}=app({sponsor});
+  const response=await post('/wallet/sponsor',{account:ACCOUNT,calldata});
+  expect(response.status).toBe(200);expect(debits).toBe(1);expect(sends).toBe(1);
 });

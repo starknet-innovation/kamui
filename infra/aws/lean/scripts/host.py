@@ -97,14 +97,15 @@ def execute(role, action, config, state):
         print(json.dumps([{'service': r.get('Service'), 'state': r.get('State'), 'health': r.get('Health')} for r in rows]))
         return
     if role == 'backend' and action in {'validate', 'up'}:
-        def address(filename, key):
-            for line in (config/filename).read_text().splitlines():
-                name, sep, value = line.strip().partition('=')
-                if sep and name == key and re.fullmatch('0x[0-9a-fA-F]{1,64}', value):
-                    return int(value, 16)
-            raise ValueError('SIGNER_ADDRESS_REQUIRED')
-        if address('backend.public.env', 'RELAYER_ADDRESS') == address('rotator.public.env', 'OWNER_ADDRESS'):
-            raise ValueError('SHARED_SIGNER_NONCE_COORDINATION_REQUIRED')
+        # Registry administration stays off-server. Refuse an old copied role
+        # configuration instead of treating its presence as a harmless unused file.
+        if (config/'secrets/OWNER_PRIVATE_KEY').exists() or (config/'secrets/OWNER_PRIVATE_KEY').is_symlink():
+            raise ValueError('OFFSERVER_REGISTRY_SIGNER_REQUIRED')
+        for name in ['backend.public.env', 'watcher.public.env']:
+            for line in (config/name).read_text().splitlines():
+                key, separator, value = line.strip().partition('=')
+                if separator and key in {'OWNER_PRIVATE_KEY','OWNER_ADDRESS'} and value:
+                    raise ValueError('OFFSERVER_REGISTRY_SIGNER_REQUIRED')
     if action == 'prepare' and role != 'backend':
         raise ValueError('PREPARE_BACKEND_ONLY')
     if role == 'backend' and action in {'up','prepare'}:
@@ -114,6 +115,8 @@ def execute(role, action, config, state):
         raw = checked.stdout.strip()
         rows = json.loads(raw) if raw.startswith('[') else [json.loads(line) for line in raw.splitlines() if line]
         assert_writers_stopped(rows)
+        if action == 'up' and any(row.get('Service') == 'rotator' for row in rows):
+            raise ValueError('LEGACY_ROTATOR_REMOVAL_REQUIRED')
     if role == 'backend' and action == 'up':
         gate_directory = state/'restore-gate'
         gate_stat = gate_directory.lstat()

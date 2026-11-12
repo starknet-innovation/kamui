@@ -3,7 +3,7 @@ import { RpcError } from 'starknet';
 import { HttpError } from '../../http';
 import { metrics, resetMetrics } from '../../metrics';
 import { DEFAULT_MAX_FEE_PER_TX, MemoryLedger, budgetFor, defaultAnonymous, parseBudgets, type Budget, type Budgets } from '../sponsor/budgets';
-import { MAX_SPONSORED_CALLDATA, maxFee, parseSponsorRequest, sponsorOutsideExecution, type SponsorContext } from './sponsor';
+import { MAX_SPONSORED_CALLDATA, maxFee, requireSignedFeeBounds, parseSponsorRequest, sponsorOutsideExecution, type SponsorContext } from './sponsor';
 
 const ACCOUNT = '0x3ec3b3ead6762ecf0172e0d5e3f9df472e66608e3f483f300a784dc9652d193';
 const OTHER_ACCOUNT = '0x4ec3b3ead6762ecf0172e0d5e3f9df472e66608e3f483f300a784dc9652d193';
@@ -25,7 +25,7 @@ const budget = (over: Partial<Budget> = {}): Budget => ({ name: 'anonymous', txP
 /** A context whose relayer records what it was asked to send. `refuse` makes the fee estimate fail, as an invalid signature does. */
 function context(over: { classHash?: string; anonymous?: Partial<Budget>; apps?: Record<string, Budget>; fee?: bigint } = {}) {
   const sent: any[] = [];
-  const state = { refuse: false, estimates: 0, classReads: 0, now: 1_000_000 };
+  const state = { refuse: false, estimates: 0, classReads: 0, estimateDetails: undefined as unknown, now: 1_000_000 };
   const bounds = { l2_gas: { max_amount: 1000n, max_price_per_unit: (over.fee ?? 1_000_000n) / 1000n } };
   const budgets: Budgets = { anonymous: budget(over.anonymous), byKey: new Map(Object.entries(over.apps ?? {})) };
   const ctx = {
@@ -34,7 +34,8 @@ function context(over: { classHash?: string; anonymous?: Partial<Budget>; apps?:
     ledger: new MemoryLedger(() => state.now),
     provider: { getClassHashAt: async () => (state.classReads++, over.classHash ?? CLASS) },
     relayer: {
-      estimateInvokeFee: async () => {
+      estimateInvokeFee: async (_call: unknown, details: unknown) => {
+        state.estimateDetails=details;
         state.estimates += 1;
         if (state.refuse) throw reverted();
         return { overall_fee: over.fee ?? 1_000_000n, resourceBounds: bounds, unit: 'FRI' };
@@ -63,9 +64,10 @@ describe('sponsor request', () => {
 
 describe('sponsoring', () => {
   test('sends exactly one entry point, to the account, with the calldata given and the bounds that were checked', async () => {
-    const { ctx, sent, bounds } = context();
+    const { ctx, sent, bounds, state } = context();
     const result = await sponsorOutsideExecution(call(), null, ctx);
     expect(result).toEqual({ transaction_hash: '0xabc' });
+    expect(state.estimateDetails).toEqual({skipValidate:false,tip:0n});
     expect(sent).toEqual([{ call: { contractAddress: ACCOUNT, entrypoint: 'execute_from_outside_v2', calldata: ['0x1', '0x2'] }, details: { resourceBounds: bounds, tip: 0n } }]);
   });
 
@@ -201,4 +203,17 @@ describe('budgets', () => {
     expect(defaultAnonymous('SN_SEPOLIA', '0').txPerPeriod).toBe(0);
     expect(() => defaultAnonymous('SN_SEPOLIA', 'lots')).toThrow();
   });
+});
+
+
+test('durable local sponsorship refuses partial/malformed bounds before debit or send', async () => {
+  const complete={l1_gas:{max_amount:0n,max_price_per_unit:1n},l2_gas:{max_amount:2n,max_price_per_unit:5n},l1_data_gas:{max_amount:0n,max_price_per_unit:1n}};
+  expect(()=>requireSignedFeeBounds({overall_fee:10n,resourceBounds:complete})).not.toThrow();
+  for(const resourceBounds of [undefined,{}, {l2_gas:complete.l2_gas}, {...complete,l1_gas:{max_amount:2n**64n,max_price_per_unit:1n}}, {...complete,l1_data_gas:{max_amount:1n,max_price_per_unit:-1n}}, {...complete,l2_gas:{max_amount:1n,max_price_per_unit:'private-malformed-fixture'}}, {...complete,unexpected:complete.l1_gas}] as any[]) {
+    const {ctx,sent}=context();let debits=0;
+    ctx.funding={authorizeApp(){},debit:async()=>{debits++;}};
+    (ctx.relayer as any).estimateInvokeFee=async()=>({overall_fee:10n,resourceBounds});
+    await expect(sponsorOutsideExecution(call(),null,ctx)).rejects.toThrow('SIGNED_FEE_BOUNDS_REQUIRED');
+    expect(debits).toBe(0);expect(sent).toHaveLength(0);
+  }
 });

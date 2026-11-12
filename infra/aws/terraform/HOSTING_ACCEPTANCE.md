@@ -108,3 +108,9 @@ PostgreSQL registry/recovery adapters, asynchronous commit-before-send, explicit
 - The lean host package has image-digest checks, direct HTTPS templates, scoped file mounts, a public keychain build/proxy allow-list, stopped-writer lifecycle checks and reboot/restore fences. These are locally validated artifacts, not cloud acceptance.
 - A real disposable local base-backup/WAL restore through the production wrapper preserved replay rows, an uncertain intent, funding debits and spending pause; the API gate remained blocked. S3 authorization/encryption, retention/RPO/RTO and delivery to real monitoring recipients remain unverified.
 - Backend and browser suites passed locally; the final counts and exact commands are in the lean validation record. No existing user database was migrated and no AWS settings or DNS were changed.
+
+## Follow-up decisions and implementation — 12 November 2026
+
+The user selected a $100/month planning budget and will act as the AWS operator/security reviewer. Registry administration uses a separate off-server controller and manual updates. Hosted rotator/admin-key mounts are removed; AccessControl role handoff must finish before the lean API's read-only governance startup gate will permit its relayer key to load. The independent watcher checks Google key freshness even without registry events. No signer transaction or AWS operation was performed by this work.
+
+Owner-authorized self-management sponsorship is implemented separately from credentialed app sponsorship, with zero default wallet funding and preserved PostgreSQL v3 debit/pause state. Live run-12 approval is limited to four attempts/12 test STRK/max5 each and is not approval of hosted limits. Cloud inspector results, actual role handoff, privacy/retention, funding thresholds, upstream abuse acceptance and real alert delivery remain pending.

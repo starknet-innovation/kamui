@@ -1,0 +1,142 @@
+{
+  "checkedAt": "2026-11-12T17:27:01.052Z",
+  "events": [
+    {
+      "at": "2026-11-12T17:24:38.801Z",
+      "path": "/api/relay",
+      "httpStatus": 202,
+      "method": "POST"
+    },
+    {
+      "at": "2026-11-12T17:24:38.803Z",
+      "path": "/api/recover/status",
+      "httpStatus": 200,
+      "method": "POST",
+      "jobStatus": "running"
+    },
+    {
+      "at": "2026-11-12T17:24:40.820Z",
+      "path": "/api/recover/status",
+      "httpStatus": 200,
+      "method": "POST",
+      "jobStatus": "running"
+    },
+    {
+      "at": "2026-11-12T17:24:42.834Z",
+      "path": "/api/recover/status",
+      "httpStatus": 200,
+      "method": "POST",
+      "jobStatus": "running"
+    },
+    {
+      "at": "2026-11-12T17:24:44.845Z",
+      "path": "/api/recover/status",
+      "httpStatus": 200,
+      "method": "POST",
+      "jobStatus": "running"
+    },
+    {
+      "at": "2026-11-12T17:24:46.857Z",
+      "path": "/api/recover/status",
+      "httpStatus": 200,
+      "method": "POST",
+      "jobStatus": "running"
+    },
+    {
+      "at": "2026-11-12T17:24:48.866Z",
+      "path": "/api/recover/status",
+      "httpStatus": 502,
+      "method": "POST",
+      "error": "API_UNAVAILABLE"
+    },
+    {
+      "at": "2026-11-12T17:24:50.871Z",
+      "path": "/api/recover/status",
+      "httpStatus": 502,
+      "method": "POST",
+      "error": "API_UNAVAILABLE"
+    },
+    {
+      "at": "2026-11-12T17:24:52.877Z",
+      "path": "/api/recover/status",
+      "httpStatus": 502,
+      "method": "POST",
+      "error": "API_UNAVAILABLE"
+    },
+    {
+      "at": "2026-11-12T17:24:54.886Z",
+      "path": "/api/recover/status",
+      "httpStatus": 502,
+      "method": "POST",
+      "error": "API_UNAVAILABLE"
+    },
+    {
+      "at": "2026-11-12T17:24:56.892Z",
+      "path": "/api/recover/status",
+      "httpStatus": 502,
+      "method": "POST",
+      "error": "API_UNAVAILABLE"
+    },
+    {
+      "at": "2026-11-12T17:24:58.901Z",
+      "path": "/api/recover/status",
+      "httpStatus": 502,
+      "method": "POST",
+      "error": "API_UNAVAILABLE"
+    },
+    {
+      "at": "2026-11-12T17:25:00.909Z",
+      "path": "/api/recover/status",
+      "httpStatus": 502,
+      "method": "POST",
+      "error": "API_UNAVAILABLE"
+    },
+    {
+      "at": "2026-11-12T17:25:02.918Z",
+      "path": "/api/recover/status",
+      "httpStatus": 502,
+      "method": "POST",
+      "error": "API_UNAVAILABLE"
+    },
+    {
+      "at": "2026-11-12T17:25:04.923Z",
+      "path": "/api/recover/status",
+      "httpStatus": 502,
+      "method": "POST",
+      "error": "API_UNAVAILABLE"
+    },
+    {
+      "at": "2026-11-12T17:25:06.946Z",
+      "path": "/api/recover/status",
+      "httpStatus": 200,
+      "method": "POST",
+      "jobStatus": "succeeded",
+      "transaction_hash": "0x6d5b8c8d81ba7b3c21942646fa57c151952ab978540384b79aa0db19e2f3cd7"
+    },
+    {
+      "at": "2026-11-12T17:25:10.428Z",
+      "path": "/api/registry/sessions/list",
+      "httpStatus": 200,
+      "method": "POST"
+    },
+    {
+      "at": "2026-11-12T17:25:11.020Z",
+      "path": "/api/registry/sessions/remove",
+      "httpStatus": 200,
+      "method": "POST"
+    },
+    {
+      "at": "2026-11-12T17:26:58.032Z",
+      "path": "/api/wallet/sponsor",
+      "httpStatus": 200,
+      "method": "POST",
+      "transaction_hash": "0x3acce144315d938c553d7024741aae44e0f0183c8298490e6f3d7fa23718987"
+    },
+    {
+      "at": "2026-11-12T17:27:01.052Z",
+      "path": "/api/registry/sessions/list",
+      "httpStatus": 200,
+      "method": "POST"
+    }
+  ]
+}

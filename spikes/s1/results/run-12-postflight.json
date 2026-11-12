@@ -1,0 +1,12 @@
+{
+  "network": "SN_SEPOLIA",
+  "checkedAt": "2026-11-12T17:32:39.268Z",
+  "block": 18040126,
+  "account": "0x133739e82cd76b5a6446848ae0cbbbb8cc4762fbb8e0eb5ebc417209423e0e9",
+  "classHash": "0x1e128dae2cb709cac9263afa1c6fdb33f7f1f5c2d969547d9739326d08399f6",
+  "ownerCount": 5,
+  "sessionEpoch": 9,
+  "relayer": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e",
+  "relayerBalanceFri": "2853902899559651385024",
+  "readOnly": true
+}

@@ -1,4 +1,5 @@
 pub mod account;
+pub mod kms_admin;
 pub mod core;
 pub mod mocks;
 pub mod owners;

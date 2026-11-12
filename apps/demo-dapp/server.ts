@@ -46,6 +46,10 @@ const sponsorToken = process.env.SPONSOR_SERVER_TOKEN_FILE
   ? await readPrivateSecretFile(process.env.SPONSOR_SERVER_TOKEN_FILE)
   : process.env.SPONSOR_SERVER_TOKEN;
 
+const sponsorAppKey = process.env.SPONSOR_APP_KEY;
+if (sponsorAppKey && !/^[A-Za-z0-9_-]{16,64}$/.test(sponsorAppKey)) throw new Error('SPONSOR_APP_KEY_INVALID');
+if (sponsorToken && !sponsorAppKey) throw new Error('SPONSOR_APP_KEY_REQUIRED');
+
 Bun.serve({
   port: PORT,
   idleTimeout: 120,
@@ -56,7 +60,7 @@ Bun.serve({
     if (url.pathname.startsWith('/api/')) {
       return fetch(`${API}${url.pathname.slice(4)}`, {
         method: request.method,
-        headers: proxyHeaders(request, server.requestIP(request)?.address, sponsorToken),
+        headers: proxyHeaders(request, server.requestIP(request)?.address, sponsorToken, sponsorAppKey),
         body: request.method === 'GET' ? undefined : await request.text(),
       });
     }

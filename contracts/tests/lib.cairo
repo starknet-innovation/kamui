@@ -5,3 +5,6 @@ pub mod test_spending;
 pub mod upstream_test_prove_jwt;
 pub mod upstream_test_prover_executor;
 pub mod upstream_test_recover;
+
+pub mod test_kms_admin;
+pub mod kms_k1_vector;

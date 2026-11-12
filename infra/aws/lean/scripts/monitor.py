@@ -17,7 +17,7 @@ def main():
     if checked.returncode:
         raise ValueError()
     rows = json.loads(checked.stdout)
-    expected = {'caddy', 'pepper'} if role == 'pepper' else {'caddy', 'keychain', 'api', 'postgres', 'rotator', 'watcher'}
+    expected = {'caddy', 'pepper'} if role == 'pepper' else {'caddy', 'keychain', 'api', 'postgres', 'watcher'}
     healthy = {row['service'] for row in rows if row['state'] == 'running' and row['health'] in {'', None, 'healthy'}}
     issues = []
     if healthy != expected:

@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "selectedScope": "open-google-sepolia",
+  "selectedRegion": "eu-west-1",
+  "monthlyPlanningUsd": 100,
+  "registrySignerPlan": "separate_offserver_manual_rotation",
+  "backupRetentionDays": 7,
+  "logRetentionDays": 7,
+  "approvals": {
+    "aws": {
+      "owner": "User",
+      "reference": null,
+      "accepted": false
+    },
+    "wallet_security": {
+      "owner": "User",
+      "reference": null,
+      "accepted": false
+    },
+    "privacy": {
+      "owner": null,
+      "reference": null,
+      "accepted": false
+    },
+    "operations": {
+      "owner": "User",
+      "reference": null,
+      "accepted": false
+    },
+    "funding": {
+      "owner": null,
+      "reference": null,
+      "accepted": false
+    }
+  },
+  "evidence": {
+    "distinct_signer_ownership": null,
+    "funding_thresholds_and_app_approval": null,
+    "external_paymaster_controls_or_local_transport": null,
+    "public_abuse_and_egress_review": null,
+    "metadata_role_isolation": null,
+    "backup_repository_and_restore": null,
+    "alert_delivery": null,
+    "stable_addresses_and_dns_owner": null,
+    "google_callback_owner": null,
+    "reviewed_image_digests_and_licenses": null,
+    "registry_admin_custody_and_rotation_availability": null,
+    "kms_admin_operator_only_permissions": null,
+    "kms_admin_immutable_account_and_live_control": null,
+    "kms_admin_independent_recovery": null,
+    "registry_handoff_verified": null
+  },
+  "registrySignerCustody": "kms_secp256k1_manual_operator"
+}

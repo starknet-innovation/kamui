@@ -7,6 +7,7 @@
 // POST /recover/status {jobId} => running | succeeded (result) | failed (code, httpStatus).
 //   Capability-protected durable status and receipt reconciliation, never re-proving.
 // POST /recover and legacy /deploy are disabled in this process (410).
+// POST /wallet/sponsor {account, calldata}: owner-authorized, self-management calls only.
 // Kamui: POST /sponsor {account, calldata}, optional x-kamui-app-key header => { transaction_hash }. See recovery/sponsor.ts.
 // Kamui: POST /registry/sessions, /registry/sessions/list, /registry/sessions/remove. See registry/registry.ts.
 // GET /health/api => { ok: true, chain, deploys, pepper_service, sponsor, proving: "browser" }
@@ -28,6 +29,7 @@ import { ProofQueue } from '../prover/queue';
 import { pepperSettings } from '../recovery/pepper';
 import { openBackendStorage } from '../../storage/backend-storage';
 import { assertRestoreReady } from '../../storage/restore-fence';
+import { assertRegistryAdminOffHost } from '../registry/governance';
 import { sponsorBudgetsFromFundingPolicy } from '../sponsor/funding';
 import { type RecoverContext } from '../recovery/recover';
 import { MemoryLedger, loadBudgets } from '../sponsor/budgets';
@@ -47,6 +49,11 @@ async function main(): Promise<void> {
   // Kamui: with CHAIN_ID set the api starts without the RPC and checks the chain in the background.
   const { chain, chainId, confirmed } = await resolveChain(provider);
   exitOnWrongChain(confirmed);
+  const governanceFlag = process.env.REQUIRE_OFFLINE_REGISTRY_ADMIN;
+  if (governanceFlag && !['true', 'false'].includes(governanceFlag)) throw new Error('REGISTRY_GOVERNANCE_CONFIG_INVALID');
+  if (governanceFlag === 'true') await assertRegistryAdminOffHost({
+    provider, chainId, registryAddress: env(`${chain}_REGISTRY_ADDRESS`), relayerAddress: env('RELAYER_ADDRESS'),
+  });
   // Kamui: signing keys come from the secret source (secrets.ts), not straight from the environment.
   const secrets = secretSource();
   // Kamui: in process. Replace both with shared implementations when the api is replicated.
@@ -78,6 +85,7 @@ async function main(): Promise<void> {
 
   /** The rotator's own answer, or why it could not be asked. */
   async function rotatorHealth(): Promise<unknown> {
+    if (!rotatorUrl) return { ok: false, reason: 'manual registry administration; rotator not configured' };
     try {
       const res = await fetchWithTimeout(`${rotatorUrl}/health`, {}, 3_000);
       return await res.json();
