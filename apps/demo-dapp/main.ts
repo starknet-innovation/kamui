@@ -1,6 +1,6 @@
 // The demo app: connect through the keychain, then send sponsored session calls.
 // The session key lives in this app's sessionStorage, which is fine for a demo.
-import { RpcProvider, type Call } from 'starknet';
+import { RpcProvider, uint256, type Call } from 'starknet';
 import {
   beginConnect,
   beginExecute,
@@ -14,6 +14,15 @@ import {
   sponsor,
   type Connection,
 } from '../../sdk/src';
+
+/** A u256 as calldata: low half, then high half. */
+const amount = (value: bigint) => {
+  const { low, high } = uint256.bnToUint256(value);
+  return [low, high].map((part) => '0x' + BigInt(part).toString(16));
+};
+
+/** STRK on Sepolia. */
+const STRK = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
 
 type Config = { keychainUrl: string; rpcUrl: string; target: string; sponsorUrl: string };
 
@@ -101,6 +110,21 @@ async function ready(connection: Connection) {
       ),
     );
   });
+  button('Approve 1.5 STRK to the test contract (asks you in Kamui)', () => {
+    // A real token, so the keychain can name it and show the exact amount. An approval needs no
+    // balance, and the test contract never spends it.
+    location.assign(
+      beginExecute(
+        {
+          keychainUrl: config.keychainUrl,
+          redirectUri: `${location.origin}/`,
+          appName: 'Ping demo',
+          calls: [{ contractAddress: STRK, entrypoint: 'approve', calldata: [config.target, ...amount(1_500_000_000_000_000_000n)] }],
+        },
+        sessionStorage,
+      ),
+    );
+  });
   button('Disconnect', () => {
     forgetConnection(sessionStorage);
     location.assign('/');
@@ -111,11 +135,14 @@ try {
   // The keychain answers in the URL fragment. Which request it answers was noted before leaving.
   let fresh: Connection | null = null;
   if (pendingRequestKind(sessionStorage) === 'execute') {
-    const sent = finishExecute(location.hash, sessionStorage);
-    if (sent) {
-      history.replaceState(null, '', '/');
-      log(`you approved the one-off call in Kamui: ${sent.transactionHash}`);
+    // A declined or failed one-off call says nothing about the session: keep the connection.
+    try {
+      const sent = finishExecute(location.hash, sessionStorage);
+      if (sent) log(`you approved the one-off call in Kamui: ${sent.transactionHash}`);
+    } catch (error) {
+      log(`one-off call not sent: ${(error as Error).message}`);
     }
+    history.replaceState(null, '', '/');
   } else {
     fresh = finishConnect(location.hash, sessionStorage);
     if (fresh) {
