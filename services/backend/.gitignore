@@ -1,0 +1,3 @@
+node_modules/
+# Public deployment addresses are in deployments.env (committed). Secrets go in .env.local.
+!.env.example

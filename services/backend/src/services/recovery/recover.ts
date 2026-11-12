@@ -1,0 +1,135 @@
+import { Account, CallData, RpcError, RpcProvider, type Call } from 'starknet';
+import { HttpError } from '../../http';
+import { extractJwt, fetchJwks, verifyJwt } from '../../jwk/verification';
+import { accountAddress, deployCall, expectedNonce, extractIdentity } from '../../social-account';
+import { proveJwt, proveJwtCalldata } from '../prover/prove';
+import { confirmPepper, type PepperSettings } from './pepper';
+
+export type RecoverContext = {
+  provider: RpcProvider;
+  /** Funded. Deploys accounts and submits recover. */
+  relayer: Account;
+  /** The SNIP-36 prover and the unfunded account that signs its virtual transaction. */
+  prover: { account: Account; url: string };
+  classHash: string;
+  /** The `aud` this backend serves per `iss`. A token from an issuer not listed here is refused. */
+  audiences: Record<string, string>;
+  /** Cap on relayer-paid deployments through POST /deploy. 0 disables the route. */
+  deploysPerHour: number;
+  /** Kamui: how the pepper in a request is confirmed before anything is paid for. */
+  pepper: PepperSettings;
+};
+export type RecoverRequest = {
+  jwt: string;
+  account: string;
+  newPubkey: string;
+  blinding: string;
+  /** Secret input of the identity hash, see `extractIdentity`. Confirmed with the pepper service. */
+  pepper: string;
+  /** Kamui: the device key's signature for the pepper service. Required when one is configured. */
+  keyProof?: string[];
+  signature: string[];
+  /** 
+   * This flag is used to denote that a recovery override is requested
+   * 
+   * The JWT's aud is a whitelisted recovery aud, not the one `account` 
+   * was created with. 
+   */
+  override?: boolean;
+};
+export type RecoverResult = { address: string; identity: string; transaction_hash: string };
+
+export const HEX = /^0x[0-9a-fA-F]+$/;
+
+export async function recoverAccount(req: RecoverRequest, ctx: RecoverContext): Promise<RecoverResult> {
+  if (!Array.isArray(req.signature) || req.signature.length !== 2 || !req.signature.every((s) => HEX.test(s)))
+    throw new Error('BAD_SIGNATURE_FORMAT');
+  if (!HEX.test(req.newPubkey)) throw new Error('BAD_PUBLIC_KEY');
+  if (!HEX.test(req.blinding)) throw new Error('BAD_BLINDING');
+  if (!HEX.test(req.pepper)) throw new Error('BAD_PEPPER');
+
+  const token = extractJwt(req.jwt);
+  const jwk = await verifyJwt(token, (await fetchJwks(token.iss)).keys);
+  if (token.aud !== ctx.audiences[token.iss]) throw new Error('WRONG_AUDIENCE');
+  if (!/^0x[0-9a-f]+$/.test(token.nonce)) throw new Error('BAD_NONCE');
+  if (BigInt(token.nonce) !== expectedNonce(req.newPubkey, req.blinding)) throw new Error('NONCE_MISMATCH');
+  // Kamui: before a deployment or a proof is paid for.
+  await confirmPepper(req, ctx.pepper);
+  let address: string;
+  let identity: string;
+  if (req.override) {
+    // The account belongs to another aud. prove_jwt checks h(iss, original_aud, sub) and the whitelist.
+    if (!/^0x[0-9a-fA-F]+$/.test(req.account)) throw new Error('BAD_ACCOUNT');
+    if (!(await isDeployed(ctx.provider, req.account))) throw new Error('ACCOUNT_NOT_DEPLOYED');
+    address = req.account;
+    [identity] = await ctx.provider.callContract({ contractAddress: address, entrypoint: 'identity' });
+  } else {
+    identity = extractIdentity(token, req.pepper);
+    address = accountAddress(token.aud, identity, ctx.classHash);
+    if (BigInt(address) !== BigInt(req.account)) throw new Error('WRONG_ACCOUNT');
+
+    if (!(await isDeployed(ctx.provider, address))) {
+      const { transaction_hash } = await ctx.relayer.execute(deployCall(token.aud, identity, ctx.classHash));
+      await ctx.provider.waitForTransaction(transaction_hash);
+      console.log(new Date().toISOString(), `deployed ${address} tx ${transaction_hash}`);
+    }
+  }
+
+  const prove: Call = {
+    contractAddress: address,
+    entrypoint: 'prove_jwt',
+    calldata: proveJwtCalldata(req.jwt, token, jwk, req.newPubkey, req.blinding, req.pepper),
+  };
+  const { proof, proof_facts } = await proveJwt(prove, ctx.provider, ctx.prover.account, ctx.prover.url);
+  const transaction_hash = await relayRecover(address, req.newPubkey, req.signature, proof, proof_facts, ctx);
+  console.log(new Date().toISOString(), `${req.override ? 'pending override recovery for' : 'recovered'} ${address} tx ${transaction_hash}`);
+  return { address, identity, transaction_hash };
+}
+
+/**
+ * Submits `recover(newPubkey, signature)` from the relayer with the proof attached and waits for it.
+ * starknet.js estimates the fee first with the facts attached, so a `recover` that would revert
+ * throws here at no cost; that revert comes back as a 400 with the contract's reason.
+ */
+export async function relayRecover(
+  address: string,
+  newPubkey: string,
+  signature: string[],
+  proof: string,
+  proofFacts: string[],
+  ctx: Pick<RecoverContext, 'relayer' | 'provider'>,
+): Promise<string> {
+  // The gateway rejects a decoded proof above max_proof_size (480,000 bytes on 0.14.5).
+  console.log(new Date().toISOString(), `proof for ${address}: ${Buffer.from(proof, 'base64').length} bytes, ${proofFacts.length} facts`);
+  let transaction_hash: string;
+  try {
+    ({ transaction_hash } = await ctx.relayer.execute(
+      { contractAddress: address, entrypoint: 'recover', calldata: CallData.compile([newPubkey, signature]) },
+      { proof, proofFacts },
+    ));
+  } catch (e) {
+    if (e instanceof RpcError) throw new HttpError(400, `REVERTED: ${revertReason(e)}`);
+    throw e;
+  }
+  await ctx.provider.waitForTransaction(transaction_hash);
+  return transaction_hash;
+}
+
+/** The contract's failure reason out of an estimate error, without the request echo (which carries the proof). */
+function revertReason(e: RpcError): string {
+  const { data } = e.baseError as { data?: unknown };
+  const text = typeof data === 'string' ? data : JSON.stringify(data ?? e.baseError.message);
+  const felts = [...text.matchAll(/'([A-Za-z0-9_/-]+)'/g)].map((m) => m[1]).filter((s) => s !== 'ENTRYPOINT_FAILED');
+  return felts.length ? felts.join(', ') : text.slice(0, 300);
+}
+
+/** True when a contract lives at `address`. Only "contract not found" counts as no. */
+export async function isDeployed(provider: RpcProvider, address: string): Promise<boolean> {
+  try {
+    await provider.getClassHashAt(address);
+    return true;
+  } catch (e) {
+    if (e instanceof RpcError && e.isType('CONTRACT_NOT_FOUND')) return false;
+    throw e;
+  }
+}

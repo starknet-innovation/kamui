@@ -105,6 +105,8 @@ Done when: all tests pass on a devnet, a gas profile shows at most one storage w
 
 ### Phase 2: backend
 
+Status 2026-11-12: upstream's backend is now in `services/backend/` with the Kamui changes as code (owner anchor, Kamui class, prover memory) and the pepper confirmed with the pepper service before anything is paid for; 17 tests. The pepper service is in `services/pepper/` and runs against AWS KMS. Not done: a live run of this copy, hardening (step 1), the `KeySet` watcher, the paymaster (step 3), the session and app registry (step 4) and the indexer (step 5).
+
 1. Harden social-account's recover API, prover service, relayer and JWK rotator for production (rate limits, monitoring, key handling). The committed `backend/.env` and `client/.env` were checked and hold only addresses, class hashes and an API URL. Add the `KeySet` watcher (D8). Budget for a flat 75M L2 gas per proof on every deployment and recovery the relayer pays for.
 2. Pepper service (D2).
 3. Paymaster (AVNU's, run unmodified as a separate service because it is GPL-3.0) with per-app sponsorship budgets and abuse controls. The relayer that pays for deployment and recovery uses the same budget controls.

@@ -87,6 +87,7 @@ const login = await completeLogin({
 - If the account already has five owner keys, the oldest is replaced.
 - The id_token's signature is not checked on the client. The pepper service, the backend and the contract each check it.
 - Pepper 0 is refused on mainnet.
+- The recover request carries the key proof, so the backend can confirm the pepper with the pepper service before it pays for a deployment or a proof.
 
 ## Rules the SDK enforces for you
 

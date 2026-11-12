@@ -149,6 +149,7 @@ describe('completing a login', () => {
     expect(requests).toHaveLength(1);
     const request = requests[0]!;
     expect(request).toMatchObject({ jwt: idToken, account, newPubkey: device.publicKey, blinding: attempt.blinding, pepper: '0x1234', override: false });
+    expect(request.keyProof).toEqual(keyProof(attempt, device).signature);
     const signature = new ec.starkCurve.Signature(BigInt(request.signature[0]), BigInt(request.signature[1]));
     expect(ec.starkCurve.verify(signature, newOwnerMessageHash(account, '0x0'), ec.starkCurve.getPublicKey(device.privateKey))).toBe(true);
   });

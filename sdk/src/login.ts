@@ -172,6 +172,11 @@ export type RecoverRequest = {
   signature: [string, string];
   blinding: string;
   pepper: string;
+  /**
+   * The key proof signature, so the backend can confirm the pepper with the pepper service
+   * before it pays for a deployment or a proof.
+   */
+  keyProof: [string, string];
   override: false;
 };
 
@@ -258,6 +263,7 @@ export async function completeLogin(args: {
     signature: signNewOwner(account, anchor, args.device.privateKey),
     blinding: args.attempt.blinding,
     pepper: args.pepper.pepper,
+    keyProof: keyProof(args.attempt, args.device).signature,
     override: false,
   });
   await args.provider.waitForTransaction(transaction_hash);
