@@ -64,3 +64,34 @@ About 5 seconds from request to the api's "deployed" log line (one sample, trans
 
 - The RPC matters. `starknet-sepolia-rpc.publicnode.com` serves storage proofs only for the newest block and made the first attempt fail. `api.zan.top/public/starknet-sepolia/rpc/v0_10` serves about 100 blocks back and works.
 - The api needs a recent bun (1.1.4 fails on `Bun.serve` routes; 1.4.4 works).
+
+## Run 3: the Kamui account on Sepolia, end to end
+
+2026-11-12. Kamui class `0x6b3cd8dd5787fcef206ffd2362970bfac3973930b509d7de6fc1cb61fc07fdc` (commit `f067f32`), declared in `0x2acbc49a8fec6627388b503dccd3d83a560a05bd72b45cb6379206e1fbc9ccb` for 59.45 test STRK. Upstream's registry and prover executor reused. Backend prover, same machine as runs 1 and 2. Upstream's backend and client patched as in `../kamui-owner-set.patch`.
+
+Account: `0x4e8a09edd57bc4c65e7e19858cfb4549ad7f14c3fabf9a96b7ab41adeaa828e`.
+
+| Step | Result |
+|---|---|
+| First login: deploy, prove, recover | Works. Proof 36.9 s (225,195 bytes, 1.19M steps), about 61 s from request to usable account. One owner, session epoch 1. Recovery tx `0x211e75e626c4fdef085db22812290eba8b084e476e89677b038de913f45a346`. |
+| Second login, as a second device | Works. Proof 227,841 bytes. Two owners, oldest first, session epoch 2. Recovery tx `0x499512e9e82d9113c2efdd25c025e6a6b359809f801e002e020c32538ee24fe`. |
+| Second device's key approves a contract-scoped session, sponsored | Works (owner-signed outside execution, relayer pays). |
+| Session, sponsored: allowed call | Works. |
+| Session, sponsored: call outside its scope, nonce outside its range, owner management | Each refused with `Kamui: invalid session`. |
+| Session, sponsored: replay of a used nonce | Refused with `Kamui: duplicated nonce`. |
+| Session, self-paid: two allowed transactions | Work. The nonce limit was anchored at first use (account nonce + 3). |
+| Session, self-paid: call outside its scope, owner management | Each refused at validation. |
+
+What this shows that the tests and devnet did not:
+
+- `prove_jwt` and `recover` work for the Kamui class with a real proof, and the proof is no slower than for upstream's class (36.9 s against 36.6 s).
+- A session signature passes `__validate__` on a real sequencer, with its validate-mode restrictions, including the storage write that anchors the nonce limit.
+- The outside-execution hash built by starknet.js is accepted on a live network, for owner and session signatures.
+
+Not covered by this run:
+
+- Storage-write counts on Sepolia: the RPC's traces carry no state diff. The devnet figures in `contracts/README.md` stand.
+- Removing an owner, a recovery on a full owner set, and override recovery, on a live network.
+- A negative check caveat: starknet.js skips `__validate__` when estimating fees unless told otherwise. The first attempt at the self-paid negative checks therefore reported "not refused"; with validation on, they are refused. An SDK must not rely on a default fee estimate to learn whether a session transaction is allowed.
+
+Scripts: `contracts/scripts/declare-sepolia.ts`, `sepolia-check.ts`, `sepolia-session.ts`.

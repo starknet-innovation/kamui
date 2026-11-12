@@ -64,4 +64,8 @@ The sponsored transactions are signed over typed data built by starknet.js's own
 - Pepper service (plan D2): upstream supports a pepper in `prove_jwt`; nothing here supplies one yet.
 - A real measure of owner-transaction cost with 1 to 5 keys.
 - Spending policy (SNIP-41 Part H).
-- A run of `prove_jwt` and `recover` for `KamuiAccount` on Sepolia with a real proof. The class differs from upstream's, so it needs its own declaration, and upstream's backend and SDK need small changes (they read `get_public_key`; Kamui exposes `get_owners_anchor`).
+- On a live network: removing an owner, a recovery on a full owner set, and override recovery.
+
+## Sepolia run
+
+On 2026-11-12 the class at commit `f067f32` was declared on Sepolia (`0x6b3cd8dd5787fcef206ffd2362970bfac3973930b509d7de6fc1cb61fc07fdc`) and run end to end: two logins with real proofs, an owner-approved session, and sponsored and self-paid session transactions, with the refusals checked. Results are in `../spikes/s1/results/RESULTS.md` (run 3). Scripts: `scripts/declare-sepolia.ts`, `scripts/sepolia-check.ts`, `scripts/sepolia-session.ts`.

@@ -92,7 +92,7 @@ Status after the first pass (details in [SPIKES.md](SPIKES.md)): S3 and S4 are c
 
 ### Phase 1: contracts
 
-Status 2026-11-12: in `contracts/` (see its README). Done: `SocialComponent`, `JwkRegistry` and `ProverExecutor` from upstream (one file adapted), `SessionKeyComponent` from the spec, Kamui's own `execute_from_outside_v2`, the admin blocklist, and the owner set (D4). No upgrade path, by decision (D1). 134 snforge tests pass, including upstream's run against the Kamui account. A devnet run confirms at most one storage write per session transaction. Not done: pepper service (D2), spending policy, a real-proof recovery of the new class on Sepolia, and the class freeze that D1 requires before mainnet.
+Status 2026-11-12: in `contracts/` (see its README). Done: `SocialComponent`, `JwkRegistry` and `ProverExecutor` from upstream (one file adapted), `SessionKeyComponent` from the spec, Kamui's own `execute_from_outside_v2`, the admin blocklist, and the owner set (D4). No upgrade path, by decision (D1). 134 snforge tests pass, including upstream's run against the Kamui account. A devnet run confirms at most one storage write per session transaction. The class was run end to end on Sepolia with real proofs on 2026-11-12 (two logins, an owner-approved session, sponsored and self-paid session transactions; `spikes/s1/results/RESULTS.md`, run 3). Not done: pepper service (D2), spending policy, and the class freeze that D1 requires before mainnet.
 
 1. Fork social-account's `social_account` package into the `kamui` repo. Keep `SocialComponent`, `JwkRegistry` and `ProverExecutor`.
 2. Write `SessionKeyComponent` to SNIP-41 as revised in PR 180, from the spec. Include the fee cap, epoch (D5), limit mechanism (D6) and scope decision (D7).
