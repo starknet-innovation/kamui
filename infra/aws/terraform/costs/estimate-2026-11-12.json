@@ -1,0 +1,995 @@
+{
+  "checked_date": "2026-11-12",
+  "region": "eu-west-1",
+  "currency": "USD",
+  "month_hours": 730,
+  "no_account_access": true,
+  "scenarios": {
+    "baseline_single": {
+      "availability": "single",
+      "traffic": "baseline",
+      "rows": [
+        {
+          "name": "Five Fargate tasks: 1.5 vCPU / 3 GiB combined",
+          "category": "fixed",
+          "quantities": {
+            "fargate_vcpu_hour": "1095.0",
+            "fargate_gib_hour": "2190"
+          },
+          "usd_exact": "54.06015000000",
+          "usd": "54.06"
+        },
+        {
+          "name": "Two zonal NAT gateways",
+          "category": "fixed",
+          "quantities": {
+            "nat_hour": "1460"
+          },
+          "usd_exact": "70.0800000000",
+          "usd": "70.08"
+        },
+        {
+          "name": "Two application load balancers",
+          "category": "fixed",
+          "quantities": {
+            "alb_hour": "1460"
+          },
+          "usd_exact": "36.7920000000",
+          "usd": "36.79"
+        },
+        {
+          "name": "Six public IPv4 addresses (minimum modeled allocation)",
+          "category": "fixed",
+          "quantities": {
+            "ipv4_hour": "4380"
+          },
+          "usd_exact": "21.9000000000",
+          "usd": "21.90"
+        },
+        {
+          "name": "PostgreSQL db.t4g.small (single)",
+          "category": "fixed",
+          "quantities": {
+            "rds_single_hour": "730"
+          },
+          "usd_exact": "25.5500000000",
+          "usd": "25.55"
+        },
+        {
+          "name": "PostgreSQL 20 GB gp3",
+          "category": "fixed",
+          "quantities": {
+            "rds_single_storage_gb_month": "20"
+          },
+          "usd_exact": "2.5400000000",
+          "usd": "2.54"
+        },
+        {
+          "name": "Two WAF ACLs, five standard rules each",
+          "category": "fixed",
+          "quantities": {
+            "waf_acl_month": "2",
+            "waf_rule_month": "10"
+          },
+          "usd_exact": "20.0000000000",
+          "usd": "20.00"
+        },
+        {
+          "name": "Six secret slots",
+          "category": "fixed",
+          "quantities": {
+            "secret_month": "6"
+          },
+          "usd_exact": "2.4000000000",
+          "usd": "2.40"
+        },
+        {
+          "name": "Three customer-managed key resources (planning allowance)",
+          "category": "fixed",
+          "quantities": {
+            "kms_key_month": "3"
+          },
+          "usd_exact": "3.0000000000",
+          "usd": "3.00"
+        },
+        {
+          "name": "10 GB ECR image storage",
+          "category": "fixed",
+          "quantities": {
+            "ecr_gb_month": "10"
+          },
+          "usd_exact": "1.0000000000",
+          "usd": "1.00"
+        },
+        {
+          "name": "One private DNS zone + two Cloud Map resources",
+          "category": "fixed",
+          "quantities": {
+            "private_zone_month": "1",
+            "cloudmap_resource_month": "2"
+          },
+          "usd_exact": "0.7000000000",
+          "usd": "0.70"
+        },
+        {
+          "name": "20 custom metrics + 12 standard alarms",
+          "category": "fixed",
+          "quantities": {
+            "metric_month": "20",
+            "alarm_month": "12"
+          },
+          "usd_exact": "7.2000000000",
+          "usd": "7.20"
+        },
+        {
+          "name": "ALB capacity: 1 LCU per ALB average (2 in higher scenario)",
+          "category": "usage",
+          "quantities": {
+            "alb_lcu_hour": "1460"
+          },
+          "usd_exact": "11.6800000000",
+          "usd": "11.68"
+        },
+        {
+          "name": "NAT data processing",
+          "category": "usage",
+          "quantities": {
+            "nat_gb": "50"
+          },
+          "usd_exact": "2.4000000000",
+          "usd": "2.40"
+        },
+        {
+          "name": "Internet transfer out, billed allowance before free quotas",
+          "category": "usage",
+          "quantities": {
+            "internet_gb": "100"
+          },
+          "usd_exact": "9.0000000000",
+          "usd": "9.00"
+        },
+        {
+          "name": "Cross-AZ/application traffic, combined billed GB units",
+          "category": "usage",
+          "quantities": {
+            "regional_gb": "100"
+          },
+          "usd_exact": "1.0000000000",
+          "usd": "1.00"
+        },
+        {
+          "name": "WAF requests, across both ACLs",
+          "category": "usage",
+          "quantities": {
+            "waf_request": "1000000"
+          },
+          "usd_exact": "0.6000000000",
+          "usd": "0.60"
+        },
+        {
+          "name": "Standard logs, storage and CloudWatch API allowance",
+          "category": "usage",
+          "quantities": {
+            "logs_ingest_gb": "5",
+            "logs_stored_gb_month": "1",
+            "cloudwatch_api_request": "100000"
+          },
+          "usd_exact": "3.8800000000",
+          "usd": "3.88"
+        },
+        {
+          "name": "Billed RDS backup storage beyond included allowance",
+          "category": "usage",
+          "quantities": {
+            "rds_excess_backup_gb_month": "20"
+          },
+          "usd_exact": "1.9000000000",
+          "usd": "1.90"
+        },
+        {
+          "name": "Secret retrieval API allowance",
+          "category": "usage",
+          "quantities": {
+            "secret_request": "100000"
+          },
+          "usd_exact": "0.5000000000",
+          "usd": "0.50"
+        },
+        {
+          "name": "KMS API allowance",
+          "category": "usage",
+          "quantities": {
+            "kms_request": "100000"
+          },
+          "usd_exact": "0.3000000000",
+          "usd": "0.30"
+        },
+        {
+          "name": "S3 audit/state storage + requests",
+          "category": "usage",
+          "quantities": {
+            "s3_gb_month": "5",
+            "s3_put_request": "10000",
+            "s3_get_request": "100000"
+          },
+          "usd_exact": "0.2050000000",
+          "usd": "0.21"
+        },
+        {
+          "name": "Paid management-event copies + data-event allowance",
+          "category": "usage",
+          "quantities": {
+            "cloudtrail_paid_management_event": "100000",
+            "cloudtrail_data_event": "100000"
+          },
+          "usd_exact": "2.1000000000",
+          "usd": "2.10"
+        },
+        {
+          "name": "Cloud Map discovery API allowance",
+          "category": "usage",
+          "quantities": {
+            "cloudmap_api_request": "10000"
+          },
+          "usd_exact": "0.0100000000",
+          "usd": "0.01"
+        },
+        {
+          "name": "RDS surplus CPU credits: zero assumed; unmeasured",
+          "category": "usage",
+          "quantities": {
+            "rds_cpu_credit_vcpu_hour": "0"
+          },
+          "usd_exact": "0E-10",
+          "usd": "0.00"
+        }
+      ],
+      "fixed_usd": "245.22",
+      "usage_usd": "33.58",
+      "monthly_usd_exact": "278.79715000000",
+      "monthly_usd": "278.80",
+      "with_25_percent_reserve_usd": "348.50"
+    },
+    "baseline_multi": {
+      "availability": "multi",
+      "traffic": "baseline",
+      "rows": [
+        {
+          "name": "Five Fargate tasks: 1.5 vCPU / 3 GiB combined",
+          "category": "fixed",
+          "quantities": {
+            "fargate_vcpu_hour": "1095.0",
+            "fargate_gib_hour": "2190"
+          },
+          "usd_exact": "54.06015000000",
+          "usd": "54.06"
+        },
+        {
+          "name": "Two zonal NAT gateways",
+          "category": "fixed",
+          "quantities": {
+            "nat_hour": "1460"
+          },
+          "usd_exact": "70.0800000000",
+          "usd": "70.08"
+        },
+        {
+          "name": "Two application load balancers",
+          "category": "fixed",
+          "quantities": {
+            "alb_hour": "1460"
+          },
+          "usd_exact": "36.7920000000",
+          "usd": "36.79"
+        },
+        {
+          "name": "Six public IPv4 addresses (minimum modeled allocation)",
+          "category": "fixed",
+          "quantities": {
+            "ipv4_hour": "4380"
+          },
+          "usd_exact": "21.9000000000",
+          "usd": "21.90"
+        },
+        {
+          "name": "PostgreSQL db.t4g.small (multi)",
+          "category": "fixed",
+          "quantities": {
+            "rds_multi_hour": "730"
+          },
+          "usd_exact": "50.3700000000",
+          "usd": "50.37"
+        },
+        {
+          "name": "PostgreSQL 20 GB gp3",
+          "category": "fixed",
+          "quantities": {
+            "rds_multi_storage_gb_month": "20"
+          },
+          "usd_exact": "5.0800000000",
+          "usd": "5.08"
+        },
+        {
+          "name": "Two WAF ACLs, five standard rules each",
+          "category": "fixed",
+          "quantities": {
+            "waf_acl_month": "2",
+            "waf_rule_month": "10"
+          },
+          "usd_exact": "20.0000000000",
+          "usd": "20.00"
+        },
+        {
+          "name": "Six secret slots",
+          "category": "fixed",
+          "quantities": {
+            "secret_month": "6"
+          },
+          "usd_exact": "2.4000000000",
+          "usd": "2.40"
+        },
+        {
+          "name": "Three customer-managed key resources (planning allowance)",
+          "category": "fixed",
+          "quantities": {
+            "kms_key_month": "3"
+          },
+          "usd_exact": "3.0000000000",
+          "usd": "3.00"
+        },
+        {
+          "name": "10 GB ECR image storage",
+          "category": "fixed",
+          "quantities": {
+            "ecr_gb_month": "10"
+          },
+          "usd_exact": "1.0000000000",
+          "usd": "1.00"
+        },
+        {
+          "name": "One private DNS zone + two Cloud Map resources",
+          "category": "fixed",
+          "quantities": {
+            "private_zone_month": "1",
+            "cloudmap_resource_month": "2"
+          },
+          "usd_exact": "0.7000000000",
+          "usd": "0.70"
+        },
+        {
+          "name": "20 custom metrics + 12 standard alarms",
+          "category": "fixed",
+          "quantities": {
+            "metric_month": "20",
+            "alarm_month": "12"
+          },
+          "usd_exact": "7.2000000000",
+          "usd": "7.20"
+        },
+        {
+          "name": "ALB capacity: 1 LCU per ALB average (2 in higher scenario)",
+          "category": "usage",
+          "quantities": {
+            "alb_lcu_hour": "1460"
+          },
+          "usd_exact": "11.6800000000",
+          "usd": "11.68"
+        },
+        {
+          "name": "NAT data processing",
+          "category": "usage",
+          "quantities": {
+            "nat_gb": "50"
+          },
+          "usd_exact": "2.4000000000",
+          "usd": "2.40"
+        },
+        {
+          "name": "Internet transfer out, billed allowance before free quotas",
+          "category": "usage",
+          "quantities": {
+            "internet_gb": "100"
+          },
+          "usd_exact": "9.0000000000",
+          "usd": "9.00"
+        },
+        {
+          "name": "Cross-AZ/application traffic, combined billed GB units",
+          "category": "usage",
+          "quantities": {
+            "regional_gb": "100"
+          },
+          "usd_exact": "1.0000000000",
+          "usd": "1.00"
+        },
+        {
+          "name": "WAF requests, across both ACLs",
+          "category": "usage",
+          "quantities": {
+            "waf_request": "1000000"
+          },
+          "usd_exact": "0.6000000000",
+          "usd": "0.60"
+        },
+        {
+          "name": "Standard logs, storage and CloudWatch API allowance",
+          "category": "usage",
+          "quantities": {
+            "logs_ingest_gb": "5",
+            "logs_stored_gb_month": "1",
+            "cloudwatch_api_request": "100000"
+          },
+          "usd_exact": "3.8800000000",
+          "usd": "3.88"
+        },
+        {
+          "name": "Billed RDS backup storage beyond included allowance",
+          "category": "usage",
+          "quantities": {
+            "rds_excess_backup_gb_month": "20"
+          },
+          "usd_exact": "1.9000000000",
+          "usd": "1.90"
+        },
+        {
+          "name": "Secret retrieval API allowance",
+          "category": "usage",
+          "quantities": {
+            "secret_request": "100000"
+          },
+          "usd_exact": "0.5000000000",
+          "usd": "0.50"
+        },
+        {
+          "name": "KMS API allowance",
+          "category": "usage",
+          "quantities": {
+            "kms_request": "100000"
+          },
+          "usd_exact": "0.3000000000",
+          "usd": "0.30"
+        },
+        {
+          "name": "S3 audit/state storage + requests",
+          "category": "usage",
+          "quantities": {
+            "s3_gb_month": "5",
+            "s3_put_request": "10000",
+            "s3_get_request": "100000"
+          },
+          "usd_exact": "0.2050000000",
+          "usd": "0.21"
+        },
+        {
+          "name": "Paid management-event copies + data-event allowance",
+          "category": "usage",
+          "quantities": {
+            "cloudtrail_paid_management_event": "100000",
+            "cloudtrail_data_event": "100000"
+          },
+          "usd_exact": "2.1000000000",
+          "usd": "2.10"
+        },
+        {
+          "name": "Cloud Map discovery API allowance",
+          "category": "usage",
+          "quantities": {
+            "cloudmap_api_request": "10000"
+          },
+          "usd_exact": "0.0100000000",
+          "usd": "0.01"
+        },
+        {
+          "name": "RDS surplus CPU credits: zero assumed; unmeasured",
+          "category": "usage",
+          "quantities": {
+            "rds_cpu_credit_vcpu_hour": "0"
+          },
+          "usd_exact": "0E-10",
+          "usd": "0.00"
+        }
+      ],
+      "fixed_usd": "272.58",
+      "usage_usd": "33.58",
+      "monthly_usd_exact": "306.15715000000",
+      "monthly_usd": "306.16",
+      "with_25_percent_reserve_usd": "382.70"
+    },
+    "higher_single": {
+      "availability": "single",
+      "traffic": "higher",
+      "rows": [
+        {
+          "name": "Five Fargate tasks: 1.5 vCPU / 3 GiB combined",
+          "category": "fixed",
+          "quantities": {
+            "fargate_vcpu_hour": "1095.0",
+            "fargate_gib_hour": "2190"
+          },
+          "usd_exact": "54.06015000000",
+          "usd": "54.06"
+        },
+        {
+          "name": "Two zonal NAT gateways",
+          "category": "fixed",
+          "quantities": {
+            "nat_hour": "1460"
+          },
+          "usd_exact": "70.0800000000",
+          "usd": "70.08"
+        },
+        {
+          "name": "Two application load balancers",
+          "category": "fixed",
+          "quantities": {
+            "alb_hour": "1460"
+          },
+          "usd_exact": "36.7920000000",
+          "usd": "36.79"
+        },
+        {
+          "name": "Six public IPv4 addresses (minimum modeled allocation)",
+          "category": "fixed",
+          "quantities": {
+            "ipv4_hour": "4380"
+          },
+          "usd_exact": "21.9000000000",
+          "usd": "21.90"
+        },
+        {
+          "name": "PostgreSQL db.t4g.small (single)",
+          "category": "fixed",
+          "quantities": {
+            "rds_single_hour": "730"
+          },
+          "usd_exact": "25.5500000000",
+          "usd": "25.55"
+        },
+        {
+          "name": "PostgreSQL 20 GB gp3",
+          "category": "fixed",
+          "quantities": {
+            "rds_single_storage_gb_month": "20"
+          },
+          "usd_exact": "2.5400000000",
+          "usd": "2.54"
+        },
+        {
+          "name": "Two WAF ACLs, five standard rules each",
+          "category": "fixed",
+          "quantities": {
+            "waf_acl_month": "2",
+            "waf_rule_month": "10"
+          },
+          "usd_exact": "20.0000000000",
+          "usd": "20.00"
+        },
+        {
+          "name": "Six secret slots",
+          "category": "fixed",
+          "quantities": {
+            "secret_month": "6"
+          },
+          "usd_exact": "2.4000000000",
+          "usd": "2.40"
+        },
+        {
+          "name": "Three customer-managed key resources (planning allowance)",
+          "category": "fixed",
+          "quantities": {
+            "kms_key_month": "3"
+          },
+          "usd_exact": "3.0000000000",
+          "usd": "3.00"
+        },
+        {
+          "name": "10 GB ECR image storage",
+          "category": "fixed",
+          "quantities": {
+            "ecr_gb_month": "10"
+          },
+          "usd_exact": "1.0000000000",
+          "usd": "1.00"
+        },
+        {
+          "name": "One private DNS zone + two Cloud Map resources",
+          "category": "fixed",
+          "quantities": {
+            "private_zone_month": "1",
+            "cloudmap_resource_month": "2"
+          },
+          "usd_exact": "0.7000000000",
+          "usd": "0.70"
+        },
+        {
+          "name": "20 custom metrics + 12 standard alarms",
+          "category": "fixed",
+          "quantities": {
+            "metric_month": "20",
+            "alarm_month": "12"
+          },
+          "usd_exact": "7.2000000000",
+          "usd": "7.20"
+        },
+        {
+          "name": "ALB capacity: 1 LCU per ALB average (2 in higher scenario)",
+          "category": "usage",
+          "quantities": {
+            "alb_lcu_hour": "2920"
+          },
+          "usd_exact": "23.3600000000",
+          "usd": "23.36"
+        },
+        {
+          "name": "NAT data processing",
+          "category": "usage",
+          "quantities": {
+            "nat_gb": "100"
+          },
+          "usd_exact": "4.8000000000",
+          "usd": "4.80"
+        },
+        {
+          "name": "Internet transfer out, billed allowance before free quotas",
+          "category": "usage",
+          "quantities": {
+            "internet_gb": "1000"
+          },
+          "usd_exact": "90.0000000000",
+          "usd": "90.00"
+        },
+        {
+          "name": "Cross-AZ/application traffic, combined billed GB units",
+          "category": "usage",
+          "quantities": {
+            "regional_gb": "200"
+          },
+          "usd_exact": "2.0000000000",
+          "usd": "2.00"
+        },
+        {
+          "name": "WAF requests, across both ACLs",
+          "category": "usage",
+          "quantities": {
+            "waf_request": "10000000"
+          },
+          "usd_exact": "6.0000000000",
+          "usd": "6.00"
+        },
+        {
+          "name": "Standard logs, storage and CloudWatch API allowance",
+          "category": "usage",
+          "quantities": {
+            "logs_ingest_gb": "50",
+            "logs_stored_gb_month": "5",
+            "cloudwatch_api_request": "100000"
+          },
+          "usd_exact": "29.6500000000",
+          "usd": "29.65"
+        },
+        {
+          "name": "Billed RDS backup storage beyond included allowance",
+          "category": "usage",
+          "quantities": {
+            "rds_excess_backup_gb_month": "20"
+          },
+          "usd_exact": "1.9000000000",
+          "usd": "1.90"
+        },
+        {
+          "name": "Secret retrieval API allowance",
+          "category": "usage",
+          "quantities": {
+            "secret_request": "100000"
+          },
+          "usd_exact": "0.5000000000",
+          "usd": "0.50"
+        },
+        {
+          "name": "KMS API allowance",
+          "category": "usage",
+          "quantities": {
+            "kms_request": "100000"
+          },
+          "usd_exact": "0.3000000000",
+          "usd": "0.30"
+        },
+        {
+          "name": "S3 audit/state storage + requests",
+          "category": "usage",
+          "quantities": {
+            "s3_gb_month": "5",
+            "s3_put_request": "10000",
+            "s3_get_request": "100000"
+          },
+          "usd_exact": "0.2050000000",
+          "usd": "0.21"
+        },
+        {
+          "name": "Paid management-event copies + data-event allowance",
+          "category": "usage",
+          "quantities": {
+            "cloudtrail_paid_management_event": "100000",
+            "cloudtrail_data_event": "100000"
+          },
+          "usd_exact": "2.1000000000",
+          "usd": "2.10"
+        },
+        {
+          "name": "Cloud Map discovery API allowance",
+          "category": "usage",
+          "quantities": {
+            "cloudmap_api_request": "10000"
+          },
+          "usd_exact": "0.0100000000",
+          "usd": "0.01"
+        },
+        {
+          "name": "RDS surplus CPU credits: zero assumed; unmeasured",
+          "category": "usage",
+          "quantities": {
+            "rds_cpu_credit_vcpu_hour": "0"
+          },
+          "usd_exact": "0E-10",
+          "usd": "0.00"
+        }
+      ],
+      "fixed_usd": "245.22",
+      "usage_usd": "160.83",
+      "monthly_usd_exact": "406.04715000000",
+      "monthly_usd": "406.05",
+      "with_25_percent_reserve_usd": "507.56"
+    },
+    "higher_multi": {
+      "availability": "multi",
+      "traffic": "higher",
+      "rows": [
+        {
+          "name": "Five Fargate tasks: 1.5 vCPU / 3 GiB combined",
+          "category": "fixed",
+          "quantities": {
+            "fargate_vcpu_hour": "1095.0",
+            "fargate_gib_hour": "2190"
+          },
+          "usd_exact": "54.06015000000",
+          "usd": "54.06"
+        },
+        {
+          "name": "Two zonal NAT gateways",
+          "category": "fixed",
+          "quantities": {
+            "nat_hour": "1460"
+          },
+          "usd_exact": "70.0800000000",
+          "usd": "70.08"
+        },
+        {
+          "name": "Two application load balancers",
+          "category": "fixed",
+          "quantities": {
+            "alb_hour": "1460"
+          },
+          "usd_exact": "36.7920000000",
+          "usd": "36.79"
+        },
+        {
+          "name": "Six public IPv4 addresses (minimum modeled allocation)",
+          "category": "fixed",
+          "quantities": {
+            "ipv4_hour": "4380"
+          },
+          "usd_exact": "21.9000000000",
+          "usd": "21.90"
+        },
+        {
+          "name": "PostgreSQL db.t4g.small (multi)",
+          "category": "fixed",
+          "quantities": {
+            "rds_multi_hour": "730"
+          },
+          "usd_exact": "50.3700000000",
+          "usd": "50.37"
+        },
+        {
+          "name": "PostgreSQL 20 GB gp3",
+          "category": "fixed",
+          "quantities": {
+            "rds_multi_storage_gb_month": "20"
+          },
+          "usd_exact": "5.0800000000",
+          "usd": "5.08"
+        },
+        {
+          "name": "Two WAF ACLs, five standard rules each",
+          "category": "fixed",
+          "quantities": {
+            "waf_acl_month": "2",
+            "waf_rule_month": "10"
+          },
+          "usd_exact": "20.0000000000",
+          "usd": "20.00"
+        },
+        {
+          "name": "Six secret slots",
+          "category": "fixed",
+          "quantities": {
+            "secret_month": "6"
+          },
+          "usd_exact": "2.4000000000",
+          "usd": "2.40"
+        },
+        {
+          "name": "Three customer-managed key resources (planning allowance)",
+          "category": "fixed",
+          "quantities": {
+            "kms_key_month": "3"
+          },
+          "usd_exact": "3.0000000000",
+          "usd": "3.00"
+        },
+        {
+          "name": "10 GB ECR image storage",
+          "category": "fixed",
+          "quantities": {
+            "ecr_gb_month": "10"
+          },
+          "usd_exact": "1.0000000000",
+          "usd": "1.00"
+        },
+        {
+          "name": "One private DNS zone + two Cloud Map resources",
+          "category": "fixed",
+          "quantities": {
+            "private_zone_month": "1",
+            "cloudmap_resource_month": "2"
+          },
+          "usd_exact": "0.7000000000",
+          "usd": "0.70"
+        },
+        {
+          "name": "20 custom metrics + 12 standard alarms",
+          "category": "fixed",
+          "quantities": {
+            "metric_month": "20",
+            "alarm_month": "12"
+          },
+          "usd_exact": "7.2000000000",
+          "usd": "7.20"
+        },
+        {
+          "name": "ALB capacity: 1 LCU per ALB average (2 in higher scenario)",
+          "category": "usage",
+          "quantities": {
+            "alb_lcu_hour": "2920"
+          },
+          "usd_exact": "23.3600000000",
+          "usd": "23.36"
+        },
+        {
+          "name": "NAT data processing",
+          "category": "usage",
+          "quantities": {
+            "nat_gb": "100"
+          },
+          "usd_exact": "4.8000000000",
+          "usd": "4.80"
+        },
+        {
+          "name": "Internet transfer out, billed allowance before free quotas",
+          "category": "usage",
+          "quantities": {
+            "internet_gb": "1000"
+          },
+          "usd_exact": "90.0000000000",
+          "usd": "90.00"
+        },
+        {
+          "name": "Cross-AZ/application traffic, combined billed GB units",
+          "category": "usage",
+          "quantities": {
+            "regional_gb": "200"
+          },
+          "usd_exact": "2.0000000000",
+          "usd": "2.00"
+        },
+        {
+          "name": "WAF requests, across both ACLs",
+          "category": "usage",
+          "quantities": {
+            "waf_request": "10000000"
+          },
+          "usd_exact": "6.0000000000",
+          "usd": "6.00"
+        },
+        {
+          "name": "Standard logs, storage and CloudWatch API allowance",
+          "category": "usage",
+          "quantities": {
+            "logs_ingest_gb": "50",
+            "logs_stored_gb_month": "5",
+            "cloudwatch_api_request": "100000"
+          },
+          "usd_exact": "29.6500000000",
+          "usd": "29.65"
+        },
+        {
+          "name": "Billed RDS backup storage beyond included allowance",
+          "category": "usage",
+          "quantities": {
+            "rds_excess_backup_gb_month": "20"
+          },
+          "usd_exact": "1.9000000000",
+          "usd": "1.90"
+        },
+        {
+          "name": "Secret retrieval API allowance",
+          "category": "usage",
+          "quantities": {
+            "secret_request": "100000"
+          },
+          "usd_exact": "0.5000000000",
+          "usd": "0.50"
+        },
+        {
+          "name": "KMS API allowance",
+          "category": "usage",
+          "quantities": {
+            "kms_request": "100000"
+          },
+          "usd_exact": "0.3000000000",
+          "usd": "0.30"
+        },
+        {
+          "name": "S3 audit/state storage + requests",
+          "category": "usage",
+          "quantities": {
+            "s3_gb_month": "5",
+            "s3_put_request": "10000",
+            "s3_get_request": "100000"
+          },
+          "usd_exact": "0.2050000000",
+          "usd": "0.21"
+        },
+        {
+          "name": "Paid management-event copies + data-event allowance",
+          "category": "usage",
+          "quantities": {
+            "cloudtrail_paid_management_event": "100000",
+            "cloudtrail_data_event": "100000"
+          },
+          "usd_exact": "2.1000000000",
+          "usd": "2.10"
+        },
+        {
+          "name": "Cloud Map discovery API allowance",
+          "category": "usage",
+          "quantities": {
+            "cloudmap_api_request": "10000"
+          },
+          "usd_exact": "0.0100000000",
+          "usd": "0.01"
+        },
+        {
+          "name": "RDS surplus CPU credits: zero assumed; unmeasured",
+          "category": "usage",
+          "quantities": {
+            "rds_cpu_credit_vcpu_hour": "0"
+          },
+          "usd_exact": "0E-10",
+          "usd": "0.00"
+        }
+      ],
+      "fixed_usd": "272.58",
+      "usage_usd": "160.83",
+      "monthly_usd_exact": "433.40715000000",
+      "monthly_usd": "433.41",
+      "with_25_percent_reserve_usd": "541.76"
+    }
+  },
+  "multi_az_increment_usd": "27.36",
+  "sensitivities": {
+    "additional_100_billed_egress_gb_usd": "9.00",
+    "additional_1m_standard_waf_requests_usd": "0.60",
+    "additional_100_rds_surplus_vcpu_hours_usd": "7.50"
+  }
+}

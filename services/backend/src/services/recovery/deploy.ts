@@ -24,7 +24,7 @@ export async function deployAccount(req: DeployRequest, ip: string, ctx: Recover
   // Kamui: this route has no token, so the pepper behind `identity` cannot be confirmed. With a
   // pepper service configured, deployments only happen through /recover.
   if (ctx.deploysPerHour === 0 || ctx.pepper.serviceUrl) throw new HttpError(403, 'DEPLOY_DISABLED');
-  ctx.assertRecoveryAvailable?.(address);
+  await ctx.assertRecoveryAvailable?.(address);
   if (!(await ctx.limiter.take(`deploy:${ip}`, DEPLOYS_PER_IP, HOUR))) throw new HttpError(429, 'RATE_LIMITED');
   if (!(await ctx.limiter.take('deploy', ctx.deploysPerHour, HOUR))) throw new HttpError(429, 'DEPLOY_CAP');
 

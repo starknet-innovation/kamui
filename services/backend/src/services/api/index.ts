@@ -26,9 +26,8 @@ import { fetchWithTimeout } from '../../net';
 import { secretSource } from '../../secrets';
 import { ProofQueue } from '../prover/queue';
 import { pepperSettings } from '../recovery/pepper';
-import { RecoveryJobs, recoveryDbPath } from '../recovery/jobs';
+import { openBackendStorage } from '../../storage/backend-storage';
 import { type RecoverContext } from '../recovery/recover';
-import { RegistryStore } from '../registry/store';
 import { MemoryLedger, loadBudgets } from '../sponsor/budgets';
 import { paymasterFromEnvironment } from '../sponsor/paymaster';
 import { buildApp, metricsResponse, parseLimits } from './app';
@@ -64,7 +63,11 @@ const ctx: RecoverContext = {
   proofs: new ProofQueue(), // Historical context only; no public proving route.
 };
 const rotatorUrl = process.env.ROTATOR_URL ?? 'http://localhost:3001';
-const store = new RegistryStore(process.env.REGISTRY_DB || undefined, undefined, process.env.REGISTRY_JOURNAL_MODE || 'DELETE');
+const storage = await openBackendStorage(process.env, `${chainId}:${ctx.classHash}`, () => {
+  log('error', 'postgres_writer_lease_lost');
+  process.exit(1);
+}).catch(() => { log('error', 'storage_startup_failed'); process.exit(1); });
+const { store, recoveryJobs } = storage;
 
 /** The rotator's own answer, or why it could not be asked. */
 async function rotatorHealth(): Promise<unknown> {
@@ -76,11 +79,6 @@ async function rotatorHealth(): Promise<unknown> {
   }
 }
 
-const recoveryJobs = new RecoveryJobs({
-  path: recoveryDbPath(),
-  binding: `${chainId}:${ctx.classHash}`,
-  journalMode: process.env.REGISTRY_JOURNAL_MODE || 'DELETE',
-});
 // Only orphaned metadata is reconciled. No JWT, pepper or proof is resumed from disk.
 void recoveryJobs.reconcile(provider).catch(() => log('error', 'recovery_reconciliation_failed'));
 setInterval(() => { void recoveryJobs.reconcile(provider).catch(() => log('error', 'recovery_reconciliation_failed')); }, 15_000).unref();
@@ -100,8 +98,8 @@ const app = buildApp({
 });
 
 // Expired registry entries are also dropped whenever their account is read or written.
-store.dropExpired(Math.floor(Date.now() / 1000));
-setInterval(() => store.dropExpired(Math.floor(Date.now() / 1000)), 3_600_000).unref();
+await Promise.resolve(store.dropExpired(Math.floor(Date.now() / 1000))).catch(() => { log('error', 'registry_prune_failed'); process.exit(1); });
+setInterval(() => { void Promise.resolve(store.dropExpired(Math.floor(Date.now() / 1000))).catch(() => log('error', 'registry_prune_failed')); }, 3_600_000).unref();
 
 const server = Bun.serve({
   port: number('PORT', 3000),
@@ -121,4 +119,14 @@ if (metricsPort > 0) {
     fetch: (req) => (new URL(req.url).pathname === '/metrics' && req.method === 'GET' ? metricsResponse() : new Response('not found\n', { status: 404 })),
   });
 }
-log('info', 'api_started', { port: server.port ?? 0, metrics_port: metricsPort, journal_mode: store.journalMode, chain, confirmation_service: Boolean(ctx.pepper.serviceUrl) });
+log('info', 'api_started', { port: server.port ?? 0, metrics_port: metricsPort, storage: storage.backend, journal_mode: store.journalMode, chain, confirmation_service: Boolean(ctx.pepper.serviceUrl) });
+
+// Stopping releases the writer lease only as the process exits. In-flight jobs remain
+// interrupted/reconcilable metadata; no saved proof or automatic rebroadcast.
+let stopping = false;
+for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, () => {
+  if (stopping) return;
+  stopping = true;
+  server.stop(true);
+  void storage.close().finally(() => process.exit(0));
+});

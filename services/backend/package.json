@@ -15,7 +15,8 @@
     "deploy:registry": "bun run src/scripts/deploy-registry.ts",
     "declare:account": "bun run src/scripts/declare-account.ts",
     "deploy:executor": "bun run src/scripts/deploy-executor.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "migrate:postgres": "bun run src/scripts/migrate-postgres.ts"
   },
   "dependencies": {
     "garaga": "1.1.0",

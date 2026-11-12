@@ -2,7 +2,7 @@
 
 The current live test flow remains Google-only. `kamui.page` is registered and its DNS is managed by Cloudflare. The user chose to retain the AWS-owner review path for hosting. No DNS record, certificate, cloud resource or OAuth setting was changed by this work.
 
-For Sepolia testing, the proposed origin is `https://sepolia.kamui.page`. This proposal is not a deployed URL or a decision to use it as the production wallet origin.
+The user selected `https://sepolia.kamui.page` for an open Sepolia beta, with `https://pepper-sepolia.kamui.page` for pepper. These are not deployed URLs or a decision on the production wallet origin. The selected lean target uses two EC2 servers with PostgreSQL on the backend server. PostgreSQL migration, backup/restore implementation and AWS/security review remain prerequisites; no budget or deployment approval is implied.
 
 ## Application configuration
 

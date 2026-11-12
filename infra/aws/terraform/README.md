@@ -10,6 +10,10 @@ This is for testing only. Read [Not for production as is](#not-for-production-as
 
 **Client-side proving (12 November 2026):** the keychain now prepares browser execution/proving with pinned `snip-36-prover-wasm` v1.0.1 and no automatic backend fallback. [CLIENT_PROVING.md](../../../keychain/CLIENT_PROVING.md) records installation, privacy boundaries and pending live V2 Kamui validation. The templates no longer create a hosted prover, its service discovery/port, ECR repository or account credential. They still omit the keychain, watcher and AVNU wiring described in the review packet. No resource was applied or modified in AWS.
 
+**Selected lean beta direction (12 November 2026):** two EC2 servers in the existing separate test accounts, with PostgreSQL on the backend server and pepper's existing key kept in KMS. This supersedes the earlier Fargate/RDS/ALB/WAF proposal for the initial open Google-only Sepolia beta. Cloudflare remains DNS-only; HTTPS terminates on each server, with API/database local-only. Replacement edge controls need review.
+
+[COST_ESTIMATE.md](COST_ESTIMATE.md) models about $56/month with a proposed $75 planning target, subject to workload validation and user budget decision. [HOSTING_REVIEW.md](HOSTING_REVIEW.md) records implementation, backups/restore and review gates. **The Terraform below still implements Fargate/SQLite/EFS; EC2 provisioning remains unimplemented. PostgreSQL application stores and an explicit offline import are now implemented and locally tested; see [POSTGRESQL.md](../../../services/backend/POSTGRESQL.md). No existing data was migrated and no hosted cutover occurred. Do not apply these templates as the selected target.** Earlier comparisons remain in [FARGATE_HOSTING_REVIEW.md](FARGATE_HOSTING_REVIEW.md) and [FARGATE_COST_ESTIMATE.md](FARGATE_COST_ESTIMATE.md).
+
 ## Layout
 
 | Path | What it is |

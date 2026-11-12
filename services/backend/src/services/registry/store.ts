@@ -23,7 +23,19 @@ export const MAX_SESSIONS_PER_ACCOUNT = 50;
 
 const JOURNAL_MODES = ['DELETE', 'TRUNCATE', 'WAL'];
 
-export class RegistryStore {
+/** Stores may be synchronous locally or asynchronous over PostgreSQL. */
+export type Awaitable<T> = T | Promise<T>;
+export interface RegistryStorage {
+  useOnce(message: string, expires: number, now: number): Awaitable<boolean>;
+  dropExpired(now: number): Awaitable<number>;
+  put(account: string, session: StoredSession, now: number): Awaitable<boolean>;
+  list(account: string, now: number): Awaitable<ListedSession[]>;
+  remove(account: string, publicKey: string): Awaitable<boolean>;
+  readonly journalMode: string;
+  close(): Awaitable<void>;
+}
+
+export class RegistryStore implements RegistryStorage {
   private db: Database;
 
   /**

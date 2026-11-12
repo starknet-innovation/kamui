@@ -17,7 +17,7 @@ import { prepareRecovery, type RecoverContext, type RecoverRequest } from '../re
 import { relayProof, parseRelayRequest, type RelayRequest } from '../recovery/relay';
 import { sponsorOutsideExecution, type SponsorContext, type SponsorRequest } from '../recovery/sponsor';
 import { listSessions, putSession, removeSession, type RegistryContext } from '../registry/registry';
-import { RecoveryJobs } from '../recovery/jobs';
+import { type RecoveryJobsService, RecoveryJobs } from '../recovery/jobs';
 import { prepareDeployment } from '../recovery/authenticated-deploy';
 import { APP_KEY_HEADER } from '../sponsor/budgets';
 
@@ -53,7 +53,7 @@ export type AppDeps = {
   chain: string;
   /** Historical test harness only. Public deployments never accept server proving. */
   enableServerProving?: boolean;
-  recoveryJobs?: RecoveryJobs;
+  recoveryJobs?: RecoveryJobsService;
   ctx: RecoverContext;
   sponsor: SponsorContext;
   registry: RegistryContext;
@@ -107,7 +107,7 @@ export function buildApp(deps: AppDeps) {
     '/recover': { limit: 'recover', fields: ['jobId', 'jwt', 'account', 'newPubkey', 'blinding', 'pepper'], status: 202, handler: async (b: RecoverRequest & { jobId: string }) => {
       if (!deps.enableServerProving) throw new HttpError(410, 'CLIENT_PROVING_REQUIRED');
       const work = await prepareRecovery(b, ctx);
-      jobs.submit(b.jobId, b, work, (e) => {
+      await jobs.submit(b.jobId, b, work, (e) => {
         const described = describeError(e);
         if (e instanceof RpcError) metrics.outboundFailures.inc({ target: 'rpc' });
         log(described.status >= 500 ? 'error' : 'info', 'request_failed', { route: '/recover', status: described.status, error: errorCode(e) });
@@ -121,18 +121,18 @@ export function buildApp(deps: AppDeps) {
     '/deploy/authenticated': { limit: 'deploy', fields: ['jobId', 'jwt', 'account', 'newPubkey', 'blinding', 'pepper'], status: 202, handler: async (b: RecoverRequest & { jobId: string }, client) => {
       if (!jobs.durable) throw new HttpError(503, 'DURABLE_JOURNAL_REQUIRED');
       const request = { account: b.account, operation: 'deployment' as const, payload: [b.jwt, b.newPubkey, b.blinding, b.pepper, b.signature, b.keyProof, b.override ?? false] };
-      if (!jobs.hasSubmission(b.jobId, request)) {
+      if (!await jobs.hasSubmission(b.jobId, request)) {
         const work = await prepareDeployment(b, client, ctx);
-        jobs.submit(b.jobId, request, work, describeJobError);
+        await jobs.submit(b.jobId, request, work, describeJobError);
       }
       return { jobId: b.jobId };
     } },
     '/relay': { limit: 'relay', fields: ['jobId', 'account', 'newPubkey', 'proof'], status: 202, handler: async (b: RelayRequest & { jobId: string }, client) => {
       parseRelayRequest(b);
       const request = { account: b.account, operation: 'relay' as const, payload: [b.newPubkey, b.signature, b.proof, b.proofFacts, b.override ?? false] };
-      if (!jobs.hasSubmission(b.jobId, request)) jobs.assertAccountAvailable(b.account);
+      if (!await jobs.hasSubmission(b.jobId, request)) await jobs.assertAccountAvailable(b.account);
       if (!jobs.durable) throw new HttpError(503, 'DURABLE_JOURNAL_REQUIRED');
-      jobs.submit(b.jobId, request, (journal) => relayProof(b, client, { ...ctx, journal }), describeJobError);
+      await jobs.submit(b.jobId, request, (journal) => relayProof(b, client, { ...ctx, journal }), describeJobError);
       return { jobId: b.jobId };
     } },
     '/sponsor': { limit: 'sponsor', fields: ['account'], handler: (b: SponsorRequest, _client, req) => sponsorOutsideExecution(b, req.headers.get(APP_KEY_HEADER), deps.sponsor) },

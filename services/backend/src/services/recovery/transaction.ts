@@ -51,7 +51,7 @@ export async function journaledTransaction(
   return withRelayerLock(ctx.relayer, async () => {
   const signed = await ctx.relayer.getSignedTransaction(call, details);
   const transaction_hash = signedTransactionHash(signed, await ctx.provider.getChainId());
-  journal.beforeSend({ kind, ...result, transaction_hash, sender_address: signed.sender_address, nonce: signed.nonce });
+  await journal.beforeSend({ kind, ...result, transaction_hash, sender_address: signed.sender_address, nonce: signed.nonce });
   const response = await ctx.provider.invokeSignedTx(signed);
   if (!('transaction_hash' in response) || BigInt(response.transaction_hash) !== BigInt(transaction_hash)) throw new Error('TRANSACTION_HASH_MISMATCH');
   return transaction_hash;

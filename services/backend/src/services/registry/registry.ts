@@ -22,13 +22,13 @@ import { RpcError, hash, shortString, uint256 } from 'starknet';
 import { HttpError } from '../../http';
 import { metrics } from '../../metrics';
 import type { RecoverContext } from '../recovery/recover';
-import type { ListedSession, RegistryStore, StoredSession } from './store';
+import type { ListedSession, RegistryStorage, StoredSession } from './store';
 
 export type RegistryAction = 'put' | 'list' | 'remove';
 export type RegistryContext = Pick<RecoverContext, 'provider' | 'classHash'> & {
   /** The chain id felt, as hex. Part of the signed message, so a signature for one network is useless on another. */
   chainId: string;
-  store: RegistryStore;
+  store: RegistryStorage;
   /** Unix seconds. */
   now?: () => number;
 };
@@ -166,7 +166,7 @@ export async function authorise(body: Envelope, action: RegistryAction, subject:
   // Once per signed message, and only after the signature held, so nobody can use up another
   // account's messages. Keyed on the message, not the signature: (r, -s) signs the same message.
   // The entry is kept for as long as the timestamp check would still let the message in.
-  if (!ctx.store.useOnce(felt(message), body.timestamp + MAX_CLOCK_SKEW_SECONDS, now)) throw new HttpError(401, 'REPLAYED');
+  if (!await ctx.store.useOnce(felt(message), body.timestamp + MAX_CLOCK_SKEW_SECONDS, now)) throw new HttpError(401, 'REPLAYED');
   return felt(body.account);
 }
 
@@ -189,7 +189,7 @@ export function putSession(body: Envelope & { session?: unknown }, ctx: Registry
     const now = clock(ctx);
     const session = parseSession(body.session, now);
     const account = await authorise(body, 'put', session.publicKey, sessionContentHash(session), ctx, now);
-    if (!ctx.store.put(account, session, now)) throw new HttpError(409, 'REGISTRY_FULL');
+    if (!await ctx.store.put(account, session, now)) throw new HttpError(409, 'REGISTRY_FULL');
     return { ok: true as const };
   });
 }
@@ -199,7 +199,7 @@ export function listSessions(body: Envelope, ctx: RegistryContext): Promise<{ se
   return counted('list', async () => {
     const now = clock(ctx);
     const account = await authorise(body, 'list', '0x0', '0x0', ctx, now);
-    return { sessions: ctx.store.list(account, now) };
+    return { sessions: await ctx.store.list(account, now) };
   });
 }
 
@@ -209,7 +209,7 @@ export function removeSession(body: Envelope & { publicKey?: unknown }, ctx: Reg
     const now = clock(ctx);
     if (!isFelt(body.publicKey)) throw bad('BAD_PUBLIC_KEY');
     const account = await authorise(body, 'remove', body.publicKey, '0x0', ctx, now);
-    ctx.store.remove(account, felt(body.publicKey));
+    await ctx.store.remove(account, felt(body.publicKey));
     return { ok: true as const };
   });
 }

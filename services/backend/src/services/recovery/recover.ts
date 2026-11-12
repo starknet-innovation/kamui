@@ -16,7 +16,7 @@ export type RecoverContext = {
   /** Durable paid-send intent journal; supplied only by the job executor. */
   journal?: RecoveryJournal;
   /** Prevent legacy routes from starting while a durable recovery is unresolved. */
-  assertRecoveryAvailable?: (account: string) => void;
+  assertRecoveryAvailable?: (account: string) => void | Promise<void>;
   /** Funded. Deploys accounts and submits recover. */
   relayer: Account;
   /** The SNIP-36 prover and the unfunded account that signs its virtual transaction. */
@@ -145,7 +145,7 @@ async function runRecovery(req: RecoverRequest, ctx: RecoverContext, token: Jwt,
         metrics.relayerTransactions.inc({ kind: 'deploy' });
         await waitForAcceptedTransaction(ctx.provider, transaction_hash);
         log('info', 'account_deployed', { account: address, tx: transaction_hash });
-        ctx.journal?.deploymentConfirmed();
+        await ctx.journal?.deploymentConfirmed();
       }
     }
 

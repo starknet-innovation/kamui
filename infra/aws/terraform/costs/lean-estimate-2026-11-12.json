@@ -1,0 +1,72 @@
+{
+  "region": "eu-west-1",
+  "checked_date": "2026-11-12",
+  "currency": "USD",
+  "month_hours": 730,
+  "scenarios": {
+    "small_backend": {
+      "backend_instance": "t3.small",
+      "rows": [
+        {
+          "name": "Backend EC2 including local PostgreSQL",
+          "usd_exact": "16.6440000000",
+          "usd": "16.64"
+        },
+        {
+          "name": "Pepper EC2 t3.micro",
+          "usd_exact": "8.3220000000",
+          "usd": "8.32"
+        },
+        {
+          "name": "40 GB total gp3 volumes",
+          "usd_exact": "3.5200000000",
+          "usd": "3.52"
+        },
+        {
+          "name": "Two public IPv4 addresses",
+          "usd_exact": "7.3000000000",
+          "usd": "7.30"
+        },
+        {
+          "name": "Usage/backup/logging/secrets/KMS allowance (assumed, not measured)",
+          "usd_exact": "20",
+          "usd": "20.00"
+        }
+      ],
+      "monthly_usd": "55.79",
+      "with_25_percent_reserve_usd": "69.73"
+    },
+    "larger_backend": {
+      "backend_instance": "t3.medium",
+      "rows": [
+        {
+          "name": "Backend EC2 including local PostgreSQL",
+          "usd_exact": "33.2880000000",
+          "usd": "33.29"
+        },
+        {
+          "name": "Pepper EC2 t3.micro",
+          "usd_exact": "8.3220000000",
+          "usd": "8.32"
+        },
+        {
+          "name": "40 GB total gp3 volumes",
+          "usd_exact": "3.5200000000",
+          "usd": "3.52"
+        },
+        {
+          "name": "Two public IPv4 addresses",
+          "usd_exact": "7.3000000000",
+          "usd": "7.30"
+        },
+        {
+          "name": "Usage/backup/logging/secrets/KMS allowance (assumed, not measured)",
+          "usd_exact": "20",
+          "usd": "20.00"
+        }
+      ],
+      "monthly_usd": "72.43",
+      "with_25_percent_reserve_usd": "90.54"
+    }
+  }
+}

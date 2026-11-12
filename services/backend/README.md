@@ -66,7 +66,7 @@ The ID is a bearer capability: generate it with a cryptographic RNG, send it onl
 
 The job store is bounded to 32 active jobs and 1000 retained jobs total. Terminal jobs expire after 30 minutes and are pruned on access. Deployment token authentication happens before a job takes a slot. Relay shape/profile checks precede admission; chain/message checks happen inside the job before a paid send. Per-account locks apply across both operations. Full job storage answers `503 RECOVERY_JOBS_FULL`. Unknown or expired jobs answer `404 RECOVERY_JOB_NOT_FOUND`.
 
-**Single-process durable metadata.** The running API persists recovery results, account locks and transaction intents in SQLite (`RECOVERY_DB`, default `recovery.sqlite` beside `REGISTRY_DB`). It stores a hash of the polling capability and no JWT, pepper, signature, proof or signed transaction. Before broadcasting, it journals the signed transaction's deterministic hash, sender and nonce. A restart checks accepted receipts for that hash; pre-confirmed receipts keep the lock. An interrupted pre-broadcast job needs a fresh sign-in/proof because its inputs are not saved. Browser proving never resumes from this database. Uncertain submissions remain locked and are never automatically re-sent. See [RECOVERY-JOBS.md](RECOVERY-JOBS.md) for the operator runbook, finalized replacement resolution and remaining limits. Run exactly one API process, stop it before operator resolution, and persist the database volume. The SDK never automatically resubmits after polling begins.
+**Single-process durable metadata.** The API supports PostgreSQL for the lean hosted target (`STORAGE_BACKEND=postgres`, `DATABASE_URL`) and retains SQLite for local compatibility (`RECOVERY_DB`, default `recovery.sqlite` beside `REGISTRY_DB`). PostgreSQL startup takes an exclusive writer lease shared with the migration/operator tools; loss of that lease exits the API. Database failure never switches storage engines. See [POSTGRESQL.md](POSTGRESQL.md) for migration, local setup and restore restrictions. It stores a hash of the polling capability and no JWT, pepper, signature, proof or signed transaction. Before broadcasting, it journals the signed transaction's deterministic hash, sender and nonce. A restart checks accepted receipts for that hash; pre-confirmed receipts keep the lock. An interrupted pre-broadcast job needs a fresh sign-in/proof because its inputs are not saved. Browser proving never resumes from this database. Uncertain submissions remain locked and are never automatically re-sent. See [RECOVERY-JOBS.md](RECOVERY-JOBS.md) for the operator runbook, finalized replacement resolution and remaining limits. Run exactly one API process, stop it before operator resolution, and persist the database volume. The SDK never automatically resubmits after polling begins.
 
 This protocol replaces the old synchronous response; deploy the backend and SDK/keychain together.
 
@@ -92,7 +92,7 @@ The account contract cannot list its sessions, so the keychain records them here
 
 Every request, including a read, is signed by an owner key over `poseidon('kamui.registry.v2', chainId, account, action, timestamp, nonce, subject, content)` and checked with the account's `is_valid_signature`. `content` is a hash of the whole record for a `put` and 0 otherwise, so a record cannot be changed after it is signed. `nonce` is a random felt, and each signed message is accepted once (`401 REPLAYED`); used messages are kept in the registry's database for the 300 s their timestamp stays valid. Exactly two signature elements are accepted (a session key signs with four), the timestamp must be within 300 s of the server's clock, and the account must be of the Kamui class. The SDK's `sdk/src/registry.ts` is the client.
 
-- Storage is SQLite (`REGISTRY_DB`, default `data/registry.sqlite`, gitignored). At most 50 live entries per account (`409 REGISTRY_FULL`; replacing an entry always works). Expired entries are dropped on every read or write of their account and hourly.
+- Storage uses the selected PostgreSQL backend, or SQLite for local compatibility (`REGISTRY_DB`, default `data/registry.sqlite`, gitignored). At most 50 live entries per account (`409 REGISTRY_FULL`; replacing an entry always works). Expired entries are dropped on every read or write of their account and hourly.
 - The journal mode is explicit: `DELETE` by default. Do not use `WAL` on a network volume, and run exactly one api process against a file on one.
 - The file says which sites each account connected to. Keep it private. The api logs nothing from the registry that names an account, an origin or a key.
 
@@ -142,6 +142,10 @@ bun test
 ```
 
 Backend regression tests use fakes for the chain, the issuers, the prover, the paymaster and the relayer. Recovery tests cover disconnected clients, idempotent submissions, bounded retention, polling retries and sanitized failures. Regression tests for the audit findings: `src/services/rotator/sync.test.ts` (#2), `src/jwk/jwks-cache.test.ts` and `src/services/recovery/recover.test.ts` (#3), `src/services/recovery/sponsor.test.ts` and `src/services/api/app.test.ts` (#4). The pepper and registry tests use the SDK's own client code, so both sides of each protocol are checked together.
+
+## PostgreSQL migration
+
+The selected lean target runs PostgreSQL on the backend server, with pepper in its separate AWS account. [POSTGRESQL.md](POSTGRESQL.md) covers local setup and explicit stopped-API cutover. It does not provision EC2, change the current developer databases or implement cloud backups. SQLite remains available for existing local tests; PostgreSQL has explicit opt-in integration tests using a disposable `KAMUI_TEST_POSTGRES_URL`.
 
 ## Not done
 
