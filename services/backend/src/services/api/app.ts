@@ -12,13 +12,13 @@ import { MINUTE, type Limiter } from '../../limiter';
 import { errorCode, log } from '../../log';
 import { metrics, renderMetrics } from '../../metrics';
 import { clientAddress } from '../../net';
-import { ProverError } from '../prover/prove';
-import { deployAccount, type DeployRequest } from '../recovery/deploy';
+import { ProverError } from '../prover/errors';
 import { prepareRecovery, type RecoverContext, type RecoverRequest } from '../recovery/recover';
-import { relayProof, type RelayRequest } from '../recovery/relay';
+import { relayProof, parseRelayRequest, type RelayRequest } from '../recovery/relay';
 import { sponsorOutsideExecution, type SponsorContext, type SponsorRequest } from '../recovery/sponsor';
 import { listSessions, putSession, removeSession, type RegistryContext } from '../registry/registry';
 import { RecoveryJobs } from '../recovery/jobs';
+import { prepareDeployment } from '../recovery/authenticated-deploy';
 import { APP_KEY_HEADER } from '../sponsor/budgets';
 
 /** Attempts per minute: one client, and everyone together. */
@@ -51,6 +51,8 @@ export function parseLimits(setting: string | undefined): Record<RouteName, Rout
 
 export type AppDeps = {
   chain: string;
+  /** Historical test harness only. Public deployments never accept server proving. */
+  enableServerProving?: boolean;
   recoveryJobs?: RecoveryJobs;
   ctx: RecoverContext;
   sponsor: SponsorContext;
@@ -87,6 +89,12 @@ export function describeError(e: unknown): { status: number; error: string } {
 /** The metrics as a Prometheus scrape answer. */
 export const metricsResponse = () => new Response(renderMetrics(), { headers: { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' } });
 
+const describeJobError = (e: unknown) => {
+  const described = describeError(e);
+  // HttpError can wrap a remote error; jobs/status must never retain its free-form text.
+  return { ...described, error: errorCode(new Error(described.error)) };
+};
+
 const outcome = (status: number) => (status < 400 ? 'ok' : status === 429 ? 'rate_limited' : status < 500 ? 'rejected' : 'failed');
 
 export function buildApp(deps: AppDeps) {
@@ -97,6 +105,7 @@ export function buildApp(deps: AppDeps) {
 
   const posts: Record<string, Route> = {
     '/recover': { limit: 'recover', fields: ['jobId', 'jwt', 'account', 'newPubkey', 'blinding', 'pepper'], status: 202, handler: async (b: RecoverRequest & { jobId: string }) => {
+      if (!deps.enableServerProving) throw new HttpError(410, 'CLIENT_PROVING_REQUIRED');
       const work = await prepareRecovery(b, ctx);
       jobs.submit(b.jobId, b, work, (e) => {
         const described = describeError(e);
@@ -108,8 +117,24 @@ export function buildApp(deps: AppDeps) {
       return { jobId: b.jobId };
     } },
     '/recover/status': { limit: 'poll', fields: ['jobId'], handler: async (b) => { await jobs.reconcile(ctx.provider, b.jobId); return jobs.status(b.jobId); } },
-    '/deploy': { limit: 'deploy', fields: ['aud', 'identity'], handler: (b: DeployRequest, client) => deployAccount(b, client, ctx) },
-    '/relay': { limit: 'relay', fields: ['account', 'newPubkey', 'proof'], handler: (b: RelayRequest, client) => relayProof(b, client, ctx) },
+    '/deploy': { limit: 'deploy', fields: ['aud', 'identity'], handler: async () => { throw new HttpError(410, 'AUTHENTICATED_DEPLOYMENT_REQUIRED'); } },
+    '/deploy/authenticated': { limit: 'deploy', fields: ['jobId', 'jwt', 'account', 'newPubkey', 'blinding', 'pepper'], status: 202, handler: async (b: RecoverRequest & { jobId: string }, client) => {
+      if (!jobs.durable) throw new HttpError(503, 'DURABLE_JOURNAL_REQUIRED');
+      const request = { account: b.account, operation: 'deployment' as const, payload: [b.jwt, b.newPubkey, b.blinding, b.pepper, b.signature, b.keyProof, b.override ?? false] };
+      if (!jobs.hasSubmission(b.jobId, request)) {
+        const work = await prepareDeployment(b, client, ctx);
+        jobs.submit(b.jobId, request, work, describeJobError);
+      }
+      return { jobId: b.jobId };
+    } },
+    '/relay': { limit: 'relay', fields: ['jobId', 'account', 'newPubkey', 'proof'], status: 202, handler: async (b: RelayRequest & { jobId: string }, client) => {
+      parseRelayRequest(b);
+      const request = { account: b.account, operation: 'relay' as const, payload: [b.newPubkey, b.signature, b.proof, b.proofFacts, b.override ?? false] };
+      if (!jobs.hasSubmission(b.jobId, request)) jobs.assertAccountAvailable(b.account);
+      if (!jobs.durable) throw new HttpError(503, 'DURABLE_JOURNAL_REQUIRED');
+      jobs.submit(b.jobId, request, (journal) => relayProof(b, client, { ...ctx, journal }), describeJobError);
+      return { jobId: b.jobId };
+    } },
     '/sponsor': { limit: 'sponsor', fields: ['account'], handler: (b: SponsorRequest, _client, req) => sponsorOutsideExecution(b, req.headers.get(APP_KEY_HEADER), deps.sponsor) },
     '/registry/sessions': { limit: 'registry', fields: ['account'], handler: (b) => putSession(b, deps.registry) },
     '/registry/sessions/list': { limit: 'registry', fields: ['account'], handler: (b) => listSessions(b, deps.registry) },
@@ -121,10 +146,10 @@ export function buildApp(deps: AppDeps) {
       json({
         ok: true,
         chain: deps.chain,
-        deploys: ctx.deploysPerHour > 0 && !ctx.pepper.serviceUrl,
+        deploys: ctx.deploysPerHour > 0,
         pepper_service: Boolean(ctx.pepper.serviceUrl),
         sponsor: deps.sponsor.budgets.anonymous.txPerPeriod > 0 || deps.sponsor.budgets.byKey.size > 0,
-        proofs: ctx.proofs.depth,
+        proving: 'browser',
       }),
     '/health/prover': async () => json((await deps.health?.prover?.()) ?? { ok: false, reason: 'not configured' }),
     '/health/rotator': async () => json((await deps.health?.rotator?.()) ?? { ok: false, reason: 'not configured' }),
@@ -176,7 +201,7 @@ export function buildApp(deps: AppDeps) {
         log('error', 'request_failed', { route: path, status: 500, error: errorCode(e) });
         response = json({ error: 'INTERNAL' }, 500);
       }
-      if (path === '/recover' || path === '/recover/status') response.headers.set('cache-control', 'no-store');
+      if (['/recover', '/recover/status', '/relay', '/deploy/authenticated'].includes(path)) response.headers.set('cache-control', 'no-store');
       if (path !== '/metrics' && path !== '/live') metrics.requests.inc({ route: path, outcome: outcome(response.status) });
       return response;
     },

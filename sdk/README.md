@@ -12,6 +12,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 |---|---|
 | `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `sessionProblems`, `executeProblems`, `describeCall`. |
 | `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
+| `client-proving` | `browserRecoverBackend`, `ClientProver`, V2 facts/profile helpers: local proof orchestration, authenticated first deployment and durable relay polling. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |
 | `registry` | The session registry's client: `registryMessageHash`, `registryContentHash`, `signRegistryRequest`, `registryClient` (`put`, `list`, `remove`, with an injectable `fetch`) and `parseRegistryList`. The registry lets the keychain list an account's sessions; it is not an authority on them. |
 | `reader` | `KamuiReader`: owners, anchor, session epoch, session data and scope, spending policies, nonces. |
@@ -21,6 +22,12 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 | `tokens` | `readTokenInfo`, `formatTokenAmount`, `describeAmount`: a token's name and exact amounts for approval screens, with known, unverified and unknown tokens told apart. |
 | `outside` | Sponsored calls: `ownerOutsideExecution`, `sessionOutsideExecution`, `nextSessionNonce`. |
 | `sessionAccount` | `createSessionAccount`: a starknet.js `Account` that signs as a session, for self-paid transactions. |
+
+## Client-side login proving
+
+`completeLogin` still skips recovery when the device already owns the account. For a new device, supply `browserRecoverBackend` with a local `ClientProver` implementation; the keychain adapter is `../keychain/src/proving.ts`. It uses the pinned `snip-36-prover-wasm` v1.0.1 V2 runtime in Workers, without a server fallback.
+
+The browser backend authenticates `/deploy/authenticated` only when an account needs deployment, then sends completed proof/facts and ownership authorization to `/relay`. Both submissions have independent random job capabilities and poll `/recover/status`. Existing-account recovery sends no JWT or pepper to the API. Ordinary pepper lookup still sends the token to the pepper service, and first deployment sends it to the API for verification. The older `httpRecoverBackend` default `/recover` path is historical; the public API rejects server proving. See [CLIENT_PROVING.md](../keychain/CLIENT_PROVING.md) for installation, browser limits and live Kamui run 11 evidence.
 
 ## Using it
 

@@ -1,3 +1,5 @@
+import { generateKeyPairSync, sign } from 'node:crypto';
+import { installProverFake } from './prover-fake';
 // Fakes for everything outside the keychain, installed on a browser context with network
 // interception: a chain with one account, the backend's /recover and /sponsor, the session
 // registry, the pepper service, and the Google and Apple sign-in pages. The keychain's own server, page, storage and content
@@ -74,11 +76,15 @@ function ownersChanged(world: World) {
   world.sessions.clear();
 }
 
-/** An unsigned id_token. The client side never checks the signature. */
+const fixtureRsa = generateKeyPairSync('rsa', {modulusLength:2048});
+const fixtureModulus = BigInt('0x' + Buffer.from(fixtureRsa.publicKey.export({format:'jwk'}).n!, 'base64url').toString('hex'));
+
+/** A test issuer token, signed only to exercise real browser RSA witness construction. */
 function token(nonce: string, claims: { iss: string; aud: string; sub: string } = CLAIMS): string {
   const b64 = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const now = Math.floor(Date.now() / 1000);
-  return `${b64({ alg: 'RS256', kid: 'test' })}.${b64({ ...claims, nonce, iat: now - 5, exp: now + 3600 })}.c2ln`;
+  const message = `${b64({ alg: 'RS256', kid: 'test' })}.${b64({ ...claims, nonce, iat: now - 5, exp: now + 3600 })}`;
+  return `${message}.${sign('RSA-SHA256', Buffer.from(message), fixtureRsa.privateKey).toString('base64url')}`;
 }
 
 /** The fake chain has one account's state, reachable at the Google and the Apple address. */
@@ -126,6 +132,8 @@ function rpc(world: World, method: string, params: any): unknown {
       return CHAIN_ID;
     case 'starknet_specVersion':
       return '0.10.0';
+    case 'starknet_getBlockWithTxHashes': return { block_hash: '0x1', block_number: 100, transactions: [], timestamp: Math.floor(Date.now()/1000), status: 'ACCEPTED_ON_L2' };
+    case 'starknet_getNonce': return '0x0';
     case 'starknet_blockNumber':
       return 100;
     case 'starknet_getClassHashAt':
@@ -133,6 +141,7 @@ function rpc(world: World, method: string, params: any): unknown {
       return CLASS_HASH;
     case 'starknet_call': {
       const request = params.request ?? params[0];
+      if (BigInt(request.entry_point_selector) === selector('get_key')) return Array.from({length:24}, (_,i) => hex(fixtureModulus >> (96n*BigInt(i)) & ((1n<<96n)-1n)));
       return contractCall(world, request.contract_address, BigInt(request.entry_point_selector), request.calldata ?? []);
     }
     case 'starknet_getTransactionStatus':
@@ -237,7 +246,8 @@ const sendBack = (route: Route, to: string) =>
 
 /** Replaces the outside world for every page of `context`. */
 export async function installFakes(context: BrowserContext, world: World) {
-  await context.route(`${RPC}/**`, async (route) => {
+  await installProverFake(context, world);
+  await context.route(url => url.href.startsWith(`${RPC}/`) || url.href === 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10', async (route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
     const body = route.request().postDataJSON();
     const one = (call: any) => {
@@ -257,7 +267,13 @@ export async function installFakes(context: BrowserContext, world: World) {
     return json(route, { pepper: PEPPER, key_version: 1 }, 200, cors);
   });
 
-  await context.route(`${KEYCHAIN}/api/recover`, async (route) => {
+  await context.route(`${KEYCHAIN}/api/deploy/authenticated`, async route => {
+    const r = route.request().postDataJSON();
+    world.deployed = true;
+    return json(route, {jobId:r.jobId}, 202);
+  });
+
+  await context.route(`${KEYCHAIN}/api/relay`, async (route) => {
     const request = route.request().postDataJSON();
     world.recoverRequests.push(request);
     world.deployed = true;

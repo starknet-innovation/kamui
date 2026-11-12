@@ -1,3 +1,5 @@
+import { ProverError } from './errors';
+export { ProverError } from './errors';
 import { init, rsa2048Sha256CalldataBuilder } from 'garaga';
 import { Account, CallData, RpcProvider, byteArray, type Call } from 'starknet';
 import type { Jwk, Jwt } from '../../jwk/verification';
@@ -18,8 +20,6 @@ export type Proof = {
   l2_to_l1_messages?: unknown[];
 };
 
-/** The prover answered with an error, or did not answer. */
-export class ProverError extends Error { }
 
 /**
  * Is the prover there? Any JSON-RPC answer counts, including "method not found": the service

@@ -7,6 +7,7 @@
 //   /          this device's account: owners, sessions, recovery file
 //
 // Everything a site or a token supplies is written with textContent, never as HTML.
+import { browserProver, assertBrowserProvingSupported } from './proving';
 import { RpcProvider } from 'starknet';
 import {
   KamuiReader,
@@ -21,7 +22,7 @@ import {
   executeProblems,
   exportPepper,
   fetchPepper,
-  httpRecoverBackend,
+  browserRecoverBackend,
   newKeyPair,
   ownerOutsideExecution,
   parseConnectRequest,
@@ -64,7 +65,11 @@ import {
   type AccountRecord,
 } from './vault';
 
-type Config = { googleClientId: string; appleClientId?: string; rpcUrl: string; classHash: string; pepperUrl: string; apiUrl: string; redirectUri: string; pollMs: number };
+type Config = {
+  proverReady: boolean;
+  proverExecutor: string;
+  proverRpcUrl: string;
+  jwkRegistry: string; googleClientId: string; appleClientId?: string; rpcUrl: string; classHash: string; pepperUrl: string; apiUrl: string; redirectUri: string; pollMs: number };
 
 const REQUEST = 'kamui.keychain.request';
 const ATTEMPT = 'kamui.keychain.attempt';
@@ -77,6 +82,13 @@ const view = document.getElementById('view')!;
 const statusLine = document.getElementById('status')!;
 const config = (await (await fetch('/config.json')).json()) as Config;
 const provider = new RpcProvider({ nodeUrl: config.rpcUrl, transactionRetryIntervalFallback: config.pollMs });
+
+function assertProvingAvailable() {
+  assertBrowserProvingSupported(config.proverRpcUrl);
+  if (!config.proverReady) throw new Error('Browser prover assets are unavailable. The wallet operator must install the pinned release before recovery.');
+  if (![config.proverExecutor, config.jwkRegistry].every(v => /^0x[0-9a-f]+$/i.test(v) && BigInt(v) !== 0n)) throw new Error('Browser proving is not configured for this network.');
+}
+
 
 //
 // Small DOM helpers
@@ -313,6 +325,7 @@ async function startLogin(via: LoginProvider, file: PepperFile | null) {
   if (existing && (await new KamuiReader(provider, existing.account.account).isOwner(existing.device.publicKey))) {
     return resume();
   }
+  assertProvingAvailable();
   if (file) {
     const issuer = ISSUERS[via];
     if (file.iss !== issuer.iss) {
@@ -375,7 +388,8 @@ function showSignIn(reason = '') {
   };
 
   nodes.push(
-    el('p', 'Signing in on a new device adds a key for this device to your account. It takes about a minute, and it ends every session your apps have, on all your devices.', 'warn'),
+    el('p', 'Signing in on a new device adds a key for this device to your account. Proving runs in this browser and may take several minutes; it ends every session your apps have, on all your devices.', 'warn'),
+    el('p', 'New-device recovery currently requires a recent desktop Chromium browser with WebAssembly memory64 and at least 8 GB of device RAM recommended.', 'note'),
     el('p', 'Browser storage can disappear. Safari may clear it after inactivity; private browsing and clearing website data can also remove this device’s key. If a key is lost, you will need another sign-in. A recovery file replaces the account lookup; it does not restore the lost device key or keep sessions alive.', 'note'),
     button('Continue with Google', signIn('google'), true),
   );
@@ -406,7 +420,7 @@ async function finishLogin() {
   const response = parseLoginRedirect(fragment, attempt);
   if (!response) throw new Error('No sign-in answer was found.');
 
-  show(el('h2', 'Signing in'), el('p', 'Keep this page open. A new device takes about a minute.', 'note'));
+  show(el('h2', 'Signing in'), el('p', 'Keep this page open. A new device proves in this browser and may take several minutes.', 'note'));
   status('Looking up your account…');
   const chainId = await provider.getChainId();
   let pepper: Pepper;
@@ -424,9 +438,18 @@ async function finishLogin() {
   }
 
   status('Adding this device to your account. This is the slow step…');
+  const proving = new AbortController();
+  const cancel = button('Cancel proving', () => proving.abort());
+  view.append(cancel);
   const login = await completeLogin({
     provider,
-    backend: httpRecoverBackend(config.apiUrl),
+    backend: browserRecoverBackend({
+      apiUrl: config.apiUrl, provider, classHash: config.classHash,
+      assertSupported: assertProvingAvailable,
+      onStatus: status,
+      onSubmitting: () => cancel.remove(), // A broadcast cannot be cancelled by closing a Worker.
+      prove: browserProver({ rpcUrl: config.proverRpcUrl, executor: config.proverExecutor, registry: config.jwkRegistry, onStatus: status, signal: proving.signal }),
+    }),
     chainId,
     classHash: config.classHash,
     idToken: response.idToken,
@@ -435,6 +458,7 @@ async function finishLogin() {
     pepper,
   });
 
+  cancel.remove();
   await saveLogin(device, {
     account: login.account,
     chainId,

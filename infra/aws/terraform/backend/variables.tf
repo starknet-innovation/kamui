@@ -33,7 +33,7 @@ variable "vpc_cidr" {
 }
 
 variable "internal_domain" {
-  description = "Private DNS zone, visible only inside the VPC, under which the prover and rotator are named."
+  description = "Private DNS zone, visible only inside the VPC, under which the rotator is named."
   type        = string
   default     = "kamui.internal"
 }
@@ -51,9 +51,8 @@ variable "image_tags" {
   type = object({
     api     = string
     rotator = string
-    prover  = string
   })
-  default = { api = "unset", rotator = "unset", prover = "unset" }
+  default = { api = "unset", rotator = "unset" }
 }
 
 variable "cpu_architecture" {
@@ -87,7 +86,7 @@ variable "extra_egress_tcp_ports" {
 # --- api -----------------------------------------------------------------------------------
 
 variable "api_desired_count" {
-  description = "Keep at 1: the session registry is one SQLite file, and the proof queue and rate limits are per process."
+  description = "Keep at 1: the session registry is one SQLite file, and recovery locks and rate limits are per process."
   type        = number
   default     = 1
   validation {
@@ -107,7 +106,7 @@ variable "api_memory" {
 }
 
 variable "api_idle_timeout_seconds" {
-  description = "Load balancer idle timeout. /recover answers only after deployment, proof and recovery (about 60 s measured, longer when proofs queue)."
+  description = "Load balancer idle timeout. Browser proofs are submitted as polled transaction jobs."
   type        = number
   default     = 600
 }
@@ -123,11 +122,6 @@ variable "relayer_address" {
   type        = string
 }
 
-variable "prover_account_address" {
-  description = "Starknet address of the prover account (public)."
-  type        = string
-}
-
 variable "owner_address" {
   description = "Starknet address of the registry owner the rotator signs as (public)."
   type        = string
@@ -138,7 +132,8 @@ variable "google_recovery_client_id" {
 }
 
 variable "apple_recovery_client_id" {
-  type = string
+  type    = string
+  default = ""
 }
 
 variable "pepper_service_url" {
@@ -173,49 +168,6 @@ variable "api_extra_environment" {
 variable "rotator_extra_environment" {
   type    = map(string)
   default = {}
-}
-
-# --- prover --------------------------------------------------------------------------------
-
-variable "prover_desired_count" {
-  description = "1 to run the prover, 0 to stop paying for it when nobody is testing. More than 1 is pointless today: the api's queue sends one proof at a time."
-  type        = number
-  default     = 1
-}
-
-variable "prover_cpu" {
-  description = "Fargate CPU units. The measured run used 8 CPUs."
-  type        = number
-  default     = 8192
-}
-
-variable "prover_memory" {
-  description = "Fargate memory in MiB. Measured: killed at 8 GB, peak 19.5 GB under a 20 GB cap. 24 GB is the smallest Fargate size above 20 GB at 8 vCPU."
-  type        = number
-  default     = 24576
-}
-
-variable "prover_cpu_architecture" {
-  description = "Architecture of the prover image. Not checked: see the README."
-  type        = string
-  default     = "X86_64"
-}
-
-variable "prover_ephemeral_storage_gib" {
-  description = "Scratch disk for the prover task (21 to 200). null keeps the Fargate default of 20 GiB, which must also hold the image."
-  type        = number
-  default     = null
-}
-
-variable "prover_chain_id" {
-  type    = string
-  default = "SN_SEPOLIA"
-}
-
-variable "prover_rust_log" {
-  description = "RUST_LOG for the prover. The compose file's value logs each proving phase; whether debug level also logs transaction contents (which include the login token) was not checked."
-  type        = string
-  default     = "warn,starknet_transaction_prover=debug,privacy_prove=info,stwo_cairo_adapter=info,stwo_cairo_prover=info"
 }
 
 # --- secrets -------------------------------------------------------------------------------

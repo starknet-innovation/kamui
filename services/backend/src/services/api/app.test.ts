@@ -107,7 +107,7 @@ describe('rate limits', () => {
       for (let i = 0; i < 3; i++) expect((await post('/sponsor', BODIES['/sponsor'], {}, `198.51.100.${i}`)).status).toBe(200);
       expect((await post('/sponsor', BODIES['/sponsor'], {}, '198.51.100.9')).status).toBe(429);
       // Another route has its own count.
-      expect((await post('/deploy', BODIES['/deploy'], {}, '198.51.100.9')).status).toBe(400);
+      expect((await post('/deploy', BODIES['/deploy'], {}, '198.51.100.9')).status).toBe(410);
     });
   });
 
@@ -165,7 +165,7 @@ describe('answers', () => {
       const bad = await post('/recover', { jwt: 'x' });
       expect([bad.status, (await bad.json()).error]).toEqual([400, 'BAD_REQUEST']);
       const jwt = await post('/recover', BODIES['/recover']);
-      expect([jwt.status, await jwt.json()]).toEqual([400, { error: 'BAD_JWT' }]);
+      expect([jwt.status, await jwt.json()]).toEqual([410, { error: 'CLIENT_PROVING_REQUIRED' }]);
       const stale = await post('/registry/sessions/list', BODIES['/registry/sessions/list']);
       expect([stale.status, await stale.json()]).toEqual([401, { error: 'STALE_TIMESTAMP' }]);
       expect((await get('/nope')).status).toBe(404);
@@ -234,9 +234,9 @@ test('an unresolved recovery blocks a shaped browser relay before any RPC or pai
   const request = { account: ACCOUNT, jwt: 'in-memory-test-token', newPubkey: '0x1', blinding: '0x2', pepper: '0x3', signature: ['0x1', '0x2'] };
   jobs.submit('0x' + 'd'.repeat(62), request, () => new Promise(() => {}), () => ({ status: 500, error: 'INTERNAL' }));
   const { post, seen } = app({ recoveryJobs: jobs });
-  const relay = { account: ACCOUNT, newPubkey: '0x1', signature: ['0x1', '0x2'], proof: 'AAAA', proofFacts: [
-    shortString.encodeShortString('PROOF1'), shortString.encodeShortString('VIRTUAL_SNOS'), '0x1',
-    shortString.encodeShortString('VIRTUAL_SNOS0'), '0x1', '0x2', '0x3', '0x1', '0x4',
+  const relay = { jobId: '0x' + 'e'.repeat(62), account: ACCOUNT, newPubkey: '0x1', signature: ['0x1', '0x2'], proof: Buffer.from('020400098446bd35fd2272efe19bf43aac7037b3b7e25e86d94170d95198245bbb8dc700', 'hex').toString('base64'), proofFacts: [
+    shortString.encodeShortString('PROOF2'), shortString.encodeShortString('VIRTUAL_SNOS'), '0x1c7be3225dfb33359b3ba9ffbe1542b7da27879b6d89f47b967e512463fd324',
+    shortString.encodeShortString('VIRTUAL_SNOS0'), '0x1', '0x2', '0x57ed4d5e20d617d8cc087a5882eae4f71d005172326be6439b2e1fd8b4dc57', '0x1', '0x4',
   ] };
   try {
     const { result } = await quietly(() => post('/relay', relay));

@@ -39,8 +39,13 @@ export class KamuiReader {
     try {
       await this.provider.getClassHashAt(this.address);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      // Providers and SDKs can bundle separate starknet.js copies; instanceof would then
+      // miss the provider's RpcError. Its typed code check still distinguishes absence from
+      // network/auth/rate-limit failures without trusting an error-message substring.
+      if (typeof error === 'object' && error !== null && 'isType' in error &&
+          typeof error.isType === 'function' && error.isType('CONTRACT_NOT_FOUND')) return false;
+      throw error;
     }
   }
 

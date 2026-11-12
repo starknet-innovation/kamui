@@ -2,9 +2,13 @@
 
 Infrastructure as code to host the pepper service and the backend in the two dedicated **test** accounts, `kamui-pepper-test` and `kamui-backend-test`.
 
-**Status: written, validated offline, never applied.** `terraform fmt` and `terraform validate` pass (Terraform 1.15.5, AWS provider 6.x, `init -backend=false`). No plan was run against an account and nothing here has contacted AWS. Expect to fix things on the first real plan. Statements about AWS carry a link to the AWS page they were checked against, or are listed under [Not verified](#not-verified).
+**Status: written, never applied.** Formatting passes after the client-proving removal. Earlier templates passed offline validation (Terraform 1.15.5, AWS provider 6.x, `init -backend=false`); validation of the revised backend is currently blocked by missing installed module metadata. No init was run for this revision. No plan was run against an account and nothing here has contacted AWS. Expect to fix things on the first real plan. Statements about AWS carry a link to the AWS page they were checked against, or are listed under [Not verified](#not-verified).
 
 This is for testing only. Read [Not for production as is](#not-for-production-as-is) before reusing any of it.
+
+**Current Google-only hosting proposal:** [HOSTING_REVIEW.md](HOSTING_REVIEW.md) inventories the missing keychain/watcher/AVNU wiring, proposes private API routing, and records storage, architecture, cost and ownership gates. [HOSTING_ACCEPTANCE.md](HOSTING_ACCEPTANCE.md) is the unapproved operator checklist. These are a review package, not implemented Terraform changes or permission to apply the current templates.
+
+**Client-side proving (12 November 2026):** the keychain now prepares browser execution/proving with pinned `snip-36-prover-wasm` v1.0.1 and no automatic backend fallback. [CLIENT_PROVING.md](../../../keychain/CLIENT_PROVING.md) records installation, privacy boundaries and pending live V2 Kamui validation. The templates no longer create a hosted prover, its service discovery/port, ECR repository or account credential. They still omit the keychain, watcher and AVNU wiring described in the review packet. No resource was applied or modified in AWS.
 
 ## Layout
 
@@ -12,7 +16,7 @@ This is for testing only. Read [Not for production as is](#not-for-production-as
 |---|---|
 | `bootstrap/` | Creates the S3 bucket for Terraform state. Applied once in each account, with local state. |
 | `pepper/` | Root module for `kamui-pepper-test`: the pepper service, its role, the key policy, the audit trail and alarms. |
-| `backend/` | Root module for `kamui-backend-test`: api, rotator, prover, secrets, storage. |
+| `backend/` | Root module for `kamui-backend-test`: api, rotator, secrets, storage. |
 | `modules/network` | VPC with two public and two private subnets and one NAT gateway. |
 | `modules/https-alb` | Public load balancer, HTTPS only, one target group. |
 | `modules/fargate-service` | One container as an ECS Fargate service with its own roles, security group and log group. |
@@ -34,35 +38,29 @@ Why not the other two:
 
 Costs of this choice: it runs all the time, it needs a NAT gateway (the task must reach the issuers' JWKS endpoints), and HTTPS needs a certificate and therefore a host name you control ([create an HTTPS listener](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html)). For a service called a few times per user per year that is a lot of fixed infrastructure; Lambda is worth revisiting once the rate limits are moved out of the process.
 
-### Backend: three Fargate services in one cluster
+### Backend: API and rotator in one cluster
 
-| Service | Size | Reachable from | Why |
+| Service | Size | Reachable from | State |
 |---|---|---|---|
-| api | 0.5 vCPU, 1 GB, one task | The internet, through the HTTPS load balancer | Small, stateless apart from the registry file. |
-| rotator | 0.25 vCPU, 512 MB, one task | The api only (port 3001, for `/health/rotator`) | A loop that sleeps most of the time. |
-| prover | 8 vCPU, 24 GB, one task | The api only (port 9900) | See below. |
+| api | 0.5 vCPU / 1 GiB, exactly one task | HTTPS ALB in current templates; proposed private routing is not implemented | Session registry and durable deployment/recovery journal on the reviewed persistent volume |
+| rotator | 0.25 vCPU / 0.5 GiB, one task | API only, port 3001 for health | Registry-owner signer, no browser witness |
 
-**The prover.** It is a long-running container that needs between 8 and 19.5 GB during a proof (`spikes/s1/results/RESULTS.md`: killed at an 8 GB cap, peak 19.5 GB under a 20 GB cap, on 8 CPUs, about 35 s per proof). Fargate accepts 8 vCPU with 16 to 60 GB in 4 GB steps ([Fargate task sizes](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-tasks-services.html)); 24 GB is the smallest size above the 20 GB cap that was measured, and 8 vCPU matches the measured run. Both are variables. A 4 vCPU task can also have 24 GB, at unknown cost in proof time.
+Proving consumes browser resources rather than a cloud task. The keychain needs the complete verified Worker/Wasm bundle, about 108 MiB before compression/glue, and supported memory64-capable desktop Chromium. Actual Kamui JWT proof size, memory and latency remain unverified.
 
-- **What limits concurrency:** the prover itself works on one proof at a time, and the api holds a queue in front of it (`services/backend/src/services/prover/queue.ts`: one running, a few waiting, then `503 PROVER_BUSY`). That queue is per api process, which is one more reason the api runs as a single task. Nothing on the AWS side limits concurrency; a second prover task would not be used.
-- **Cost driver:** Fargate bills for the vCPU and memory a task requests for as long as it runs ([Fargate pricing](https://aws.amazon.com/fargate/pricing/)), so an idle prover costs the same as a busy one. This task is by far the largest line in the backend account. Set `prover_desired_count = 0` when nobody is testing. The alternatives for later are an EC2 instance of the right size (cheaper per hour, more to operate) or starting a prover task per proof (adds start-up time to every login).
-- **Not checked:** which CPU architecture the prover image is built for, its size on disk, and whether it writes large scratch files. Defaults are `X86_64` and the default 20 GiB of task storage ([Fargate task storage](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-storage.html)); both are variables.
-
-A fourth process, the registry watcher, is being added to the backend. It is not in this Terraform because it did not exist when this was written; it is one more `fargate-service` block in `backend/main.tf`, like the rotator.
+The keychain and independent key watcher are not yet in Terraform. Adding them and making the API private are review gates in [HOSTING_REVIEW.md](HOSTING_REVIEW.md). The target pilot sizing is five small services across both accounts, not the two backend tasks alone.
 
 ## Network
 
 Both accounts use the same layout.
 
 - **Public subnets:** the load balancer and the NAT gateway. The load balancer listens on 443 only; port 80 is not open.
-- **Private subnets:** every task. No task has a public address. Security groups allow in only: load balancer to pepper (8787), load balancer to api (3000), api to prover (9900), api to rotator (3001), api to the registry file system (2049).
+- **Private subnets:** every task. No task has a public address. Security groups allow in only: load balancer to pepper (8787), load balancer to api (3000), api to rotator (3001), api to the registry file system (2049).
 - **Outbound,** through one NAT gateway per account, TCP 443 by default:
   - pepper service: AWS KMS, the Google and Apple JWKS endpoints, ECR, CloudWatch Logs;
   - api: the Starknet RPC, the pepper service in the other account (by its public HTTPS name, `pepper_service_url`), ECR, CloudWatch Logs, Secrets Manager;
   - rotator: the JWKS endpoints and the Starknet RPC;
-  - prover: the Starknet RPC.
   If the RPC is not on 443, add its port to `extra_egress_tcp_ports`.
-- The prover and rotator are found by private DNS names (`prover.kamui.internal`, `rotator.kamui.internal`) through ECS service discovery, which registers an A record per task ([service discovery](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-discovery.html)).
+- The rotator is found by its private DNS name (`rotator.kamui.internal`) through ECS service discovery, which registers an A record per task ([service discovery](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-discovery.html)).
 - The two accounts are not connected privately. The backend calls the pepper service over the internet like any client. All of the backend's calls arrive at the pepper service from one address (the backend's NAT gateway, output `nat_public_ip`), so they share one per-address rate-limit bucket there. See [Observations](#observations-about-the-services).
 
 The NAT gateway is billed per hour and per gigabyte ([NAT gateway pricing](https://docs.aws.amazon.com/vpc/latest/userguide/nat-gateway-pricing.html)); with the load balancer it is the fixed cost of each account.
@@ -153,9 +151,9 @@ Service control policies must be enabled as a policy type in the organisation fi
 
 ## Secrets (backend)
 
-Four Secrets Manager secrets (`backend/secrets.tf`): the relayer key, the prover-account key, the registry owner's key (the rotator signs with it), and the RPC URL (providers put an API key in it).
+Three Secrets Manager references (`backend/secrets.tf`): the relayer key, registry-owner key (used by the rotator), and RPC URL. The prover-account secret has been removed. API-only AVNU secret injection is still a hosting implementation gap; never pass it in plain Terraform environment variables.
 
-- **Why Secrets Manager and not Parameter Store.** ECS can inject from either ([Secrets Manager](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/secrets-envvar-secrets-manager.html), [Parameter Store](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/secrets-envvar-ssm-paramstore.html)). Secrets Manager is the service built for this: a per-secret resource policy ([resource policies](https://docs.aws.amazon.com/secretsmanager/latest/userguide/auth-and-access_resource-policies.html)), a recovery window on deletion, and a rotation mechanism if one is wanted later. Parameter Store's standard tier would cost less; for four secrets the difference is small, but check it.
+- **Why Secrets Manager and not Parameter Store.** ECS can inject from either ([Secrets Manager](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/secrets-envvar-secrets-manager.html), [Parameter Store](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/secrets-envvar-ssm-paramstore.html)). Secrets Manager is the service built for this: a per-secret resource policy ([resource policies](https://docs.aws.amazon.com/secretsmanager/latest/userguide/auth-and-access_resource-policies.html)), a recovery window on deletion, and a rotation mechanism if one is wanted later. Parameter Store's standard tier would cost less; for this small set of secrets the difference is small, but check it.
 - **How the value reaches the process.** The task definition names the secret's ARN under `secrets`. When the container starts, ECS reads the value with the service's **execution role** and sets it as an environment variable, which is where the backend reads it today. The value is not in the task definition, in Terraform variables or in Terraform state: Terraform creates the secrets empty and the values are put in by hand (runbook step 6).
 - **Least privilege.** Each service has its own execution role, allowed `secretsmanager:GetSecretValue` on its own secrets only ([task execution role](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_execution_IAM_role.html)). The rotator cannot read the relayer key. The task roles (the applications' own identities) have no permission at all.
 - **Changing a secret.** A running container does not see a new value; "you must either launch a new task or ... force new deployment" (Secrets Manager page above).
@@ -164,7 +162,7 @@ Four Secrets Manager secrets (`backend/secrets.tf`): the relayer key, the prover
 
 ## Persistent storage (backend)
 
-The backend is gaining a SQLite session registry at the path in `REGISTRY_DB`. On a container platform that means:
+The backend stores a SQLite session registry and durable recovery journal at the path in `REGISTRY_DB`. On a container platform that means:
 
 - A Fargate task's disk is gone when the task stops, and every deployment replaces the task. A registry on the task's own disk is emptied by every deployment.
 - An EBS volume does not help on Fargate: volumes attached to a service's tasks "are always deleted upon task termination" ([EBS volumes with ECS](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ebs-volumes.html)).
@@ -172,20 +170,20 @@ The backend is gaining a SQLite session registry at the path in `REGISTRY_DB`. O
 
 **Proposed for the test deployment** (`backend/storage.tf`): one encrypted EFS file system, mounted in the api at `/data` through an access point that pins a user and a directory, reachable from the api's security group only, with AWS Backup's automatic backups turned on. `REGISTRY_DB=/data/registry.db`.
 
-EFS is NFS, and SQLite on a network file system is sound only with a single writer and without WAL mode. So:
+EFS support by Fargate does not establish SQLite locking or backup correctness. Single-writer/no-WAL is a prerequisite for the proposed bounded test, not a durability guarantee. Storage-owner review and crash/restore drills are required. The candidate settings are:
 
 - the api runs as exactly one task (`api_desired_count` is validated to be at most 1);
 - deployments stop the old task before starting the new one (minimum healthy 0 %, maximum 100 %), which means a short outage at every deployment;
 - **the backend must not open the database in WAL mode.** This is a requirement on the code, not something Terraform can enforce.
 
-If the registry can be rebuilt or losing it in a test is acceptable, the simpler option is no volume at all: remove the `efs_volume` block and point `REGISTRY_DB` at a path on the task's disk. For production, use a database service and drop both the file and the one-task limit.
+Do not make recovery metadata ephemeral merely because session display data can be rebuilt: losing an unresolved paid intent loses the duplicate-send safeguard. Persist and restore both databases consistently. A production database migration needs a separate review, including writer fencing and reconciliation after stale restores.
 
 ## Container images
 
-- **Stored in ECR,** one repository per image, in the account that runs it: `kamui-pepper` in the pepper account; `kamui-backend-api`, `-rotator`, `-prover` in the backend account. Tags are immutable ([tag immutability](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html)) and images are scanned on push. Each execution role can pull from its own repository only.
+- **Stored in ECR,** one repository per image, in the account that runs it: `kamui-pepper` in the pepper account; `kamui-backend-api`, `-rotator` in the backend account. Tags are immutable ([tag immutability](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html)) and images are scanned on push. Each execution role can pull from its own repository only.
 - **Built** on the operator's machine for now (or in CI once there is one), for `linux/amd64` unless `cpu_architecture` is changed, tagged with the commit hash.
 - **Pepper:** `services/pepper/Dockerfile` was added with this work: two stages, base image pinned to `oven/bun:1.4.4-slim` (the version the service is developed on), runs as the unprivileged `bun` user, copies only `package.json`, the production dependencies and `src/`. A `.dockerignore` keeps `.env*` files out of the build context. **The image has not been built**; build it once before relying on it.
-- **Backend:** the existing Dockerfiles under `services/backend/src/services/` are used unchanged, with `services/backend` as build context. Two notes for their owner: the api and rotator images run as root and use the floating tag `oven/bun:1.4`, and the prover's Dockerfile starts from a `:latest` tag on another registry, so two builds a week apart can be different provers. The immutable ECR tag fixes what runs; record the upstream digest next to it.
+- **Backend:** the existing Dockerfiles under `services/backend/src/services/` are used unchanged, with `services/backend` as build context. The api and rotator images currently run as root and use the floating tag `oven/bun:1.4`; review non-root execution and pin the base digest. The immutable ECR tag fixes what runs; record the upstream digest next to it.
 
 ## State and credentials
 
@@ -211,7 +209,7 @@ Commands are for the operator. None was run while writing this.
 - Terraform 1.10 or later, Docker, the AWS CLI, and the two CLI profiles.
 - The pepper key's ARN and its key check value.
 - Two host names you control (one for the pepper service, one for the api) and an **issued** ACM certificate for each, in the account and Region of its load balancer. Requesting and validating them is not in this Terraform, because the domain is not something this repository should name.
-- The Google and Apple client ids; the Starknet addresses and private keys of the relayer, prover account and registry owner; an RPC URL.
+- The existing Google client ID (Apple is optional and deferred), public relayer/registry-owner addresses, operator-supplied signing credentials through the approved secret mechanism, and an RPC URL. No prover-account key.
 - A reviewer who owns AWS for the organisation has read this file and the plan output.
 
 ### Order
@@ -232,7 +230,7 @@ Pepper account first, because the backend needs the pepper service's URL.
    ```sh
    read -rs VALUE && aws secretsmanager put-secret-value --secret-id kamui-backend/relayer-private-key --secret-string "$VALUE"; unset VALUE
    ```
-   and the same for `prover-account-private-key`, `owner-private-key` and `rpc-url`. Build and push the three images (context `services/backend`, the Dockerfile of each service). Point the api host name at the load balancer.
+   and the same for `owner-private-key` and `rpc-url`. Build and push the API and rotator images (context `services/backend`, the Dockerfile of each service). Point the api host name at the load balancer.
 7. **Backend, second apply** with `deploy_services = true`, the image tags and `pepper_service_url`. Verify.
 8. **Key policy.** Review the output `key_policy_json` with the AWS owner. Then set `manage_key_policy = true` and apply. Verify the pepper service again: it must still start and answer.
 9. **Test the guardrails.** As an administrator, try a `GenerateMac` on the key: it must be denied, and `mac-by-other-principal` must go into alarm within a few minutes. Try `DisableKey`: denied, and `key-tampering-attempt` alarms. If a denied call does not raise the alarm, the trail is not recording denials for that call; find out before relying on it.
@@ -242,7 +240,7 @@ Pepper account first, because the backend needs the pepper service's URL.
 
 - **Pepper:** `curl -s https://<pepper host>/health` returns `{"status":"ok"}`. The log group shows a `kms_key` line and a `start` line at start-up and no error. If the task keeps restarting, the usual causes are a wrong `pepper_key_check` (the service refuses to start, by design), a key ARN in another Region, or no route to KMS.
 - **api:** `curl -s https://<api host>/health/api` returns `{"ok":true,"chain":"SN_SEPOLIA",...,"pepper_service":true}`.
-- **prover:** `https://<api host>/health/prover` returns `{"ok":true}`. It answers from the api, which pings the prover inside the VPC.
+- **proving:** no cloud prover health check. Validate the pinned browser bundle and run an actual Kamui V2 proof/recovery as part of the Google pilot acceptance.
 - **rotator:** `https://<api host>/health/rotator` returns `ok: true` once each issuer has synced.
 - **End to end:** one login through the demo app against these URLs. A first login took about 60 s on a laptop. Recovery now uses short job-submission and status requests; the template's 600 s idle timeout is unchanged.
 - `https://<api host>/metrics` must return 404 from the load balancer.
@@ -256,7 +254,7 @@ Pepper account first, because the backend needs the pepper service's URL.
 
 ### Tear down
 
-1. `deploy_services = false` (or `prover_desired_count = 0` just to stop the cost), apply.
+1. `deploy_services = false`, plan and apply only through the approved operator process.
 2. `terraform destroy` in `backend/`, then `pepper/`. It will stop on things that are protected on purpose, and each needs a deliberate step:
    - the registry file system and the state bucket have `prevent_destroy`;
    - ECR repositories that still hold images, and the trail bucket while it holds logs, are not deleted;
@@ -288,7 +286,7 @@ No prices are given here: they change and differ by Region. The things that are 
 | KMS key | 1 (plus replicas) | per key-month, plus requests |
 | CloudWatch Logs, CloudTrail copy, S3, EFS, ECR | small volumes | GB ingested and stored |
 
-The prover dominates. Everything else is fixed overhead of roughly the same size in each account.
+There is no hosted proving compute charge. Price the remaining fixed ALB/NAT/service overhead and the browser bundle transfer separately using the revised worksheet in [HOSTING_REVIEW.md](HOSTING_REVIEW.md).
 
 ## Observations about the services
 
@@ -304,17 +302,14 @@ For the engineers who own them. None was changed.
 
 **Backend**
 
-- **Client address behind a proxy.** The api uses the socket address (`srv.requestIP`) for its per-address limits (`/deploy`, `/relay`, `/sponsor`). Behind a load balancer that is the load balancer's address, so every client shares one bucket. It needs a `TRUST_PROXY` option like the pepper service's.
-- **Logs.** The api logs account addresses and transaction hashes, the client address on `/deploy`, and on failure the raw error message (`console.error(..., message)`). An error message can quote input or an RPC URL. With the RPC URL now a secret, that is worth closing. The log format is free text, not JSON.
-- **Prover logging.** `RUST_LOG` enables debug output for the prover. Whether that includes transaction contents (the calldata carries the login token) was not checked. It is a variable here.
-- **`/metrics`** (being added) would be public if the api serves it on the same port. The load balancer answers 404 for it (`api_blocked_paths`). A scraper inside the VPC needs its own security group rule, or the route should move to a separate port.
-- **Health checks.** `/health/api` works as a load balancer check. The rotator and prover have none on the platform side: the prover's health is a JSON-RPC `POST`, and the rotator's `/health` is only reachable through the api. ECS restarts them if the process exits, not if it hangs. A container health check command would fix that; it needs a known tool in each image.
-- **Start-up needs the RPC.** The api reads the chain id before it listens; if the RPC is down, the task never becomes healthy and ECS keeps replacing it.
-- **Configuration baked into the image.** `deployments.env` (registry address, class hash, executor address) is copied into the api and rotator images. A change of address is a new image, and one image cannot serve two chains. Environment variables win over the file, so `api_extra_environment` can override.
-- **`RPC_API_KEY`** is in `.env.example` but nothing reads it.
-- **SQLite on a shared volume** needs single-writer and no WAL, see above.
-- **Recovery jobs.** `/recover` now returns a job ID and the client polls `/recover/status`, so a proof can outlive an HTTP connection. Recovery metadata now persists in `recovery.sqlite` beside `REGISTRY_DB` on the same volume by default. The api journals transaction hashes before broadcasting and reconciles accepted receipts after restart. Replacing the prover can still interrupt a proof; its JWT/proof are not persisted, so a fresh sign-in is needed. Unknown submissions stay locked. Review the storage guarantees and operator procedure in `../../../services/backend/RECOVERY-JOBS.md` before relying on this across deployments.
-- **Relayer nonce.** One relayer key in one process is assumed. A second api task would need nonce coordination as well as a shared queue and registry.
+- Client-address handling supports `TRUSTED_PROXY_HOPS`; the target keychain/ALB chain must be implemented and spoof-tested before choosing its value.
+- Logs are closed JSON codes; request bodies, client IPs, JWTs, pepper, signatures and proof bytes must remain absent. Review deployed samples and edge logs rather than assuming every failure path is safe.
+- `/metrics` is on a separate internal listener by default. Public path denials and internal scraper routing need acceptance in the final topology.
+- Public `/recover` server proving and legacy `/deploy` are disabled. `/deploy/authenticated` and `/relay` return durable jobs polled through `/recover/status`. No API prover account or prover URL is loaded.
+- Persist `registry.db` and `recovery.sqlite`; journaled unknown submissions stay locked. See [RECOVERY-JOBS.md](../../../services/backend/RECOVERY-JOBS.md). Use explicit stop/wait/start to avoid overlapping API writers, including during rollback.
+- `CHAIN_ID` can permit startup before RPC confirmation; the current template must supply it and verify background wrong-chain behavior before a pilot.
+- Class/registry/executor addresses in `deployments.env` are public build inputs; explicit environment values override them. Keychain packaging must use public-only config rather than reading backend env files.
+- One relayer account instance in one API process coordinates local nonces. Separate processes using the same key need additional coordination; there is no shared distributed lock.
 
 ## Not for production as is
 
@@ -327,13 +322,13 @@ A production deployment needs at least the following beyond what is here.
 - **Audit that the account's own administrators cannot switch off:** an organisation trail delivered to a separate log-archive account, with retention decided. The backend account has no trail at all in this Terraform.
 - **The relayer key out of process memory.** Secrets Manager keeps it out of files, not out of the process. `services/backend/src/secrets.ts` describes the stronger option (a signer service). Also a spending limit and balance alarm on the relayer account.
 - **WAF or an equivalent** in front of both load balancers, and rate limiting at the edge, since both services limit per process.
-- **Backups and alarms:** alarms on service health, task restarts, 5xx rates, prover queue depth, rotator sync failures, relayer balance; a tested restore of the registry.
+- **Backups and alarms:** alarms on service health, task restarts, 5xx rates, submission age/error counts, rotator sync failures, relayer balance; a tested restore of the registry.
 - **A database service** for the session registry, which also lifts the one-task limit on the api.
-- **High availability:** more than one task per service, more than one NAT gateway, and a decision on the prover (more than one, or capacity on demand). All of this is single-instance today.
+- **High availability:** more than one task per service, more than one NAT gateway, and verified browser proving availability/resource behavior. All of this is single-instance today.
 - **A permanent domain for the keychain** and for both services, owned and renewed by the organisation, with certificates managed in code. The pepper service's allowed origin and the OAuth client configuration depend on it, and it cannot change casually afterwards.
 - **Private connectivity or authentication** between the backend and the pepper service, instead of the backend calling it as an anonymous internet client.
 - **Narrower outbound rules:** tasks can connect to any address on port 443. VPC endpoints for AWS services and an egress allow-list would narrow it.
-- **A deployment pipeline** that builds images from a commit, records digests, and applies Terraform with a scoped role after review; base images pinned by digest; the prover image pinned to a reviewed version.
+- **A deployment pipeline** that builds images from a commit, records digests, and applies Terraform with a scoped role after review; base images pinned by digest; the complete Worker/Wasm bundle pinned to a reviewed compatible profile.
 - **Decisions still open in DESIGN.md:** log retention and whether client addresses may be logged, who administers the pepper account, who approves changes to the audience list.
 - **Review by whoever owns AWS for the organisation,** of every file here, before anything is applied, and a legal and privacy review of the logging and data-location choices before production.
 
@@ -352,9 +347,8 @@ AWS facts this work relies on that were **not** checked against documentation, o
 - That the TLS policy name `ELBSecurityPolicy-TLS13-1-2-2021-06` is current.
 - That an ALB **never** logs request bodies: no documented access-log field holds one, but no sentence says so. That an ALB has no default HTTPS certificate: implied by the certificate requirement, not stated.
 - That ECS Exec is off by default; the service sets it to `false` explicitly either way.
-- That 8 vCPU tasks are available for ARM64, and which architecture the prover image is built for.
 - That the Terraform version that introduced `use_lockfile` is 1.10 (`required_version` assumes it).
-- That SQLite is sound on EFS under the single-writer, no-WAL conditions given. This is SQLite's general guidance on network file systems applied to EFS, not an AWS statement, and it was not tested.
+- SQLite/EFS crash, locking and application-consistent backup/restore behavior under the proposed runtime; single-writer/no-WAL settings do not prove durability.
 - That Bun in the container picks up the task role's credentials through the AWS SDK's default chain, and that Bun exits cleanly on `SIGTERM`. The KMS path has only run from a laptop with a profile.
 - That an EFS access point's user (uid 1000) works with the api image running as root, and that the task can mount it with the security group rules given.
 - That Secrets Manager secrets encrypted with the AWS managed key need no KMS permission on the execution role. The documentation checked lists `kms:Decrypt` only for customer managed keys, under a neighbouring heading.

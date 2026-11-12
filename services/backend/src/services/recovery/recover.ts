@@ -5,7 +5,7 @@ import type { Limiter } from '../../limiter';
 import { errorCode, log } from '../../log';
 import { metrics } from '../../metrics';
 import { accountAddress, deployCall, expectedNonce, extractIdentity } from '../../social-account';
-import { proveJwt, proveJwtCalldata, type Proof } from '../prover/prove';
+import type { Proof } from '../prover/prove';
 import type { ProofQueue } from '../prover/queue';
 import type { RecoveryJournal } from './jobs';
 import { journaledTransaction, withRelayerLock, waitForAcceptedTransaction } from './transaction';
@@ -20,7 +20,7 @@ export type RecoverContext = {
   /** Funded. Deploys accounts and submits recover. */
   relayer: Account;
   /** The SNIP-36 prover and the unfunded account that signs its virtual transaction. */
-  prover: { account: Account; url: string };
+  prover?: { account: Account; url: string };
   classHash: string;
   /** The `aud` this backend serves per `iss`. A token from an issuer not listed here is refused. */
   audiences: Record<string, string>;
@@ -149,6 +149,7 @@ async function runRecovery(req: RecoverRequest, ctx: RecoverContext, token: Jwt,
       }
     }
 
+    const { proveJwtCalldata } = await import('../prover/prove');
     const prove: Call = {
       contractAddress: address,
       entrypoint: 'prove_jwt',
@@ -168,7 +169,8 @@ async function timedProof(call: Call, ctx: RecoverContext): Promise<Proof> {
   const started = Date.now();
   metrics.proofs.inc({ result: 'started' });
   try {
-    const proof = await (ctx.prove ? ctx.prove(call) : proveJwt(call, ctx.provider, ctx.prover.account, ctx.prover.url, ctx.proverTimeoutMs));
+    const { proveJwt } = await import('../prover/prove');
+    const proof = await (ctx.prove ? ctx.prove(call) : proveJwt(call, ctx.provider, ctx.prover!.account, ctx.prover!.url, ctx.proverTimeoutMs));
     metrics.proofs.inc({ result: 'succeeded' });
     metrics.proofSeconds.observe((Date.now() - started) / 1000);
     return proof;

@@ -8,7 +8,6 @@ services:
     build: { context: ., dockerfile: src/services/api/Dockerfile }
     env_file: .env.local
     environment:
-      PROVER_URL: http://prover:9900
       ROTATOR_URL: http://rotator:3001
     # Kamui: 3000 only. The metrics port (9464) is deliberately not published.
     ports: ["3000:3000"]
@@ -34,7 +33,9 @@ services:
       WATCHER_WEBHOOK_URL: ${WATCHER_WEBHOOK_URL:-}
     restart: unless-stopped
 
+  # Historical comparison only; never started by the default stack or called by the API.
   prover:
+    profiles: ["historical-prover"]
     build: { context: ., dockerfile: src/services/prover/Dockerfile }
     environment:
       RPC_URL: ${RPC_URL}

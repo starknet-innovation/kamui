@@ -13,3 +13,6 @@ target/
 # Machine-local dev server config (absolute paths)
 .claude/launch.json
 .claude/handoff-prompt.md
+
+# Pinned SNIP-36 release binaries: install with keychain/scripts/prover-assets.ts.
+keychain/prover/**/*.wasm

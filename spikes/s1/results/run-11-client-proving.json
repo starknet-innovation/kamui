@@ -1,0 +1,170 @@
+{
+  "run": 11,
+  "date": "2026-11-12",
+  "scope": "Existing-account Google new-device recovery, client-side SNIP-36 V2 proving",
+  "startedAt": "2026-11-12T15:35:41.953Z",
+  "finishedAt": "2026-11-12T15:41:36.633Z",
+  "browser": {
+    "version": "153.0.8010.12",
+    "mode": "headed",
+    "source": "Playwright bundled Chromium revision 1243",
+    "controller": "Playwright 1.65.0 over localhost CDP"
+  },
+  "prover": {
+    "release": "v1.0.1",
+    "commit": "32596db806409e8e24008cc922bc80ae164854b8",
+    "execution": {
+      "kind": "execution",
+      "init_ms": 36,
+      "total_ms": 45587.5,
+      "wasm_linear_memory_bytes": 215416832,
+      "rust_requested_peak_bytes": 146066815,
+      "backend_release": "v1.4.2",
+      "pie_bytes": 5813937
+    },
+    "proof": {
+      "kind": "proof",
+      "wasm_bytes": 76749727,
+      "wasm_sha256": "febb42b85947772b129eec17ba58aec50dae1988a7af5ef0fd6b61812358bde7",
+      "proof_bytes": 231792,
+      "proof_sha256": "c0a7769b3fbed474e9373edb59f56368a4ff60229024192a5544d63af9801158",
+      "load_ms": 125.59999999403954,
+      "init_ms": 111.69999998807907,
+      "prove_ms": 117335.40000000596,
+      "total_ms": 117579.39999997616,
+      "wasm_linear_memory_bytes": 3574595584,
+      "rust_requested_peak_bytes": 3558791323,
+      "backend_release": "v1.4.2",
+      "proving_revision": "e0035ffc8e08da270b8cb4a71f3708af70c2c775"
+    },
+    "phases": [
+      {
+        "at": "2026-11-12T15:37:41.460Z",
+        "phase": "authenticated acquisition and execution"
+      },
+      {
+        "at": "2026-11-12T15:38:25.125Z",
+        "phase": "virtual OS and PIE"
+      },
+      {
+        "at": "2026-11-12T15:38:26.779Z",
+        "phase": "recursive proving"
+      }
+    ]
+  },
+  "account": "0x133739e82cd76b5a6446848ae0cbbbb8cc4762fbb8e0eb5ebc417209423e0e9",
+  "before": {
+    "address": "0x133739e82cd76b5a6446848ae0cbbbb8cc4762fbb8e0eb5ebc417209423e0e9",
+    "classHash": "0x1e128dae2cb709cac9263afa1c6fdb33f7f1f5c2d969547d9739326d08399f6",
+    "owners": [
+      "0x69c4479ec9258f05b7b565a7219a181f7aa3d5ae6304f06a304d3a719fe0404",
+      "0x286d5e0b438951010673a46b8344184a913d3e5f3b46b7a9b88d67fbd41b98b",
+      "0x4f23d98a953d0ea2f132039a98a929769497c8b5e20112d6cd177e2aa6d7ea0"
+    ],
+    "ownersAnchor": "0x6f097927ae2534ba4936b98a7f3c9600df5fa4090102382419da8bb844533b0",
+    "sessionEpoch": "0x6"
+  },
+  "after": {
+    "address": "0x133739e82cd76b5a6446848ae0cbbbb8cc4762fbb8e0eb5ebc417209423e0e9",
+    "classHash": "0x1e128dae2cb709cac9263afa1c6fdb33f7f1f5c2d969547d9739326d08399f6",
+    "owners": [
+      "0x69c4479ec9258f05b7b565a7219a181f7aa3d5ae6304f06a304d3a719fe0404",
+      "0x286d5e0b438951010673a46b8344184a913d3e5f3b46b7a9b88d67fbd41b98b",
+      "0x4f23d98a953d0ea2f132039a98a929769497c8b5e20112d6cd177e2aa6d7ea0",
+      "0x802ba719b5e2c6c1c3c6600a6237e658ddc40ebfb9eb8872b7424dc13a0b08"
+    ],
+    "ownersAnchor": "0x6cb727f31471fe5c02545a28ca5a2c05ecb24a5b40736131d553352a9da1c53",
+    "sessionEpoch": "0x7"
+  },
+  "verification": {
+    "newKeyIsOwner": true,
+    "ownersBefore": 3,
+    "ownersAfter": 4,
+    "previousKeysRetained": true,
+    "epochBefore": 6,
+    "epochAfter": 7,
+    "sameClass": true,
+    "relaySubmissions": 1,
+    "serverProvingCalls": 0,
+    "deployCalls": 0,
+    "identityMatchesOnChain": true,
+    "proofMessageMatchesBeforeAnchor": true,
+    "epochIncrementedExactlyOnce": true
+  },
+  "receipt": {
+    "transactionHash": "0x1c0f98c6d9d61d6ffde317cb256ef69a57f22b29cfa459321320dd390abe207",
+    "finality": "ACCEPTED_ON_L2",
+    "execution": "SUCCEEDED",
+    "blockNumber": 18036204,
+    "blockHash": "0x1a235e42f842f225b77ee5714f54118125bfa598289ca159d7aced39cc7676e",
+    "actualFee": {
+      "amount": "0x1adab7383fcbcd60",
+      "unit": "FRI"
+    },
+    "feeTestStrk": "1.935060442125421920"
+  },
+  "transaction": {
+    "type": "INVOKE",
+    "version": "0x3",
+    "sender": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e",
+    "nonce": "0x39",
+    "proofFactsReturnedByRpc": false
+  },
+  "submission": {
+    "relayCount": 1,
+    "proofBytes": 231792,
+    "proofFacts": [
+      "0x50524f4f4632",
+      "0x5649525455414c5f534e4f53",
+      "0x1c7be3225dfb33359b3ba9ffbe1542b7da27879b6d89f47b967e512463fd324",
+      "0x5649525455414c5f534e4f5330",
+      "0x1133587",
+      "0x31fec50436bab56455bb13386d599932dbf2cca7c56988bca40f5ced688aab0",
+      "0x57ed4d5e20d617d8cc087a5882eae4f71d005172326be6439b2e1fd8b4dc57",
+      "0x1",
+      "0x5cb7d3cb1f0d4a3f518bd3e57e126a6c741121bc45ae4631ac34b4d14543e58"
+    ],
+    "newPublicKey": "0x802ba719b5e2c6c1c3c6600a6237e658ddc40ebfb9eb8872b7424dc13a0b08",
+    "jwtInRelay": false,
+    "pepperInRelay": false,
+    "serverProvingCalls": 0,
+    "deploymentCalls": 0
+  },
+  "rpcMethods": {
+    "starknet_chainId": 4,
+    "starknet_getClassHashAt": 5,
+    "starknet_call": 9,
+    "starknet_getBlockWithTxHashes": 2,
+    "starknet_getNonce": 4,
+    "starknet_specVersion": 1,
+    "starknet_getClass": 3,
+    "starknet_getStorageProof": 31,
+    "starknet_getStorageAt": 28,
+    "starknet_getTransactionStatus": 1,
+    "starknet_getTransactionReceipt": 1
+  },
+  "reload": {
+    "accountPage": true,
+    "newRelays": 0,
+    "newWorkerReports": 0,
+    "registryListStatuses": [
+      200
+    ]
+  },
+  "observedFailures": [
+    {
+      "browser": "158.0.8127.18",
+      "outcome": "Native EXC_BAD_ACCESS during Google authentication, before proof or API submission"
+    },
+    {
+      "browser": "153.0.8010.12",
+      "outcome": "Restored sign-in tabs produced a pending-device/attempt mismatch before proving. A single-tab retry with the authenticated Google account succeeded."
+    }
+  ],
+  "notTested": [
+    "First-account deployment with client proving",
+    "Recovery-file sign-in and pepper outage with client proving",
+    "Lost response and API restart during this live client-proof submission",
+    "Installed Google Chrome proving"
+  ]
+}

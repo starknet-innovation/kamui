@@ -1,7 +1,7 @@
 // The login flow. No network: a fake provider and a fake recover backend stand in for the
 // chain and the API, and the real pepper service runs in process (see the last describe).
 import { describe, expect, test } from 'bun:test';
-import { ec, hash } from 'starknet';
+import { RpcError, ec, hash } from 'starknet';
 import {
   accountAddressFromLogin,
   authUrl,
@@ -38,7 +38,7 @@ function fakeChain(state: { deployed: boolean; owners: string[]; anchor: string 
   const waited: string[] = [];
   const provider = {
     async getClassHashAt() {
-      if (!state.deployed) throw new Error('Contract not found');
+      if (!state.deployed) throw new RpcError({ code: 20, message: 'Contract not found' }, 'starknet_getClassHashAt', {});
       return CLASS_HASH;
     },
     async callContract({ entrypoint, calldata }: { entrypoint: string; calldata?: string[] }) {
@@ -148,7 +148,7 @@ describe('completing a login', () => {
     expect(chain.waited).toEqual(['0xabc']);
     expect(requests).toHaveLength(1);
     const request = requests[0]!;
-    expect(request).toMatchObject({ jwt: idToken, account, newPubkey: device.publicKey, blinding: attempt.blinding, pepper: '0x1234', override: false });
+    expect(request).toMatchObject({ jwt: idToken, account, newPubkey: device.publicKey, ownersAnchor: '0x0', blinding: attempt.blinding, pepper: '0x1234', override: false });
     expect(request.keyProof).toEqual(keyProof(attempt, device).signature);
     const signature = new ec.starkCurve.Signature(BigInt(request.signature[0]), BigInt(request.signature[1]));
     expect(ec.starkCurve.verify(signature, newOwnerMessageHash(account, '0x0'), ec.starkCurve.getPublicKey(device.privateKey))).toBe(true);
@@ -162,6 +162,7 @@ describe('completing a login', () => {
     const result = await completeLogin({ provider: chain.provider, backend, chainId: SEPOLIA, classHash: CLASS_HASH, idToken, attempt, device, pepper });
 
     expect(result).toMatchObject({ status: 'added', existed: true });
+    expect(requests[0]!.ownersAnchor).toBe('0x777');
     const [r, s] = requests[0]!.signature;
     const signature = new ec.starkCurve.Signature(BigInt(r), BigInt(s));
     const publicKey = ec.starkCurve.getPublicKey(device.privateKey);

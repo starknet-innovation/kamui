@@ -1,0 +1,61 @@
+{
+  "date": "2026-11-12",
+  "scope": "Offline public balance capture through Kamui-hosted pinned Workers and CSP; not a Kamui JWT proof, native verification or chain submission",
+  "upstream_commit": "32596db806409e8e24008cc922bc80ae164854b8",
+  "upstream_release": "v1.0.1",
+  "result": {
+    "proofHeader": "020400098446bd35fd2272efe19bf43aac7037b3b7e25e86d94170d95198245bbb8dc7",
+    "proofBytes": 231440,
+    "outputPreimage": [
+      "0x1",
+      "0x7",
+      "0x1c7be3225dfb33359b3ba9ffbe1542b7da27879b6d89f47b967e512463fd324",
+      "0x5649525455414c5f534e4f5330",
+      "0xf5d334",
+      "0x31d7e77a1a55236f80df9a3e57b0f6e08e3e6f3a3caf5efbf03cbb1b9006a93",
+      "0x57ed4d5e20d617d8cc087a5882eae4f71d005172326be6439b2e1fd8b4dc57",
+      "0x0"
+    ],
+    "report": {
+      "runtime": "browser Worker memory64",
+      "prover_build": "standard",
+      "wasm_bytes": 76749727,
+      "wasm_sha256": "febb42b85947772b129eec17ba58aec50dae1988a7af5ef0fd6b61812358bde7",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.8127.18 Safari/537.36",
+      "pie_sha256": "0662bae8039ea9964db44ff3efe37e7d722f71e733fffa98d01c4d27ed45474e",
+      "proof_sha256": "0dd8e1aa60af2fcdd34ab2afd7b18352d941c1c21a7e4b80428bf5761000d4cc",
+      "proof_bytes": 231440,
+      "load_ms": 103.90000000596046,
+      "init_ms": 111.7999999821186,
+      "prove_ms": 71005.80000001192,
+      "total_ms": 71225.69999998808,
+      "wasm_linear_memory_bytes": 3203596288,
+      "webcrypto_random_calls": 0,
+      "webcrypto_random_bytes": 0,
+      "rust_requested_live_bytes": 483440591,
+      "rust_requested_peak_bytes": 2347735761,
+      "backend_release": "v1.4.2",
+      "proving_revision": "e0035ffc8e08da270b8cb4a71f3708af70c2c775",
+      "scope": "V2 recursive proving in browser; native verification separate"
+    },
+    "execution": {
+      "runtime": "browser Worker wasm32",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.8127.18 Safari/537.36",
+      "init_ms": 38.900000005960464,
+      "acquisition_execution_witness_ms": 1821.199999988079,
+      "virtual_os_ms": 397.7000000178814,
+      "total_ms": 2262.5999999940395,
+      "wasm_linear_memory_bytes": 139132928,
+      "rust_requested_live_bytes": 7605969,
+      "rust_requested_peak_bytes": 78995516,
+      "process_rss_bytes": null,
+      "pie_bytes": 1165578,
+      "pie_sha256": "0662bae8039ea9964db44ff3efe37e7d722f71e733fffa98d01c4d27ed45474e",
+      "request_sha256": "895e1073dcced66c2f30d76ac8bc8d3c5c212da744880bc88b95c192e1c3a513",
+      "capture_sha256": "38026f8b9a3190173fb370f5d1d986a5c0793900037d48ed378f810f3b040010",
+      "backend_release": "v1.4.2",
+      "sequencer_revision": "148de44521b49e32c5a675e287572768932cc99e",
+      "scope": "Browser public-state invocation execution and PIE; recursive proof verification and network admission separate"
+    }
+  }
+}

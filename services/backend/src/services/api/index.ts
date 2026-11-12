@@ -1,18 +1,16 @@
 // The backend API. The routes are in app.ts; this file reads the settings and serves them.
 //
-// POST /recover {jobId, jwt, account, newPubkey, blinding, pepper, signature: [r, s], keyProof?, override?} => 202 { jobId }
-// POST /recover/status {jobId} => running | succeeded (result) | failed (error, httpStatus)
-//   Deploys the account when missing, runs prove_jwt, relays recover. See recovery/recover.ts.
-//   With override: true the account was created under another aud; it must exist and recover only
-//   records a pending recovery that finalize_override_recovery completes after the delay.
-// POST /deploy {aud, identity} => { address, transaction_hash | null }
-//   Deploys the social account for a browser that proves locally. See recovery/deploy.ts.
-// POST /relay {account, newPubkey, signature: [r, s], proof, proofFacts, override?} => { address, identity, transaction_hash, override }
-//   Relays recover with a browser-generated proof. The JWT never arrives here. See recovery/relay.ts.
+// POST /deploy/authenticated {jobId, jwt, account, newPubkey, blinding, pepper, signature, keyProof?}
+//   Authenticates/pepper-confirms a first deployment. No execution or proving here.
+// POST /relay {jobId, account, newPubkey, signature, proof, proofFacts, override?}
+//   Accepts a browser-generated pinned V2 proof. Both routes return 202 {jobId}.
+// POST /recover/status {jobId} => running | succeeded (result) | failed (code, httpStatus).
+//   Capability-protected durable status and receipt reconciliation, never re-proving.
+// POST /recover and legacy /deploy are disabled in this process (410).
 // Kamui: POST /sponsor {account, calldata}, optional x-kamui-app-key header => { transaction_hash }. See recovery/sponsor.ts.
 // Kamui: POST /registry/sessions, /registry/sessions/list, /registry/sessions/remove. See registry/registry.ts.
-// GET /health/api => { ok: true, chain, deploys, pepper_service, sponsor, proofs }
-// GET /health/prover => { ok, reason? }                     the docker prover answers its JSON-RPC ping
+// GET /health/api => { ok: true, chain, deploys, pepper_service, sponsor, proving: "browser" }
+// GET /health/prover => { ok: false, reason: "not configured" } (historical health route)
 // GET /health/rotator => { ok, chain?, issuers?, reason? }  the rotator's own /health, proxied (see rotator/jwk-rotator.ts)
 // Kamui: GET /live => { ok: true }, no dependencies.
 // Kamui: GET /metrics => Prometheus text, on METRICS_PORT (9464), not on the public port unless METRICS_TOKEN is set. See metrics.ts.
@@ -26,7 +24,6 @@ import { MemoryLimiter } from '../../limiter';
 import { log } from '../../log';
 import { fetchWithTimeout } from '../../net';
 import { secretSource } from '../../secrets';
-import { PROVER_TIMEOUT_MS, proverHealth } from '../prover/prove';
 import { ProofQueue } from '../prover/queue';
 import { pepperSettings } from '../recovery/pepper';
 import { RecoveryJobs, recoveryDbPath } from '../recovery/jobs';
@@ -55,25 +52,16 @@ const ledger = new MemoryLedger();
 const ctx: RecoverContext = {
   provider,
   relayer: new Account({ provider, address: env('RELAYER_ADDRESS'), signer: await secrets.get('RELAYER_PRIVATE_KEY') }),
-  prover: {
-    account: new Account({ provider, address: env('PROVER_ACCOUNT_ADDRESS'), signer: await secrets.get('PROVER_ACCOUNT_PRIVATE_KEY') }),
-    url: process.env.PROVER_URL ?? 'http://localhost:9900',
-  },
   classHash: env('KAMUI_ACCOUNT_CLASS_HASH'),
   audiences: {
     'https://accounts.google.com': env('AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID'),
-    'https://appleid.apple.com': env('AUTHORIZED_APPLE_RECOVERY_CLIENT_ID'),
+    ...(process.env.AUTHORIZED_APPLE_RECOVERY_CLIENT_ID ? { 'https://appleid.apple.com': process.env.AUTHORIZED_APPLE_RECOVERY_CLIENT_ID } : {}),
   },
   deploysPerHour: number('DEPLOYS_PER_HOUR', 30),
   pepper: pepperSettings(chain, process.env.PEPPER_SERVICE_URL),
   jwks: new JwksCache(),
   limiter,
-  proofs: new ProofQueue({
-    concurrency: number('PROVER_CONCURRENCY', 1),
-    maxQueued: number('PROVER_QUEUE_MAX', 4),
-    maxWaitMs: number('PROVER_QUEUE_WAIT_MS', 5 * 60_000),
-  }),
-  proverTimeoutMs: number('PROVER_TIMEOUT_MS', PROVER_TIMEOUT_MS),
+  proofs: new ProofQueue(), // Historical context only; no public proving route.
 };
 const rotatorUrl = process.env.ROTATOR_URL ?? 'http://localhost:3001';
 const store = new RegistryStore(process.env.REGISTRY_DB || undefined, undefined, process.env.REGISTRY_JOURNAL_MODE || 'DELETE');
@@ -108,7 +96,7 @@ const app = buildApp({
   // TRUST_PROXY=true is the pepper service's spelling of one trusted proxy.
   trustedProxyHops: process.env.TRUSTED_PROXY_HOPS ? number('TRUSTED_PROXY_HOPS', 0) : process.env.TRUST_PROXY === 'true' ? 1 : 0,
   metricsToken: process.env.METRICS_TOKEN || undefined,
-  health: { prover: () => proverHealth(ctx.prover.url), rotator: rotatorHealth },
+  health: { rotator: rotatorHealth },
 });
 
 // Expired registry entries are also dropped whenever their account is read or written.

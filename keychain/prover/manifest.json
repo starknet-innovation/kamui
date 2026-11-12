@@ -1,0 +1,63 @@
+{
+  "repository": "https://github.com/starknet-innovation/snip-36-prover-wasm",
+  "commit": "32596db806409e8e24008cc922bc80ae164854b8",
+  "release": "v1.0.1",
+  "files": {
+    "public-run-controller.mjs": {
+      "bytes": 3359,
+      "sha256": "62def219017a0abdd44424f1325eda1420b99a65224c318d40e8562faf355728"
+    },
+    "public-execution-worker.mjs": {
+      "bytes": 3666,
+      "sha256": "b9cfc85b776690b30a8c5c8a400636e494d5d3587a7665a2e98914677d6d0a1e"
+    },
+    "public-prover-worker.mjs": {
+      "bytes": 2728,
+      "sha256": "4c2bef3f6f86e8a62166135536957bfb5905acf74dda3f7ada6faaa8729afde1"
+    },
+    "prover-profile.mjs": {
+      "bytes": 1046,
+      "sha256": "fd10b41fbd4493182eee7b071e1a77541d4cc2fcb6a5b58bc6f6cb0de33b9e33"
+    },
+    "prover-builds.mjs": {
+      "bytes": 4095,
+      "sha256": "8f747320ba750a7de8e34f2fc7d212c0f21ee88f594babda2f686fd76f487f4c"
+    },
+    "sequencer-memory64.mjs": {
+      "bytes": 4280,
+      "sha256": "83968189498d96a64adbc3697d23c4f2e1c66a3cc448662c455236cbe47bfb8b"
+    },
+    "anchored-rpc.mjs": {
+      "bytes": 16018,
+      "sha256": "d2bc026f152b874d6d803c0acc7f6a5f893280d870f885fbc7cc0c35907694ab"
+    },
+    "rpc-retry.mjs": {
+      "bytes": 1112,
+      "sha256": "3878258720102185dedb6406da5cdafd7a9f3069ea4896de9313ac1ba508c432"
+    },
+    "public-pipeline.mjs": {
+      "bytes": 4564,
+      "sha256": "4f79c59590fcd7117098731b43768a42f928496f1320bfb9fb3af96f34a6ce21"
+    },
+    "auth/browser_virtual_os.js": {
+      "bytes": 21705,
+      "sha256": "69e0b926e6ff082259f69bc2aeecf76b07d49f8fe7f75ae04a2e8aaf679afefc"
+    },
+    "auth/browser_virtual_os_bg.wasm": {
+      "bytes": 36330443,
+      "sha256": "9f9bc0c258df577a2136c3484c6bd48de22dfae51530901b4cf5c269ef8036fd"
+    },
+    "sequencer-prover.wasm": {
+      "bytes": 76749727,
+      "sha256": "febb42b85947772b129eec17ba58aec50dae1988a7af5ef0fd6b61812358bde7"
+    },
+    "LICENSE": {
+      "bytes": 11355,
+      "sha256": "05e1539b5cb907bbf65999a55b29a87a35520672b67845dda6aa66625aabef80"
+    },
+    "THIRD_PARTY_NOTICES.md": {
+      "bytes": 3091,
+      "sha256": "5f6d97f6f8c9de8fe30fdcb4a5b9aa9e58d06cc11589ad4b693bead344c1ef23"
+    }
+  }
+}

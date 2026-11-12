@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 // Local server for the keychain. Development only.
 //
 //   bun run server.ts        http://localhost:5173
@@ -35,10 +36,16 @@ const { origin, redirectUri } = keychainOrigin({ port: PORT, publicOrigin: proce
 // Public values only. The environment wins over the backend's files, which is how the browser
 // tests point the keychain at their own fakes.
 const config = {
+  proverReady: false,
+  proverExecutor: process.env.PROVER_EXECUTOR_ADDRESS ?? deployments.PROVER_EXECUTOR_ADDRESS ?? '',
+  jwkRegistry: process.env.JWK_REGISTRY_ADDRESS ?? deployments.SN_SEPOLIA_REGISTRY_ADDRESS ?? '',
   googleClientId: need(process.env.GOOGLE_CLIENT_ID ?? secrets.AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID, 'AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID'),
   // Optional. Without it the page does not offer "Continue with Apple".
   appleClientId: process.env.APPLE_CLIENT_ID ?? secrets.AUTHORIZED_APPLE_RECOVERY_CLIENT_ID ?? '',
-  rpcUrl: need(process.env.RPC_URL ?? secrets.RPC_URL, 'RPC_URL'),
+  // The keychain never reads a credential-bearing backend RPC URL from its secret file.
+  rpcUrl: process.env.PUBLIC_RPC_URL ?? process.env.RPC_URL ?? 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10',
+  // Pinned upstream state acquisition deliberately supports only this public endpoint.
+  proverRpcUrl: 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10',
   classHash: need(process.env.KAMUI_ACCOUNT_CLASS_HASH ?? deployments.KAMUI_ACCOUNT_CLASS_HASH, 'KAMUI_ACCOUNT_CLASS_HASH'),
   pepperUrl: process.env.PEPPER_URL ?? 'http://localhost:8787',
   apiUrl: '/api',
@@ -48,6 +55,18 @@ const config = {
   pollMs: Number(process.env.POLL_MS ?? 2000),
 };
 
+const manifest = await Bun.file(`${import.meta.dir}/prover/manifest.json`).json();
+const proverFiles = new Map<string, Uint8Array>();
+// Validate every byte of the complete pinned runtime before exposing it. Missing binaries fail
+// only proving requests, so an existing owner can still use the wallet.
+let proverReady = true;
+for (const [path, pin] of Object.entries(manifest.files) as [string, { bytes: number; sha256: string }][]) {
+  const file = Bun.file(`${import.meta.dir}/prover/${path}`);
+  const data = await file.arrayBuffer().catch(() => new ArrayBuffer(0));
+  if (data.byteLength !== pin.bytes || createHash('sha256').update(new Uint8Array(data)).digest('hex') !== pin.sha256) proverReady = false;
+  proverFiles.set(`/prover/v1.0.1/${path}`, new Uint8Array(data));
+}
+config.proverReady = proverReady;
 const build = await Bun.build({ entrypoints: [`${import.meta.dir}/src/main.ts`], target: 'browser' });
 if (!build.success) {
   for (const log of build.logs) console.error(log);
@@ -62,9 +81,10 @@ const style = await Bun.file(`${import.meta.dir}/style.css`).text();
 const security = {
   'content-security-policy': [
     "default-src 'none'",
-    "script-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
+    "worker-src 'self'",
     "style-src 'self'",
-    `connect-src 'self' ${new URL(config.rpcUrl).origin} ${new URL(config.pepperUrl).origin}`,
+    `connect-src 'self' data: ${new URL(config.rpcUrl).origin} ${new URL(config.proverRpcUrl).origin} ${new URL(config.pepperUrl).origin}`,
     "base-uri 'none'",
     "form-action 'none'",
     "frame-ancestors 'none'",
@@ -93,6 +113,13 @@ Bun.serve({
   idleTimeout: 255, // a proof takes tens of seconds
   async fetch(request, server) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/prover/v1.0.1/')) {
+      if (!proverReady) return new Response('Pinned prover assets unavailable', { status: 503, headers: security });
+      // Exact manifest allow-list; no path traversal or directory listing.
+      const file = proverFiles.get(url.pathname);
+      if (!file || request.method !== 'GET') return new Response('not found', { status: 404 });
+      return new Response(file, { headers: { ...security, 'content-type': url.pathname.endsWith('.wasm') ? 'application/wasm' : /\.(mjs|js)$/.test(url.pathname) ? 'text/javascript' : 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=31536000, immutable' } });
+    }
     if (url.pathname === '/main.js') return respond(script, 'text/javascript');
     if (url.pathname === '/style.css') return respond(style, 'text/css');
     if (url.pathname === '/config.json') return respond(JSON.stringify(config), 'application/json');

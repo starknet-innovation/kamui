@@ -117,15 +117,17 @@ test.describe('signing in', () => {
     await expect(page.getByRole('heading', { name: 'Devices (1 of 5)' })).toBeVisible();
     await expect(page.getByText('this device', { exact: true })).toBeVisible();
 
-    // What the keychain sent out: a key proof to the pepper service, and one recover request
-    // carrying the pepper it got and the same key proof.
+    // What the keychain sent out: a key proof to the pepper service, and one relay request
+    // carrying only the completed proof and ownership authorization.
     expect(world.pepperRequests).toHaveLength(1);
     expect(world.recoverRequests).toHaveLength(1);
     const [pepperRequest] = world.pepperRequests;
     const [recover] = world.recoverRequests;
-    expect(recover).toMatchObject({ account: ACCOUNT, pepper: PEPPER, override: false });
+    expect(recover).toMatchObject({ account: ACCOUNT, override: false });
     expect(recover.newPubkey).toBe(pepperRequest.public_key);
-    expect(recover.keyProof).toEqual(pepperRequest.signature);
+    expect(recover).not.toHaveProperty('jwt');
+    expect(recover).not.toHaveProperty('pepper');
+    expect(recover).not.toHaveProperty('keyProof');
     expect(world.owners).toEqual([recover.newPubkey]);
     // The token and the fragment are gone from the address bar.
     expect(page.url()).toBe(`${KEYCHAIN}/`);
@@ -144,8 +146,8 @@ test.describe('signing in', () => {
     await page.getByRole('button', { name: 'Continue with Google' }).click();
     await expect(page.getByRole('heading', { name: 'Your account' })).toBeVisible({ timeout: 10_000 });
     expect(world.recoverRequests).toHaveLength(1);
-    expect(polls).toHaveLength(3);
-    for (const poll of polls) expect(poll).toEqual({ jobId: world.recoverRequests[0].jobId });
+    expect(polls.length).toBeGreaterThanOrEqual(3);
+    expect(polls.at(-1)).toEqual({ jobId: world.recoverRequests[0].jobId });
     expect(page.url()).not.toContain(world.recoverRequests[0].jobId);
   });
 
@@ -1005,7 +1007,7 @@ test.describe('signing in with a recovery file', () => {
 
     expect(world.pepperRequests).toHaveLength(0);
     expect(world.recoverRequests).toHaveLength(1);
-    expect(world.recoverRequests[0]).toMatchObject({ account: ACCOUNT, pepper: PEPPER, override: false });
+    expect(world.recoverRequests[0]).toMatchObject({ account: ACCOUNT, override: false });
     // The file is not kept anywhere once the sign-in is over.
     expect(await vaultKeys(page)).not.toContain('pending-pepper-file');
     expect(await page.evaluate(() => Object.keys(sessionStorage))).toEqual([]);
@@ -1171,7 +1173,7 @@ test.describe('signing in with Apple', () => {
 
     expect(world.pepperRequests).toHaveLength(1);
     expect(world.recoverRequests).toHaveLength(1);
-    expect(world.recoverRequests[0]).toMatchObject({ account: APPLE_ACCOUNT, pepper: PEPPER });
+    expect(world.recoverRequests[0]).toMatchObject({ account: APPLE_ACCOUNT });
     expect(world.recoverRequests[0].newPubkey).toBe(world.pepperRequests[0].public_key);
     // The token and the code are gone from the address bar.
     expect(page.url()).toBe(`${KEYCHAIN}/`);
@@ -1242,7 +1244,9 @@ test.describe('page security', () => {
       expect(policy).toContain("script-src 'self'");
       expect(policy).toContain("frame-ancestors 'none'");
       expect(policy).not.toContain('unsafe-inline');
-      expect(policy).not.toContain('unsafe-eval');
+      expect(policy).toContain("'wasm-unsafe-eval'");
+      expect(policy).toContain("worker-src 'self'");
+      expect(policy).not.toContain("'unsafe-eval'");
       expect(response.headers()['referrer-policy']).toBe('no-referrer');
     }
   });
@@ -1265,6 +1269,6 @@ test.describe('page security', () => {
     await signIn(page);
     // Its own origin (which includes the session registry, behind /api), the chain, the pepper
     // service and the issuer's sign-in page. No CDN.
-    expect([...origins].sort()).toEqual(['http://localhost:5183', 'http://localhost:5184', 'http://localhost:5185', 'https://accounts.google.com'].sort());
+    expect([...origins].sort()).toEqual(['http://localhost:5183', 'http://localhost:5184', 'http://localhost:5185', 'https://accounts.google.com', 'https://api.zan.top'].sort());
   });
 });

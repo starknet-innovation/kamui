@@ -12,6 +12,10 @@ The keychain accepts `KEYCHAIN_PUBLIC_ORIGIN=https://sepolia.kamui.page` and der
 
 Use the existing Google OAuth client if the test should keep its existing `aud` and account identities. Add the exact HTTPS callback to that client's authorized redirect URIs; retain the localhost callback while local testing is needed. The pepper service must allow the HTTPS origin in `ALLOWED_ORIGINS`. Its Google audience allow-list, the backend's authorized Google client ID and the on-chain audience configuration must continue to agree. A different OAuth client, pepper or account class derives a different account.
 
+The concrete AWS review package is [HOSTING_REVIEW.md](../infra/aws/terraform/HOSTING_REVIEW.md), with pending decisions and acceptance checks. It proposes reusing the backend ALB for a new keychain service and making the API private. The current templates do not yet implement that design.
+
+Client-side proving is the selected target. [CLIENT_PROVING.md](CLIENT_PROVING.md) describes the pinned Wasm release, browser requirements, proof-format migration and deployment authorization. Hosting must serve the complete versioned Worker/Wasm bundle and tested CSP/MIME/cache settings. The keychain now executes/proves locally and submits durable proof jobs, but an actual Kamui V2 JWT recovery is still unverified; public-origin configuration alone does not validate that path.
+
 ## Hosting and DNS sequence for the operators
 
 1. Review the hosting design with the AWS owner. The existing Terraform templates cover the backend and pepper, not public hosting of the keychain. Include the keychain build/serving path, HTTPS certificate, `/api` proxy, headers/CSP, public RPC configuration, secret handling, logs and deployment ownership in that review. The party serving the keychain can influence keys at sign-in; this is a security trust boundary.

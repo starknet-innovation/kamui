@@ -5,8 +5,8 @@
 //   2. authUrl           send the user to the issuer with that nonce
 //   3. parseLoginRedirect read the id_token that comes back and check state and nonce
 //   4. fetchPepper       ask the pepper service (with a key proof), or use a recovery file
-//   5. completeLogin     find the account; if this device is not an owner yet, have the backend
-//                        deploy the account if needed, prove the token and submit `recover`
+//   5. completeLogin     find the account; if this device is not an owner yet, use the supplied
+//                        recovery adapter (browser proving with browserRecoverBackend)
 //
 // The flow follows keep-starknet-strange/social-account's client (MIT), changed for Kamui: an
 // owner set instead of one key, a pepper, and no proof at all when the device already owns
@@ -167,13 +167,15 @@ export function pepperFromFile(file: PepperFile, claims: LoginClaims, chainId: s
   return { pepper: file.pepper, keyVersion: file.keyVersion };
 }
 
-/** What the SDK needs from the backend that proves the token and submits `recover`. */
+/** Private login input passed locally to the recovery adapter, not necessarily to an API. */
 export type RecoverRequest = {
   jwt: string;
   account: string;
   newPubkey: string;
   /** The new key's signature accepting ownership, bound to the account's owners anchor. */
   signature: [string, string];
+  /** Local signature anchor, checked again before browser proving; omitted by older callers. */
+  ownersAnchor?: string;
   blinding: string;
   pepper: string;
   /**
@@ -185,7 +187,7 @@ export type RecoverRequest = {
 };
 
 export interface RecoverBackend {
-  /** Deploys the account if needed, proves the token, submits `recover`. */
+  /** Deploys if needed, generates a proof and submits recovery using the chosen adapter. */
   recover(request: RecoverRequest): Promise<{ transaction_hash: string }>;
 }
 
@@ -196,11 +198,12 @@ export type RecoveryPollingOptions = {
 };
 
 /** Submit once, then poll. Lost submissions are retried with the same random job capability. */
-export function httpRecoverBackend(
+export function httpRecoverBackend<T = RecoverRequest>(
   apiUrl: string,
   send: Fetch = (url, init) => fetch(url, init),
   options: RecoveryPollingOptions = {},
-): RecoverBackend {
+  submissionPath: '/recover' | '/relay' | '/deploy/authenticated' = '/recover',
+): { recover(request: T): Promise<{ transaction_hash: string }> } {
   const base = apiUrl.replace(/\/$/, '');
   const interval = options.pollIntervalMs ?? 2000;
   const timeout = options.timeoutMs ?? 20 * 60_000;
@@ -256,7 +259,7 @@ export function httpRecoverBackend(
       };
       for (let attempt = 0; ; attempt++) {
         let reply;
-        try { reply = await post('/recover', { ...request, jobId }); }
+        try { reply = await post(submissionPath, { ...request, jobId }); }
         catch {
           if (attempt >= 2) throw new Error('recover API: submission unavailable; recovery may still complete');
           await pause(); continue;
@@ -304,7 +307,7 @@ export type LoginResult = {
  * Step 5: makes this device an owner of the user's account, if it is not one already.
  *
  * A returning device costs two reads and no proof. A new device (or a first login) costs a
- * proof: the backend deploys the account if needed, proves the token and submits `recover`,
+ * proof: the recovery adapter deploys if needed, proves the token and submits `recover`,
  * which adds the device key. If the account already has the maximum number of owners, the
  * oldest key is replaced.
  */
@@ -345,6 +348,7 @@ export async function completeLogin(args: {
     account,
     newPubkey: args.device.publicKey,
     signature: signNewOwner(account, anchor, args.device.privateKey),
+    ownersAnchor: anchor,
     blinding: args.attempt.blinding,
     pepper: args.pepper.pepper,
     keyProof: keyProof(args.attempt, args.device).signature,

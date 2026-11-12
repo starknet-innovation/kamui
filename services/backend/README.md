@@ -1,6 +1,6 @@
 # Kamui backend
 
-The services behind a login: the recover API, the prover it calls, the rotator that keeps the on-chain key registry in step with Google and Apple, and the watcher that checks the rotator's work. The api also sponsors transactions and keeps the session registry.
+The services behind a login: the API that authenticates deployments and relays browser-generated proofs, the rotator that keeps the on-chain key registry in step with Google and Apple, and the watcher that checks the rotator's work. The api also sponsors transactions and keeps the session registry.
 
 It started as upstream's backend (keep-starknet-strange/social-account, MIT). The Kamui changes are listed in `THIRD_PARTY.md`. It has had one audit pass (findings #2, #3 and #4 are fixed here) and is not production-ready: see "Not done".
 
@@ -8,15 +8,16 @@ It started as upstream's backend (keep-starknet-strange/social-account, MIT). Th
 
 | Part | What it does |
 |---|---|
-| `POST /recover` | Accepts a random client-generated `jobId`, authenticates the request, and returns 202 with `{ jobId }`. The job verifies the login token, confirms the pepper with the pepper service, deploys the account if needed, has the prover prove `prove_jwt`, and submits `recover` from the relayer. This is the path the SDK's `completeLogin` uses. |
+| `POST /recover` | Disabled on the public API: `410 CLIENT_PROVING_REQUIRED`. Historical server-proving code remains for regression tests only. |
 | `POST /recover/status` | Takes `{ jobId }` and returns a running job, its successful result, or its terminal error. |
-| `POST /relay` | Submits `recover` with a proof the browser made. The token never reaches this backend. |
-| `POST /deploy` | Relayer-paid deployment for browser proving. Disabled when a pepper service is configured, because there is no token to confirm a pepper with. |
+| `POST /relay` | Takes a client-generated `jobId` and completed pinned V2 proof, validates recovery bindings, and returns `202 { jobId }`. A durable job journals the paid recovery before broadcast. No JWT or pepper is sent to this route. |
+| `POST /deploy/authenticated` | Authenticates the token and device nonce, derives the account and confirms the pepper before a capped paid deployment; returns a polled durable job. No server proving. |
+| `POST /deploy` | Legacy unauthenticated deployment is disabled: `410 AUTHENTICATED_DEPLOYMENT_REQUIRED`. |
 | `POST /sponsor` | The relayer pays for an `execute_from_outside_v2` call on a Kamui account, out of a budget. The default development relayer, or the optional AVNU transport (Sepolia only; see `PAYMASTER.md`). |
 | `POST /registry/sessions`, `/list`, `/remove` | The session registry: which sessions an account approved, and for which site. |
 | `GET /health/api`, `/health/prover`, `/health/rotator`, `/live` | Health. `/live` depends on nothing. |
 | `GET /metrics` | Prometheus text, on its own port (9464). |
-| Prover | The SNIP-36 prover, in Docker. One proof at a time; see the memory note in `compose.yml`. |
+| Prover | Runs only in the keychain browser. The old Docker service is an opt-in historical Compose profile, not an API dependency. |
 | Rotator | Copies the issuers' current signing keys into the on-chain registry. |
 | Watcher | Checks every key written to the registry against the issuer's published keys, and alerts. |
 
@@ -24,7 +25,7 @@ Request errors are a non-2xx status with `{ "error": "CODE" }`. Once a recovery 
 
 ## The pepper
 
-When `PEPPER_SERVICE_URL` is set and a request would deploy a new account, `/recover` first asks the pepper service for the pepper of the request's token, using the key proof the client sends (`keyProof`), and refuses unless it equals the pepper the client sent. Nothing is deployed or proven before that.
+When `PEPPER_SERVICE_URL` is set and a request would deploy a new account, `/deploy/authenticated` first asks the pepper service for the pepper of the request's token, using the key proof the client sends (`keyProof`), and refuses unless it equals the pepper the client sent. Nothing is deployed before that. The server never proves the token.
 
 - **Only before a deployment.** An account that already exists is not confirmed with the pepper service: its address was derived from that very pepper, and `prove_jwt` checks the identity again on chain. This is what lets a user sign in from a recovery file when the pepper service is unavailable or lost.
 - On mainnet the service is mandatory and pepper 0 is always refused, for new and existing accounts. The api does not start on mainnet without `PEPPER_SERVICE_URL`.
@@ -39,33 +40,33 @@ Every POST route goes through the same wrapper (`src/services/api/app.ts`):
 
 1. **Rate limits**, before the body is read: attempts per minute per client, then for everyone. Defaults: recover 6 / 60, poll 120 / 6000, relay 10 / 120, deploy 6 / 60, sponsor 30 / 600, registry 60 / 1200 (`RATE_LIMITS`). A refusal is `429 RATE_LIMITED`. These bound attempts; the hourly caps and budgets behind them bound spending.
 2. **The handler**, which checks everything it can from the request alone before calling anything.
-3. **Deadlines** on every outbound call: issuer keys 5 s, pepper service 10 s, each RPC request 30 s (`RPC_TIMEOUT_MS`), a proof 10 min (`PROVER_TIMEOUT_MS`), health probes 3 s.
+3. **Deadlines** on every outbound call: issuer keys 5 s, pepper service 10 s, each RPC request 30 s (`RPC_TIMEOUT_MS`), health probes 3 s.
 
 The limiter is one interface (`src/limiter.ts`) with an in-process implementation. With more than one api process, implement it over a shared store.
 
 **The client** is the socket's peer unless `TRUSTED_PROXY_HOPS` says how many of our own proxies are in front; then it is that many entries from the right of `X-Forwarded-For`. The keychain's `/api` proxy and any load balancer must append the address they saw, or every user shares one bucket.
 
-### `/recover` (audit finding #3)
+### Deployment authentication (audit finding #3)
 
-- The token's issuer, audience, expiry and nonce are checked first, with no outbound call.
-- The issuer's keys come from a cache (`JwksCache`): fetched at most once per 5 minutes per issuer, concurrent misses share one fetch, and a token naming a key id that is not in the cache forces a refresh at most once a minute. So a rotated key works within a minute of the first token signed with it, five minutes at worst. An issuer that does not answer is `502 JWKS_UNAVAILABLE` after 5 s, and is not asked again for 10 s. Expired keys are never used.
-- The prover runs `PROVER_CONCURRENCY` (1) proofs; `PROVER_QUEUE_MAX` (4) more wait, for at most `PROVER_QUEUE_WAIT_MS` (5 min). A queue already full is refused before deployment. A job waiting beyond the queue deadline fails with `PROVER_BUSY` (503); it may already have paid for deployment. One recovery per account runs at a time; another job for that account fails with `IN_PROGRESS` (409).
+The token's issuer, audience, expiry and device-bound nonce are checked before outbound calls. The issuer's keys come from `JwksCache`: at most one fetch per five minutes per issuer, shared concurrent misses, and bounded refreshes for unknown key IDs. Unavailable keys fail closed. A valid token does not bypass pepper confirmation, account-address derivation or deployment caps.
+
+An existing-account browser recovery skips deployment authentication and sends no JWT or pepper to the API. The pepper service still sees the token during normal lookup, unless the user signs in using a locally read recovery file. Client-side proving is not a claim that the token never leaves the browser.
 
 ### Recovery job protocol
 
-The SDK generates a random 31-byte `jobId` and sends it alongside the existing recovery request. After token authentication, `POST /recover` returns `202 { "jobId": "0x…" }` without waiting for deployment, proving or recovery. These operations continue if the client disconnects. Retrying an identical submission with the same ID joins that job; different content with the same ID is `409 JOB_CONFLICT`.
+The SDK generates a random 31-byte `jobId` and sends it with `POST /deploy/authenticated` or `POST /relay`. After admission, the API returns `202 { "jobId": "0x…" }` without waiting for the transaction. Submission work continues if the client disconnects; browser execution/proving is separate and stops if its page closes. Retrying an identical submission with the same ID joins that job; different content with the same ID is `409 JOB_CONFLICT`.
 
 `POST /recover/status` with `{ "jobId": "0x…" }` returns HTTP 200 with one of:
 
-- `{ "status": "running" }` (includes queueing, deployment, proving and relay).
-- `{ "status": "succeeded", "result": { "address": "0x…", "identity": "0x…", "transaction_hash": "0x…" } }` after the recovery transaction is confirmed.
+- `{ "status": "running" }` (deployment or relay, with reconciliation metadata when applicable).
+- `{ "status": "succeeded", "result": { "address": "0x…", "identity": "0x…", "transaction_hash": "0x…" } }` after the deployment or recovery transaction is accepted successfully.
 - `{ "status": "failed", "error": "CODE", "httpStatus": 502 }` (the status number reflects the failure; it is not always 502). Only the code is retained, not upstream error text.
 
 The ID is a bearer capability: generate it with a cryptographic RNG, send it only in POST bodies, and never log or put it in a URL. The status endpoint never accepts an account as a lookup key and needs no login token. Recovery responses use `Cache-Control: no-store`. Polling has its own `poll` rate bucket, default 120 attempts per client / 6000 globally per minute, so polling does not consume submission limits. `kamui_recovery_jobs_total` records accepted, succeeded, failed and capacity-refused jobs without identifiers.
 
-The job store is bounded to 32 active jobs and 1000 retained jobs total. Terminal jobs expire after 30 minutes and are pruned on access. Token authentication happens before a job takes a slot; existing proof queue limits and per-account locks still apply before paid work. Full job storage answers `503 RECOVERY_JOBS_FULL`. Unknown or expired jobs answer `404 RECOVERY_JOB_NOT_FOUND`.
+The job store is bounded to 32 active jobs and 1000 retained jobs total. Terminal jobs expire after 30 minutes and are pruned on access. Deployment token authentication happens before a job takes a slot. Relay shape/profile checks precede admission; chain/message checks happen inside the job before a paid send. Per-account locks apply across both operations. Full job storage answers `503 RECOVERY_JOBS_FULL`. Unknown or expired jobs answer `404 RECOVERY_JOB_NOT_FOUND`.
 
-**Single-process durable metadata.** The running API persists recovery results, account locks and transaction intents in SQLite (`RECOVERY_DB`, default `recovery.sqlite` beside `REGISTRY_DB`). It stores a hash of the polling capability and no JWT, pepper, signature, proof or signed transaction. Before broadcasting, it journals the signed transaction's deterministic hash, sender and nonce. A restart checks accepted receipts for that hash; pre-confirmed receipts keep the lock. Interrupted proving needs a fresh sign-in because its secrets are not saved. Uncertain submissions remain locked and are never automatically re-sent. See [RECOVERY-JOBS.md](RECOVERY-JOBS.md) for the operator runbook, finalized replacement resolution and remaining limits. Run exactly one API process, stop it before operator resolution, and persist the database volume. The SDK never automatically resubmits after polling begins.
+**Single-process durable metadata.** The running API persists recovery results, account locks and transaction intents in SQLite (`RECOVERY_DB`, default `recovery.sqlite` beside `REGISTRY_DB`). It stores a hash of the polling capability and no JWT, pepper, signature, proof or signed transaction. Before broadcasting, it journals the signed transaction's deterministic hash, sender and nonce. A restart checks accepted receipts for that hash; pre-confirmed receipts keep the lock. An interrupted pre-broadcast job needs a fresh sign-in/proof because its inputs are not saved. Browser proving never resumes from this database. Uncertain submissions remain locked and are never automatically re-sent. See [RECOVERY-JOBS.md](RECOVERY-JOBS.md) for the operator runbook, finalized replacement resolution and remaining limits. Run exactly one API process, stop it before operator resolution, and persist the database volume. The SDK never automatically resubmits after polling begins.
 
 This protocol replaces the old synchronous response; deploy the backend and SDK/keychain together.
 
@@ -114,22 +115,21 @@ Logs are one JSON object per line: `{ ts, level, event, ... }` (`src/log.ts`).
 
 ## Keys
 
-The relayer, prover-account and registry-owner keys are read through `SecretSource` (`src/secrets.ts`). The only implementation reads the environment. A managed secret store plugs in by implementing the interface and returning it from `secretSource`; a signer that never releases the key plugs in as a starknet.js `SignerInterface`. Both are described in that file. Neither is built.
+The relayer and registry-owner keys are read through `SecretSource` (`src/secrets.ts`). The only implementation reads the environment. A managed secret store plugs in by implementing the interface and returning it from `secretSource`; a signer that never releases the key plugs in as a starknet.js `SignerInterface`. Both are described in that file. Neither is built.
 
 ## Run
 
-Bun 1.2 or later, and Docker for the prover.
+Use the pinned Bun 1.4.4 binary described in the repository handoff. Docker is optional for the backend services; it is not needed for proving.
 
 ```sh
 bun install
 cp .env.example .env.local   # fill in the secrets; deployments.env (committed) holds public addresses only
-bun run service:prover       # Docker; needs about 20 GB for the VM, see compose.yml
 bun run service:api
 bun run service:rotator
 bun run service:watcher
 ```
 
-`deployments.env` points at upstream's registry and prover executor on Sepolia and at the Kamui class declared there on 2026-11-12. The RPC must serve storage proofs for about 100 blocks back; see `../../spikes/s1/README.md`.
+`deployments.env` points at upstream's registry and prover executor on Sepolia and at the Kamui class declared there on 2026-11-12. The browser RPC must serve the fixed-block state/proofs required by the Wasm executor; see `../../spikes/s1/README.md`.
 
 Set `CHAIN_ID` (for example `SN_SEPOLIA`) to let the api, rotator and watcher start while the RPC is down; they then check the node's chain in the background and stop if it differs.
 
@@ -141,17 +141,17 @@ The scripts under `src/scripts/` build the contracts with `scarb`. Put the pinne
 bun test
 ```
 
-151 backend tests in 15 files, using fakes for the chain, the issuers, the prover, the paymaster and the relayer. Recovery tests cover disconnected clients, idempotent submissions, bounded retention, polling retries and sanitized failures. Regression tests for the audit findings: `src/services/rotator/sync.test.ts` (#2), `src/jwk/jwks-cache.test.ts` and `src/services/recovery/recover.test.ts` (#3), `src/services/recovery/sponsor.test.ts` and `src/services/api/app.test.ts` (#4). The pepper and registry tests use the SDK's own client code, so both sides of each protocol are checked together.
+Backend regression tests use fakes for the chain, the issuers, the prover, the paymaster and the relayer. Recovery tests cover disconnected clients, idempotent submissions, bounded retention, polling retries and sanitized failures. Regression tests for the audit findings: `src/services/rotator/sync.test.ts` (#2), `src/jwk/jwks-cache.test.ts` and `src/services/recovery/recover.test.ts` (#3), `src/services/recovery/sponsor.test.ts` and `src/services/api/app.test.ts` (#4). The pepper and registry tests use the SDK's own client code, so both sides of each protocol are checked together.
 
 ## Not done
 
 - **Live runs.** This code ran on Sepolia on 2026-11-12 (`../../spikes/s1/results/RESULTS.md`, run 8): a deployment with the pepper confirmed, two proofs, sponsored session and owner calls, the session registry, and a recovery sign-in to an existing account without the pepper check. The rotator set the new registry's keys. Not exercised live: the budgets' refusals, the fee ceiling, the registry's replay refusal and the watcher against the new registry.
 - **Google-only live run 10:** revoke-all, removal of a stale device and recovery-file sign-in with pepper stopped passed on Sepolia; see `../../spikes/s1/results/run-10-device-session-recovery.md`.
-- **One api process is assumed.** The limiter, the sponsor ledger, the proof queue, the per-account locks and the issuer key cache are in process, and one relayer key means one nonce: a second api process needs shared implementations of the first two and nonce coordination (or its own relayer account).
+- **One api process is assumed.** The limiter, the sponsor ledger, the per-account locks and the issuer key cache are in process, and one relayer key means one nonce: a second api process needs shared implementations of the first two and nonce coordination (or its own relayer account).
 - **Recovery jobs and AVNU ran live** on Sepolia on 2026-11-12 (run 9): recovery after a dropped submission response, AVNU owner/session calls, scope/replay refusals and a budget refusal after a lost success response. No mainnet claim follows from this.
 - **Recovery metadata is durable; proof work is not.** Results and transaction intents survive restart on a retained database volume. Interrupted proving needs a fresh sign-in, unknown transaction intents stay locked, and reloading a keychain page does not resume polling. Sponsor budgets and rate limits still live in memory.
 - **The registry's replay check is per database.** It holds with one api process on one file, which is what is assumed above.
 - **Budgets** count transactions, not fees. There is a ceiling per transaction but no fee total per period, and no usage report per app.
 - **Keys** are still read from the environment.
-- **The prover** image is `:latest`, has no plain HTTP health route (the api's `/health/prover` sends it a JSON-RPC ping), and its real memory need is somewhere between 8 and 19.5 GB per proof.
+- **Client-side V2 acceptance.** The pinned Wasm integration and durable relay are prepared, but an actual Kamui `prove_jwt` browser proof and recovery have not yet passed live. Prior runs used the historical backend prover. See [CLIENT_PROVING.md](../../keychain/CLIENT_PROVING.md) for browser/resources/assets and remaining acceptance.
 - **Override recovery with a pepper** has not been exercised.

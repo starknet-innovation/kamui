@@ -43,7 +43,9 @@ With Google, or with Apple when the server has an Apple client id (`APPLE_CLIENT
 
 During the trip to the issuer the file is kept in the vault, encrypted like the device key, not in web storage. The tab only remembers that this sign-in uses a file. The file is taken out of the vault as soon as the user is back, before anything is checked, and is also removed by the next sign-in that starts and by "forget this device". If it is gone when the user comes back (another tab started a sign-in meanwhile), the sign-in stops and asks to start again.
 
-The SDK submits recovery as a job and polls its status, so a proof can outlive an HTTP connection. The client job ID stays in memory and polling retries transient connection failures. The backend persists results and transaction intents across restart, while interrupted proof work requires a fresh sign-in. Reloading the page does not resume polling. A timed-out sign-in may still complete on chain.
+A new-device sign-in executes and proves locally in dedicated Workers using the pinned `snip-36-prover-wasm` v1.0.1 V2 runtime. It requires a recent memory64-capable desktop Chromium and sufficient memory; there is no server fallback. Existing owners skip proving. See [CLIENT_PROVING.md](CLIENT_PROVING.md) for asset installation, browser limits, privacy boundaries and live run 11 validation. First deployment sends the token to `/deploy/authenticated` for identity/pepper verification; existing-account recovery sends only the finished proof and authorization to `/relay`.
+
+The SDK submits deployment/recovery transactions as jobs and polls their status, so a submitted transaction can outlive an HTTP connection. The client job ID stays in memory and polling retries transient connection failures. The backend persists results and transaction intents across restart. Closing the page during local proving requires a fresh sign-in; no witness or PIE is stored. Reloading the page does not resume polling. A timed-out sign-in may still complete on chain.
 
 ## Sessions
 
@@ -79,6 +81,7 @@ With the prover, the backend api and the pepper service running locally (see `..
 
 ```sh
 bun install
+bun scripts/prover-assets.ts # fetch and verify the pinned browser runtime
 bun run server.ts      # http://localhost:5173
 ```
 
@@ -87,7 +90,7 @@ bun run server.ts      # http://localhost:5173
 ## Tested
 
 - **The protocol,** its refusals and the app-side helpers: 23 tests in `../sdk/test/keychain.test.ts`.
-- **The pages and key storage, in three browsers:** 66 tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 198 runs in all. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
+- **The pages and key storage, in three browsers:** 73 UI tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 219 runs in all, plus an opt-in real Worker runtime test. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
   - sign-in with Google and with Apple, polling a slow recovery through a dropped connection, a remembered device, a stale sign-in page, a key removed elsewhere, an error from the issuer, and no Apple button without an Apple client id;
   - sign-in with a recovery file: the pepper service never contacted, the file a device downloads signing another device in, how the file is stored during the trip, and files refused for another user, network, class, application or issuer, or for not being a recovery file;
   - how the key is stored, and forgetting the device;
@@ -98,7 +101,9 @@ bun run server.ts      # http://localhost:5173
 
 ```sh
 bun install
+bun scripts/prover-assets.ts # fetch and verify the pinned browser runtime
 ./node_modules/.bin/playwright install firefox webkit   # once; Chrome is the installed one
+bun scripts/prover-assets.ts                          # install pinned binaries first
 bun run test                                            # set BUN to the bun binary if `bun` on PATH is older than 1.2
 ./node_modules/.bin/playwright test --project=firefox   # one browser
 ```
@@ -107,7 +112,7 @@ The browser tests found three things, all fixed: a refused request stayed in the
 
 ### Browsers
 
-All 66 cases have passed in Chrome, Firefox and WebKit. In the latest full run, 197 of 198 browser checks passed and one Chrome browser/context closed during the slow-recovery test; that test passed on its isolated rerun. The points that could have differed did not: a `CryptoKey` that cannot be exported is stored in and read back from IndexedDB in all three, the app's origin arrives in `document.referrer` in all three with default settings, and the recovery file downloads in all three. The one change was in the fakes: WebKit cannot be handed a 302 as a faked answer, so the fake issuers answer with a page that navigates.
+Before the client-proving migration, all 66 cases passed in Chrome, Firefox and WebKit. The client-proving UI tests use a prover test double; they do not demonstrate that Firefox or WebKit can generate real memory64 proofs. The pre-migration run had one installed-Chrome context close during the slow-recovery test. Client-proving validation and reruns are recorded in [CLIENT_PROVING_VALIDATION.md](CLIENT_PROVING_VALIDATION.md). The points that could have differed did not: a `CryptoKey` that cannot be exported is stored in and read back from IndexedDB in all three, the app's origin arrives in `document.referrer` in all three with default settings, and the recovery file downloads in all three. The one change was in the fakes: WebKit cannot be handed a 302 as a faked answer, so the fake issuers answer with a page that navigates.
 
 What this does not show:
 
@@ -118,6 +123,8 @@ What this does not show:
 
 ## Not done
 
+- **Live client-side V2 JWT recovery.** The browser integration is prepared; prior live runs used the backend prover. First deployment, existing-account recovery, real browser memory/time and the complete hosted CSP/network boundary still need acceptance.
+
 - **Google-only live checks passed** on Sepolia: revoke-all, stale-device removal, and recovery-file sign-in with pepper stopped (`../spikes/s1/results/run-10-device-session-recovery.md`).
 - **Naturally elapsed Safari storage expiry**, private windows and mobile browsers (see Browsers above). Native Safari mechanics alone are not a production browser-support sign-off.
 - **Override recovery.** Apple is outside the current Google-only scope; its existing implementation remains unchanged.
@@ -127,4 +134,4 @@ What this does not show:
 - **The registry trusts the keychain's clock** to within five minutes. A device whose clock is further off cannot list or record sessions; the page then says the list could not be loaded.
 - **Embedded modes** (iframe with the Storage Access API, or popup) for apps that cannot afford a page reload.
 - **Reviewed hosting and a production build/domain.** `KEYCHAIN_PUBLIC_ORIGIN` can now pin an HTTPS callback, preserving localhost defaults. `kamui.page` is registered with Cloudflare DNS; the proposed `sepolia.kamui.page` is not deployed. The user kept the AWS-owner review path. See [PUBLIC_ORIGIN.md](PUBLIC_ORIGIN.md) for Google configuration and operator steps. Stored device keys are scoped to the origin; moving it requires a new-device sign-in.
-- **Sponsoring is the backend's development endpoint,** not a paymaster.
+- **Sponsorship** can use the development relayer or the optional separate AVNU transport. AVNU was tested on Sepolia; external fee/spending controls still need operator review (`../services/backend/PAYMASTER.md`).

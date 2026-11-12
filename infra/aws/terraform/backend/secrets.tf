@@ -3,14 +3,13 @@
 # appears in a .tf file, a variable, a plan or the Terraform state.
 #
 # Each service's execution role can read only the secrets listed for that service (main.tf):
-# the rotator cannot read the relayer key, the prover can read only the RPC URL.
+# the rotator cannot read the relayer key; no prover credential is required.
 
 locals {
   secrets = {
-    relayer-private-key        = "Relayer account private key: pays for deployments and recoveries. Read by the api."
-    prover-account-private-key = "Prover account private key: signs the virtual prove_jwt transaction. Never funded. Read by the api."
-    owner-private-key          = "Registry owner private key: signs key rotations. Read by the rotator."
-    rpc-url                    = "Starknet RPC URL. Kept as a secret because providers put an API key in it. Read by all three services."
+    relayer-private-key = "Relayer account private key: pays for deployments and recoveries. Read by the api."
+    owner-private-key   = "Registry owner private key: signs key rotations. Read by the rotator."
+    rpc-url             = "Starknet RPC URL. Kept as a secret because providers put an API key in it. Read by the API and rotator."
   }
 }
 

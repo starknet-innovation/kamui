@@ -1,6 +1,6 @@
-# The backend in the backend account: three Fargate services in private subnets.
+# The backend in the backend account: API and rotator services in private subnets.
 #
-#   internet --HTTPS--> load balancer --> api (3000) --+--> prover  (9900, api only)
+#   internet --HTTPS--> load balancer --> api (3000)
 #                                                      +--> rotator (3001, api only, /health)
 #
 # Outbound, through one NAT gateway: the Starknet RPC, the issuers' JWKS endpoints, the pepper
@@ -16,14 +16,14 @@ resource "aws_ecs_cluster" "this" {
   name = var.name
 }
 
-# Names that resolve only inside the VPC: prover.<internal_domain>, rotator.<internal_domain>.
+# Names that resolve only inside the VPC: rotator.<internal_domain>.
 resource "aws_service_discovery_private_dns_namespace" "internal" {
   name = var.internal_domain
   vpc  = module.network.vpc_id
 }
 
 resource "aws_ecr_repository" "this" {
-  for_each             = toset(["api", "rotator", "prover"])
+  for_each             = toset(["api", "rotator"])
   name                 = "${var.name}-${each.key}"
   image_tag_mutability = "IMMUTABLE"
 
@@ -34,7 +34,6 @@ resource "aws_ecr_repository" "this" {
 
 locals {
   egress_ports = concat([443], var.extra_egress_tcp_ports)
-  prover_url   = "http://prover.${var.internal_domain}:9900"
   rotator_url  = "http://rotator.${var.internal_domain}:3001"
   secret_arn   = { for k, s in aws_secretsmanager_secret.this : k => s.arn }
 }
@@ -72,8 +71,8 @@ module "api" {
 
   vpc_id     = module.network.vpc_id
   subnet_ids = module.network.private_subnet_ids
-  # 443 out (RPC, JWKS, pepper service, AWS APIs), plus the prover, the rotator and NFS inside.
-  egress_tcp_ports = concat(local.egress_ports, [9900, 3001, 2049])
+  # 443 out (RPC, JWKS, pepper service, AWS APIs), plus the rotator and NFS inside.
+  egress_tcp_ports = concat(local.egress_ports, [3001, 2049])
 
   attach_load_balancer = true
   target_group_arn     = module.alb.target_group_arn
@@ -95,8 +94,6 @@ module "api" {
   environment = merge({
     PORT                                 = "3000"
     RELAYER_ADDRESS                      = var.relayer_address
-    PROVER_ACCOUNT_ADDRESS               = var.prover_account_address
-    PROVER_URL                           = local.prover_url
     ROTATOR_URL                          = local.rotator_url
     AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID = var.google_recovery_client_id
     AUTHORIZED_APPLE_RECOVERY_CLIENT_ID  = var.apple_recovery_client_id
@@ -109,9 +106,8 @@ module "api" {
   # Injected by ECS at container start as environment variables, which is where the backend
   # reads them today (its `env` secret source). The task definition holds only the ARNs.
   secrets = {
-    RPC_URL                    = local.secret_arn["rpc-url"]
-    RELAYER_PRIVATE_KEY        = local.secret_arn["relayer-private-key"]
-    PROVER_ACCOUNT_PRIVATE_KEY = local.secret_arn["prover-account-private-key"]
+    RPC_URL             = local.secret_arn["rpc-url"]
+    RELAYER_PRIVATE_KEY = local.secret_arn["relayer-private-key"]
   }
 
   depends_on = [aws_efs_mount_target.registry]
@@ -172,58 +168,4 @@ resource "aws_vpc_security_group_ingress_rule" "api_to_rotator" {
   ip_protocol                  = "tcp"
   from_port                    = 3001
   to_port                      = 3001
-}
-
-# --- prover: private, reachable by the api only --------------------------------------------
-#
-# Sized for memory: 8 vCPU and 24 GB by default (see variables.tf for the measurements). It
-# runs whether or not anyone is proving, so it is the cost of this account; set
-# prover_desired_count = 0 when the test deployment is idle.
-
-module "prover" {
-  source = "../modules/fargate-service"
-
-  name                  = "${var.name}-prover"
-  cluster_arn           = aws_ecs_cluster.this.arn
-  create_service        = var.deploy_services
-  desired_count         = var.prover_desired_count
-  image                 = "${aws_ecr_repository.this["prover"].repository_url}:${var.image_tags.prover}"
-  ecr_repository_arn    = aws_ecr_repository.this["prover"].arn
-  cpu                   = var.prover_cpu
-  memory                = var.prover_memory
-  cpu_architecture      = var.prover_cpu_architecture
-  ephemeral_storage_gib = var.prover_ephemeral_storage_gib
-  container_port        = 9900
-  log_retention_days    = var.log_retention_days
-
-  vpc_id     = module.network.vpc_id
-  subnet_ids = module.network.private_subnet_ids
-  # The prover fetches chain state from the RPC.
-  egress_tcp_ports = local.egress_ports
-
-  discovery_namespace_id = aws_service_discovery_private_dns_namespace.internal.id
-  discovery_name         = "prover"
-
-  # Never two of these at once: stop the old task before starting the new one.
-  deployment_minimum_healthy_percent = 0
-  deployment_maximum_percent         = 100
-
-  # PROVER_IP, PROVER_PORT and the two flags are set in the prover's Dockerfile.
-  environment = {
-    CHAIN_ID = var.prover_chain_id
-    RUST_LOG = var.prover_rust_log
-  }
-
-  secrets = {
-    RPC_URL = local.secret_arn["rpc-url"]
-  }
-}
-
-resource "aws_vpc_security_group_ingress_rule" "api_to_prover" {
-  security_group_id            = module.prover.security_group_id
-  description                  = "Proof requests from the api only"
-  referenced_security_group_id = module.api.security_group_id
-  ip_protocol                  = "tcp"
-  from_port                    = 9900
-  to_port                      = 9900
 }

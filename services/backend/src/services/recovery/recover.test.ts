@@ -199,7 +199,7 @@ describe('recovery jobs over HTTP', () => {
       await gate;
       return { proof: Buffer.from('proof').toString('base64'), proof_facts: ['0x1'] };
     } });
-    const app = buildApp({ ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA' } as any);
+    const app = buildApp({ enableServerProving: true, ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA' } as any);
     const req = { ...request(await token()), jobId: '0x' + 'a'.repeat(62) };
     const controller = new AbortController();
     const post = (path: string, body: unknown) => app.handle(new Request(`http://api.test${path}`, {
@@ -231,7 +231,7 @@ describe('recovery jobs over HTTP', () => {
     const { buildApp } = await import('../api/app');
     const { httpRecoverBackend } = await import('../../../../../sdk/src/login');
     const { ctx, seen } = context({ prove: async () => { throw new Error('upstream JWT secret'); } });
-    const app = buildApp({ ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA' } as any);
+    const app = buildApp({ enableServerProving: true, ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA' } as any);
     const req = request(await token());
     const backend = httpRecoverBackend('http://api.test', (url, init) => app.handle(new Request(url, init)), { pollIntervalMs: 1 });
     await expect(backend.recover(req as any)).rejects.toThrow('recover API: INTERNAL');
@@ -260,7 +260,7 @@ test('durable HTTP jobs reconcile an accepted recovery after a lost broadcast re
     return signed;
   };
   (ctx.provider as any).invokeSignedTx = async () => { broadcasts++; throw Error('response lost after node acceptance'); };
-  let app = buildApp({ ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA', recoveryJobs: jobs } as any);
+  let app = buildApp({ enableServerProving: true, ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA', recoveryJobs: jobs } as any);
   const jobId = '0x' + 'b'.repeat(62);
   const post = (route: string, body: unknown) => app.handle(new Request(`http://api.test${route}`, { method: 'POST', body: JSON.stringify(body) }));
   try {
@@ -271,7 +271,7 @@ test('durable HTTP jobs reconcile an accepted recovery after a lost broadcast re
     jobs.close();
     jobs = new RecoveryJobs({ path });
     (ctx.provider as any).getTransactionReceipt = async (hash: string) => { expect(hash).toBe(preparedHash); return { execution_status: 'SUCCEEDED', finality_status: 'ACCEPTED_ON_L2' }; };
-    app = buildApp({ ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA', recoveryJobs: jobs } as any);
+    app = buildApp({ enableServerProving: true, ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA', recoveryJobs: jobs } as any);
     const status = await (await post('/recover/status', { jobId })).json();
     expect(status).toMatchObject({ status: 'succeeded', result: { transaction_hash: preparedHash } });
     expect(seen.proofs).toBe(1);

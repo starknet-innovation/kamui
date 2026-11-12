@@ -248,3 +248,17 @@ Not established: recovery jobs surviving an API restart (they do not), a first d
 The final account view showed three devices and no live sessions. The private recovery file is not an evidence artifact. This run used the already-running pre-durable API, so it does not establish restart behavior for the new journal. The current scope is Google only.
 
 Separately, [durable-reconciliation-2026-11-12.json](durable-reconciliation-2026-11-12.json) records an abrupt child-process exit after writing a synthetic intent, followed by SQLite reopening and reconciliation against run 10's existing live recovery receipt. The lock and terminal result persisted; this check sent no new transaction and did not simulate an actual live submission crash.
+
+## Client-side prover integration — offline, 12 November 2026
+
+The keychain now prepares execution and proves locally with pinned snip-36-prover-wasm v1.0.1 Workers, then submits to the durable V2 relay. The server-proving API is disabled in the public entrypoint. This is implementation validation, **not a new live Sepolia run**: no Google Kamui JWT proof or new chain transaction was made.
+
+The real public balance-capture test generated a 231,440-byte V2 proof in 71.01 s, with 3,203,596,288 bytes of Wasm linear memory in bundled Chromium. [Public measurements](client-proving-runtime-2026-11-12.json) and [validation limits](../../../keychain/CLIENT_PROVING_VALIDATION.md) distinguish the real Worker test from mocked UI checks and record installed-Chrome native crashes. Actual Kamui JWT compatibility, memory/time, first deployment and recovery receipts remain to be tested live.
+
+## Run 11: Google recovery with client-side V2 proving
+
+2026-11-12. Passed on the existing Sepolia account in headed bundled Chromium 153.0.8010.12. The browser executed the Google JWT recovery and generated a 231,792-byte V2 proof in 117.34 s (3,574,595,584 bytes Wasm linear memory), then submitted it through the durable relay. No server-proving or deployment route was called, and the relay request contained no JWT or pepper.
+
+Recovery transaction `0x1c0f98c6d9d61d6ffde317cb256ef69a57f22b29cfa459321320dd390abe207` succeeded at block 18,036,204. The new device is an owner; owners 3 → 4, all prior keys retained, epoch 6 → 7, class unchanged. Actual fee: 1.935060442125421920 test STRK. Reload required no new proof/submission and the signed registry-list request succeeded.
+
+[Run details](run-11-client-proving.md) and [public evidence](run-11-client-proving.json) record the browser/profile failures before the successful single-tab retry and the remaining scope. First deployment, recovery-file outage and live restart/lost-response tests with V2 are still pending. No cloud deployment, commit or push was made.

@@ -1,5 +1,5 @@
 output "ecr_repository_urls" {
-  description = "Push the three images here."
+  description = "Push the API and rotator images here."
   value       = { for k, r in aws_ecr_repository.this : k => r.repository_url }
 }
 
@@ -22,10 +22,9 @@ output "log_groups" {
   value = {
     api     = module.api.log_group_name
     rotator = module.rotator.log_group_name
-    prover  = module.prover.log_group_name
   }
 }
 
 output "internal_urls" {
-  value = { prover = local.prover_url, rotator = local.rotator_url }
+  value = { rotator = local.rotator_url }
 }

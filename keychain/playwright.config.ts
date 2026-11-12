@@ -19,21 +19,23 @@ export default defineConfig({
   timeout: 30_000,
   reporter: [['list']],
   use: {
-    baseURL: 'http://localhost:5183',
+    baseURL: process.env.KAMUI_TEST_EXTERNAL_ORIGIN ?? 'http://localhost:5183',
     headless: true,
   },
   projects: [
     // The installed Chrome, so nothing has to be downloaded for it.
-    { name: 'chrome', use: { ...devices['Desktop Chrome'], channel: 'chrome' } },
+    { name: 'chrome', use: { ...devices['Desktop Chrome'], ...(process.env.KAMUI_TEST_BUNDLED_CHROMIUM ? {} : { channel: 'chrome' }), launchOptions: { env: { PATH: process.env.PATH!, HOME: process.env.HOME!, LANG: 'C.UTF-8' } } } },
     { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
-  webServer: {
+  webServer: process.env.KAMUI_TEST_EXTERNAL_ORIGIN ? undefined : {
     command: `${BUN} run server.ts`,
     url: 'http://localhost:5183/config.json',
     reuseExistingServer: false,
     env: {
       PORT: '5183',
+      PROVER_EXECUTOR_ADDRESS: '0x123',
+      JWK_REGISTRY_ADDRESS: '0x456',
       GOOGLE_CLIENT_ID: 'test-client',
       APPLE_CLIENT_ID: 'test-apple-client',
       RPC_URL: 'http://localhost:5184',

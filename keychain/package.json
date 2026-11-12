@@ -5,10 +5,12 @@
   "scripts": {
     "start": "bun run server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "playwright test"
+    "test": "playwright test",
+    "prover:assets": "bun scripts/prover-assets.ts"
   },
   "dependencies": {
-    "starknet": "10.8.0"
+    "starknet": "10.8.0",
+    "garaga": "1.1.0"
   },
   "devDependencies": {
     "@playwright/test": "1.65.0",

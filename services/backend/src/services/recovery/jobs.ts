@@ -14,12 +14,15 @@ export type RecoveryStatus =
   | { status: 'running'; phase?: 'reconciling'; transaction_hash?: string }
   | { status: 'succeeded'; result: RecoverResult }
   | { status: 'failed'; error: string; httpStatus: number; transaction_hash?: string };
-export type TransactionIntent = RecoverResult & { kind: 'deploy' | 'recover'; sender_address?: string; nonce?: string };
+export type TransactionIntent = RecoverResult & { kind: 'deploy' | 'recover' | 'prepare'; sender_address?: string; nonce?: string };
 export type RecoveryJournal = { beforeSend(intent: TransactionIntent): void; deploymentConfirmed(): void };
 type Row = { id: string; fingerprint: string; account: string; state: string; finished_at: number | null; intent: string | null };
 export const recoveryDbPath = () => process.env.RECOVERY_DB || join(dirname(process.env.REGISTRY_DB || `${import.meta.dir}/../../../data/registry.sqlite`), 'recovery.sqlite');
 export const JOB_ID = /^0x[0-9a-f]{62}$/;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+
+export type JobRequest = RecoverRequest | { account: string; operation: 'relay' | 'deployment'; payload: unknown };
+const fingerprintOf = (r: JobRequest) => digest(JSON.stringify('operation' in r ? [r.operation, r.account, r.payload] : [r.jwt, r.account, r.newPubkey, r.blinding, r.pepper, r.signature, r.keyProof, r.override ?? false]));
 
 export class RecoveryJobs {
   private db: Database;
@@ -68,10 +71,19 @@ export class RecoveryJobs {
     if (this.db.query('SELECT 1 FROM recovery_jobs WHERE account = ? AND finished_at IS NULL').get(BigInt(account).toString(16))) throw new HttpError(409, 'IN_PROGRESS');
   }
 
-  submit(id: string, request: RecoverRequest, work: (journal?: RecoveryJournal) => Promise<RecoverResult>, failure: (e: unknown) => { status: number; error: string }): void {
+  /** Retry checks happen before authentication/chain reads, including after token expiry. */
+  hasSubmission(id: string, request: JobRequest): boolean {
+    this.prune();
+    const row = this.row(this.key(id));
+    if (!row) return false;
+    if (row.fingerprint !== fingerprintOf(request)) throw new HttpError(409, 'JOB_CONFLICT');
+    return true;
+  }
+
+  submit(id: string, request: JobRequest, work: (journal?: RecoveryJournal) => Promise<RecoverResult>, failure: (e: unknown) => { status: number; error: string }): void {
     const key = this.key(id);
     this.prune();
-    const fingerprint = digest(JSON.stringify([request.jwt, request.account, request.newPubkey, request.blinding, request.pepper, request.signature, request.keyProof, request.override ?? false]));
+    const fingerprint = fingerprintOf(request);
     const existing = this.row(key);
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new HttpError(409, 'JOB_CONFLICT');
@@ -139,7 +151,7 @@ export class RecoveryJobs {
         catch { return; } // Missing, pending or temporarily unavailable: keep the durable account lock.
         if (!('finality_status' in receipt) || !['ACCEPTED_ON_L2', 'ACCEPTED_ON_L1'].includes(receipt.finality_status)) return;
         if ('execution_status' in receipt && receipt.execution_status === 'SUCCEEDED') {
-          if (intent.kind === 'recover') {
+          if (intent.kind === 'recover' || intent.kind === 'prepare') {
             const result = { address: intent.address, identity: intent.identity, transaction_hash: intent.transaction_hash };
             this.finish(row.id, { status: 'succeeded', result });
           } else {

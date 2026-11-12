@@ -45,7 +45,7 @@ export async function journaledTransaction(
   call: Call,
   details: Parameters<Account['getSignedTransaction']>[1],
   journal: RecoveryJournal,
-  kind: 'deploy' | 'recover',
+  kind: 'deploy' | 'recover' | 'prepare',
   result: Omit<RecoverResult, 'transaction_hash'>,
 ): Promise<string> {
   return withRelayerLock(ctx.relayer, async () => {
