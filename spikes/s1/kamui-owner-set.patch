@@ -1,5 +1,5 @@
 diff --git a/backend/.env b/backend/.env
-index 5f41aaa..f32a281 100644
+index 5f41aaa..110e798 100644
 --- a/backend/.env
 +++ b/backend/.env
 @@ -2,6 +2,6 @@
@@ -7,7 +7,7 @@ index 5f41aaa..f32a281 100644
  SN_SEPOLIA_REGISTRY_ADDRESS=0x654508b46a551c5b3dd8425e0ec4f06af316d28c68500bb83f9b815ba3fb3db
  SN_SEPOLIA_REGISTRY_BLOCK=16518420
 -SOCIAL_ACCOUNT_CLASS_HASH=0x558d0559950cd4c089af122c3b1040e5f19ba0472a8632cba9f71d610d32c0d
-+SOCIAL_ACCOUNT_CLASS_HASH=0x6b3cd8dd5787fcef206ffd2362970bfac3973930b509d7de6fc1cb61fc07fdc
++SOCIAL_ACCOUNT_CLASS_HASH=0x13c5e8166199db99e894da9e55ce642267e5258c42eae8851357747b6201fdc
  
  PROVER_EXECUTOR_ADDRESS=0x44c921502db6c924a29f78256d72926060efa599cd13d97142efa192eaebd4c
 diff --git a/backend/src/services/recovery/relay.ts b/backend/src/services/recovery/relay.ts
@@ -24,14 +24,14 @@ index 54a9393..c480475 100644
  
      checkRelay(req, { head, classHash, identity, currentPubkey }, ctx);
 diff --git a/client/.env b/client/.env
-index 85bf38b..ff9890c 100644
+index 85bf38b..4b2a8bf 100644
 --- a/client/.env
 +++ b/client/.env
 @@ -1,4 +1,4 @@
  
  VITE_API_URL=http://localhost:3000
 -VITE_SOCIAL_ACCOUNT_CLASS_HASH=0x558d0559950cd4c089af122c3b1040e5f19ba0472a8632cba9f71d610d32c0d
-+VITE_SOCIAL_ACCOUNT_CLASS_HASH=0x6b3cd8dd5787fcef206ffd2362970bfac3973930b509d7de6fc1cb61fc07fdc
++VITE_SOCIAL_ACCOUNT_CLASS_HASH=0x13c5e8166199db99e894da9e55ce642267e5258c42eae8851357747b6201fdc
  VITE_PROVER_EXECUTOR_ADDRESS=0x44c921502db6c924a29f78256d72926060efa599cd13d97142efa192eaebd4c
 diff --git a/client/src/sdk/client.ts b/client/src/sdk/client.ts
 index ce48eed..b4bb077 100644

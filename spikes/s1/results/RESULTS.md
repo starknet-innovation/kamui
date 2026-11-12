@@ -95,3 +95,37 @@ Not covered by this run:
 - A negative check caveat: starknet.js skips `__validate__` when estimating fees unless told otherwise. The first attempt at the self-paid negative checks therefore reported "not refused"; with validation on, they are refused. An SDK must not rely on a default fee estimate to learn whether a session transaction is allowed.
 
 Scripts: `contracts/scripts/declare-sepolia.ts`, `sepolia-check.ts`, `sepolia-session.ts`.
+
+## Run 4: the final class on Sepolia, with owner changes and spending limits
+
+2026-11-12. Class `0x13c5e8166199db99e894da9e55ce642267e5258c42eae8851357747b6201fdc` (commit `ac8e8a8`, with the spending policy), declared in `0x4e9e5fa8a3bbfddcfd5f7dac15b6d08784d30f3072d6ca0564d85435b0767dc` for 64.25 test STRK. Same setup as run 3.
+
+Account: `0x222c6332e5b184b8b0ff1016ca6d7cb54a169221b65700cff35ff637e055b3e`. The address was computed before the login from the identity and the class hash, and matched.
+
+| Step | Result |
+|---|---|
+| Login: deploy, prove, recover | Works. Proof 33.4 s (231,117 bytes, 1.19M steps), about 58 s from request to usable account. |
+| Owner adds a second key (owner-signed outside execution, relayer pays) | Works. Session epoch moves. |
+| The second key approves a session scoped to two functions, with a spending policy of 100 per call and 150 per hour | Works. |
+| Session, sponsored: allowed call; spend 100 | Work. |
+| Session, sponsored: call outside its scope, nonce outside its range, owner management | Each refused with `Kamui: invalid session`. |
+| Session, sponsored: replay of a used nonce | Refused with `Kamui: duplicated nonce`. |
+| Session, sponsored: spend 101 | Refused with `Spending: over per-call limit`. |
+| Session, sponsored: spend 51 after 100 | Refused with `Spending: over window limit`. |
+| Session, self-paid: allowed call; spend 50, reaching 150 | Work. The account reports 150 spent in the window. |
+| Session, self-paid: spend 1 more | Refused with `Spending: over window limit`. |
+| Session, self-paid: call outside its scope, owner management | Each refused at validation. |
+| Owner removes the second key | Works. Session epoch moves. |
+| The session after the owner change | Refused with `Kamui: invalid session`. |
+| The removed key approving a session | Refused with `Kamui: invalid signature`. |
+
+New on a live network compared with run 3: `add_owner`, `remove_owner`, sessions dying on an owner change, and spending limits on both paths sharing one window.
+
+A finding for the SDK, the second of its kind:
+
+- A self-paid session transaction with a spending check ran out of gas on the first attempt (`Insufficient max L2Gas: max amount 1,465,051, actual used 2,072,908`). starknet.js estimates fees without running `__validate__` and without the real signature unless told otherwise. `__execute__` applies spending policies only when it sees a session signature, so the estimate skipped the spending check and came out about 30% low. The fee was charged, the transaction reverted, and the spent amount was not recorded, which is the intended behaviour for a failed transaction.
+- With `skipValidate: false` the same transaction went through. The SDK must always estimate session transactions that way.
+
+Not covered: a recovery on a full owner set, override recovery, and storage-write counts (no state diff in this RPC's traces).
+
+Leftover state: the first attempt added a throwaway second key before failing, and the script only removes the key it added on the rerun. The test account therefore still has two owners, the device key and that throwaway key, whose private key was never stored.
