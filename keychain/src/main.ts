@@ -117,6 +117,35 @@ function button(label: string, onClick: () => void | false | Promise<void | fals
   return node;
 }
 
+/**
+ * Asks the user to confirm, inside the page. Not `window.confirm`: embedded browsers and webviews
+ * often suppress native dialogs and answer "cancel" without showing anything, which made these
+ * buttons do nothing there. Shown under the button that asked; resolves when one is chosen.
+ */
+function ask(question: string, yes: string): Promise<boolean> {
+  const asker = document.activeElement instanceof HTMLButtonElement && view.contains(document.activeElement) ? document.activeElement : null;
+  const box = el('div', '', 'confirm');
+  box.setAttribute('role', 'alertdialog');
+  box.setAttribute('aria-label', 'Confirm');
+  const text = el('p', question);
+  text.id = 'confirm-question';
+  box.setAttribute('aria-describedby', text.id);
+  const accept = el('button', yes, 'primary');
+  const cancel = el('button', 'Cancel');
+  box.append(text, accept, cancel);
+  if (asker) asker.after(box);
+  else view.append(box);
+  cancel.focus();
+  return new Promise((resolve) => {
+    const answer = (value: boolean) => {
+      box.remove();
+      resolve(value);
+    };
+    accept.onclick = () => answer(true);
+    cancel.onclick = () => answer(false);
+  });
+}
+
 function table(headers: string[], rows: (string | Node)[][]): HTMLTableElement {
   const node = el('table');
   if (headers.length) {
@@ -750,7 +779,7 @@ async function sessionsSection(device: KeyPair, record: AccountRecord, reader: K
 
   nodes.push(
     button('Revoke all sessions', async () => {
-      if (!confirm('Revoke every session on your account? Each site will have to ask you again.')) return false;
+      if (!(await ask('Revoke every session on your account? Each site will have to ask you again.', 'Yes, revoke all'))) return false;
       status('Revoking every session…');
       await sendAsOwner(device, record, [revokeAllSessionsCall(record.account)]);
       await saveUnrecordedSessions([]).catch(() => {});
@@ -775,7 +804,7 @@ async function showHome(device: KeyPair, record: AccountRecord) {
     const action = mine || owners.length === 1
       ? el('span', mine ? 'this device' : '', 'note')
       : button('Remove', async () => {
-          if (!confirm('Remove this device key? Every session on your account will end.')) return false;
+          if (!(await ask('Remove this device key? Every session on your account will end.', 'Yes, remove it'))) return false;
           status('Removing the key…');
           await sendAsOwner(device, record, [removeOwnerCall(record.account, owner)]);
           status('');
@@ -802,7 +831,7 @@ async function showHome(device: KeyPair, record: AccountRecord) {
     }),
     el('h2', 'This device'),
     button('Forget this device', async () => {
-      if (!confirm('Forget the key on this device? Its key stays on your account until you remove it from another device.')) return false;
+      if (!(await ask('Forget the key on this device? Its key stays on your account until you remove it from another device.', 'Yes, forget it'))) return false;
       await forget();
       await resume();
     }),

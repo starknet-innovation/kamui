@@ -97,6 +97,13 @@ async function vaultKeys(page: Page): Promise<string[]> {
   });
 }
 
+/** Answers the page's own confirmation. The keychain does not use native dialogs. */
+async function answer(page: Page, yes: boolean) {
+  const box = page.getByRole('alertdialog');
+  await box.getByRole('button', { name: yes ? /^Yes/ : 'Cancel' }).click();
+  await expect(box).toHaveCount(0);
+}
+
 test.describe('signing in', () => {
   test('a new device signs in and lands on its account', async ({ page, context }) => {
     const world = await setup(context);
@@ -216,8 +223,15 @@ test.describe('key storage', () => {
   test('forgetting the device clears its key and account', async ({ page, context }) => {
     await setup(context);
     await signIn(page);
-    page.on('dialog', (dialog) => dialog.accept());
+    // Embedded browsers answer native dialogs with "cancel" unseen; the keychain must not use them.
+    const nativeDialogs: string[] = [];
+    page.on('dialog', (dialog) => {
+      nativeDialogs.push(dialog.type());
+      void dialog.dismiss();
+    });
     await page.getByRole('button', { name: 'Forget this device' }).click();
+    await answer(page, true);
+    expect(nativeDialogs).toEqual([]);
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
 
     const left = await page.evaluate(async () => {
@@ -557,8 +571,8 @@ test.describe('the account page', () => {
     // Only the other key can be removed from here.
     await expect(page.getByRole('button', { name: 'Remove' })).toHaveCount(1);
 
-    page.on('dialog', (dialog) => dialog.accept());
     await page.getByRole('button', { name: 'Remove' }).click();
+    await answer(page, true);
     await expect(page.getByRole('heading', { name: 'Devices (1 of 5)' })).toBeVisible();
 
     expect(world.sponsorRequests).toHaveLength(1);
@@ -573,8 +587,8 @@ test.describe('the account page', () => {
     await signIn(page);
     world.owners.unshift('0x123');
     await page.goto('/');
-    page.on('dialog', (dialog) => dialog.dismiss());
     await page.getByRole('button', { name: 'Remove' }).click();
+    await answer(page, false);
     await expect(page.getByRole('heading', { name: 'Devices (2 of 5)' })).toBeVisible();
     expect(world.sponsorRequests).toHaveLength(0);
     // The page is still usable.
@@ -809,15 +823,11 @@ test.describe('sessions', () => {
     await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
     await expect(page.getByText('Kamui could not load its list of your sessions')).toBeVisible();
 
-    const questions: string[] = [];
-    page.on('dialog', (dialog) => {
-      questions.push(dialog.message());
-      void dialog.accept();
-    });
     await page.getByRole('button', { name: 'Revoke all sessions' }).click();
+    await expect(page.getByRole('alertdialog')).toHaveText(/^Revoke every session on your account\? Each site will have to ask you again\./);
+    await answer(page, true);
     await expect.poll(() => world.sponsorRequests.length).toBe(1);
     await expect(page.getByRole('button', { name: 'Revoke all sessions' })).toBeEnabled();
-    expect(questions).toEqual(['Revoke every session on your account? Each site will have to ask you again.']);
 
     // One call to the account, with no arguments.
     expect(world.sponsorRequests[0]!.calls).toHaveLength(1);
@@ -837,8 +847,8 @@ test.describe('sessions', () => {
     await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
     world.sponsorRequests.length = 0;
 
-    page.on('dialog', (dialog) => void dialog.accept());
     await page.getByRole('button', { name: 'Revoke all sessions' }).click();
+    await answer(page, true);
     await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
     expect(world.sponsorRequests).toHaveLength(1);
     expect(world.sponsorRequests[0]!.calls.map((call) => call.selector)).toEqual([selectorOf('revoke_all_sessions')]);
@@ -851,8 +861,8 @@ test.describe('sessions', () => {
     await signIn(page);
     await connectAndReturn(page);
     world.sponsorRequests.length = 0;
-    page.on('dialog', (dialog) => void dialog.dismiss());
     await page.getByRole('button', { name: 'Revoke all sessions' }).click();
+    await answer(page, false);
     await expect(page.getByRole('button', { name: 'Revoke all sessions' })).toBeEnabled();
     await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
     expect(world.sponsorRequests).toHaveLength(0);
@@ -949,8 +959,8 @@ test.describe('sessions', () => {
     world.owners.unshift('0x5f513650a95ebc650404cfb1da39de4eba808aab4273f0c9a0d6d3bb09d3966');
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
-    page.on('dialog', (dialog) => void dialog.accept());
     await page.getByRole('button', { name: 'Remove' }).click();
+    await answer(page, true);
     await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
     await expect.poll(() => world.registry.size).toBe(0);
   });
@@ -1161,8 +1171,8 @@ test.describe('signing in with Apple', () => {
     expect(pepperFileMatchesLogin(file, APPLE_CLAIMS, CHAIN_ID)).toBe(true);
     expect(text).not.toContain(APPLE_CLAIMS.sub);
 
-    page.on('dialog', (dialog) => void dialog.accept());
     await page.getByRole('button', { name: 'Forget this device' }).click();
+    await answer(page, true);
     world.pepperRequests.length = 0;
     await page.locator('#recovery-file').setInputFiles({ name: 'kamui-recovery.json', mimeType: 'application/json', buffer: Buffer.from(text) });
     await expect(page.locator('#recovery-file-note')).toContainText('Recovery file for the account');
