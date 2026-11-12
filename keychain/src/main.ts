@@ -376,6 +376,7 @@ function showSignIn(reason = '') {
 
   nodes.push(
     el('p', 'Signing in on a new device adds a key for this device to your account. It takes about a minute, and it ends every session your apps have, on all your devices.', 'warn'),
+    el('p', 'Browser storage can disappear. Safari may clear it after inactivity; private browsing and clearing website data can also remove this device’s key. If a key is lost, you will need another sign-in. A recovery file replaces the account lookup; it does not restore the lost device key or keep sessions alive.', 'note'),
     button('Continue with Google', signIn('google'), true),
   );
   if (config.appleClientId) nodes.push(button('Continue with Apple', signIn('apple'), true));
@@ -821,6 +822,7 @@ async function showHome(device: KeyPair, record: AccountRecord) {
     el('p', 'Each device you sign in on has its own key. Removing one ends every session on your account.', 'note'),
     ...(await sessionsSection(device, record, reader)),
     el('h2', 'Recovery file'),
+    el('p', 'Keep this file outside the browser. Browser storage can be cleared, including by Safari after inactivity. Losing this device’s key requires another sign-in, which ends every session; a lost key may remain in the device list until you remove it.', 'warn'),
     el('p', 'Keep a copy. Together with your sign-in, it lets you reach your account even if Kamui\'s own lookup service is ever lost: choose the file on the sign-in page. Anyone who has the file can see which account is yours, but cannot use it.', 'note'),
     button('Download recovery file', () => {
       const link = document.createElement('a');

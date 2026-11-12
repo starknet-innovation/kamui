@@ -236,3 +236,15 @@ The recovery fault proxy dropped the accepted **submission** response, not an in
 After the run, the fault proxy was stopped, the temporary one-transaction budget removed, and the normal api, keychain and demo servers restarted. AVNU remains enabled through the user's gitignored local settings. The account has three owner keys and the test session remains live until its displayed expiry; the target counter is 11.
 
 Not established: recovery jobs surviving an API restart (they do not), a first deployment through the job protocol, a proof longer than 255 seconds, production availability, an enforceable external paymaster fee ceiling, or mainnet support. Local preflight bounds do not constrain AVNU's own relayer fees. Exact-version licensing and production spending controls still need the appropriate reviews.
+
+## Run 10: revoke-all, stale-device removal and Google recovery during a pepper outage
+
+2026-11-12. All three requested live checks passed on the account from runs 8 and 9. Full public evidence and receipts are in [run-10-device-session-recovery.md](run-10-device-session-recovery.md) and [run-10-device-session-recovery.json](run-10-device-session-recovery.json).
+
+- Revoke-all through AVNU: confirmed, epoch 3 → 4; the old session's data and public signature became invalid.
+- Remove the oldest stale device through AVNU: confirmed, owners 3 → 2 and epoch 4 → 5. Its already-public signature became invalid while the remaining device's signature stayed valid. The current key was preserved.
+- Export the private recovery file, forget the local device, stop pepper, and sign in with Google using the file: confirmed on the same account, owners 2 → 3 and epoch 5 → 6. Pepper's socket refused connections before and during proving and after the receipt was accepted. Pepper was then restored healthy.
+
+The final account view showed three devices and no live sessions. The private recovery file is not an evidence artifact. This run used the already-running pre-durable API, so it does not establish restart behavior for the new journal. The current scope is Google only.
+
+Separately, [durable-reconciliation-2026-11-12.json](durable-reconciliation-2026-11-12.json) records an abrupt child-process exit after writing a synthetic intent, followed by SQLite reopening and reconciliation against run 10's existing live recovery receipt. The lock and terminal result persisted; this check sent no new transaction and did not simulate an actual live submission crash.

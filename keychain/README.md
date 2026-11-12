@@ -43,7 +43,7 @@ With Google, or with Apple when the server has an Apple client id (`APPLE_CLIENT
 
 During the trip to the issuer the file is kept in the vault, encrypted like the device key, not in web storage. The tab only remembers that this sign-in uses a file. The file is taken out of the vault as soon as the user is back, before anything is checked, and is also removed by the next sign-in that starts and by "forget this device". If it is gone when the user comes back (another tab started a sign-in meanwhile), the sign-in stops and asks to start again.
 
-The SDK submits recovery as a job and polls its status, so a proof can outlive an HTTP connection. The job ID stays in memory and polling retries transient connection failures. Reloading the page does not resume polling; an API restart loses the job. A timed-out sign-in may still complete on chain.
+The SDK submits recovery as a job and polls its status, so a proof can outlive an HTTP connection. The client job ID stays in memory and polling retries transient connection failures. The backend persists results and transaction intents across restart, while interrupted proof work requires a fresh sign-in. Reloading the page does not resume polling. A timed-out sign-in may still complete on chain.
 
 ## Sessions
 
@@ -87,7 +87,7 @@ bun run server.ts      # http://localhost:5173
 ## Tested
 
 - **The protocol,** its refusals and the app-side helpers: 23 tests in `../sdk/test/keychain.test.ts`.
-- **The pages and key storage, in three browsers:** 64 tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 192 runs in all. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
+- **The pages and key storage, in three browsers:** 66 tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 198 runs in all. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
   - sign-in with Google and with Apple, polling a slow recovery through a dropped connection, a remembered device, a stale sign-in page, a key removed elsewhere, an error from the issuer, and no Apple button without an Apple client id;
   - sign-in with a recovery file: the pepper service never contacted, the file a device downloads signing another device in, how the file is stored during the trip, and files refused for another user, network, class, application or issuer, or for not being a recovery file;
   - how the key is stored, and forgetting the device;
@@ -107,25 +107,24 @@ The browser tests found three things, all fixed: a refused request stayed in the
 
 ### Browsers
 
-All 64 tests pass in Chrome, Firefox and WebKit with no change to the keychain. The points that could have differed did not: a `CryptoKey` that cannot be exported is stored in and read back from IndexedDB in all three, the app's origin arrives in `document.referrer` in all three with default settings, and the recovery file downloads in all three. The one change was in the fakes: WebKit cannot be handed a 302 as a faked answer, so the fake issuers answer with a page that navigates.
+All 66 cases have passed in Chrome, Firefox and WebKit. In the latest full run, 197 of 198 browser checks passed and one Chrome browser/context closed during the slow-recovery test; that test passed on its isolated rerun. The points that could have differed did not: a `CryptoKey` that cannot be exported is stored in and read back from IndexedDB in all three, the app's origin arrives in `document.referrer` in all three with default settings, and the recovery file downloads in all three. The one change was in the fakes: WebKit cannot be handed a 302 as a faked answer, so the fake issuers answer with a page that navigates.
 
 What this does not show:
 
-- **WebKit is not Safari.** Playwright's WebKit is the engine without Safari's own policies. In particular, Safari deletes a site's script-written storage, IndexedDB included, after seven days in which the user did not interact with the site. For the keychain that means the device key is gone and the next visit is a sign-in on a "new" device, which ends every session. This has not been tried and nothing here addresses it.
+- **WebKit is not Safari.** Safari's script-written storage policy counts seven days of Safari use without interaction with the site, not seven calendar days. Native Safari 27.2 vault reload/non-exportable key mechanics passed on an isolated loopback fixture; explicit storage-loss consequences passed against browser fakes. A naturally elapsed purge on a reviewed HTTPS origin is still pending. The sign-in/account pages warn about local key loss and keeping the pepper recovery file outside the browser. See [SAFARI_STORAGE.md](SAFARI_STORAGE.md) for evidence, limits and the follow-up procedure.
 - **Private windows** were not tried in any browser. Storage there is short-lived at best.
 - **Referrer settings.** A browser or an extension set to send no referrer makes every request look like it came from nowhere, and the keychain refuses it. This is by design, but the user is told only that the keychain "cannot tell which site sent this request".
 - **Mobile browsers** were not tried.
 
 ## Not done
 
-- **Removing a device and "Revoke all sessions"** are covered by the browser tests against fakes only. The session list, revocation, "forget this device", the recovery file and a sign-in from it ran on Sepolia (`../spikes/s1/results/RESULTS.md`, run 8).
-- **A sign-in from a recovery file with the pepper service actually down.** In run 8 the service was up but got no request, and the backend skipped its check because the account existed; stopping the service was not tried.
-- **Safari itself,** private windows and mobile browsers (see Browsers above).
-- **Apple against Apple** (see Signing in), and override recovery.
+- **Google-only live checks passed** on Sepolia: revoke-all, stale-device removal, and recovery-file sign-in with pepper stopped (`../spikes/s1/results/run-10-device-session-recovery.md`).
+- **Naturally elapsed Safari storage expiry**, private windows and mobile browsers (see Browsers above). Native Safari mechanics alone are not a production browser-support sign-off.
+- **Override recovery.** Apple is outside the current Google-only scope; its existing implementation remains unchanged.
 - **Only STRK and ETH are recognised by address.** Every other token, including well-known ones, is shown as unverified. The list is in `../sdk/src/tokens.ts` and needs an owner and a process before it grows.
 - **A single transaction is always sponsored.** There is no path for the account to pay its own fee from the keychain.
 - **Sessions the registry does not know.** A session approved while the registry was down shows only on the device that approved it until the record gets through, and a session whose record is lost shows nowhere. "Revoke all sessions" still ends them.
 - **The registry trusts the keychain's clock** to within five minutes. A device whose clock is further off cannot list or record sessions; the page then says the list could not be loaded.
 - **Embedded modes** (iframe with the Storage Access API, or popup) for apps that cannot afford a page reload.
-- **A production build and domain.** The domain can never change once accounts exist: the OAuth redirect and the stored keys are bound to it.
+- **Reviewed hosting and a production build/domain.** `KEYCHAIN_PUBLIC_ORIGIN` can now pin an HTTPS callback, preserving localhost defaults. `kamui.page` is registered with Cloudflare DNS; the proposed `sepolia.kamui.page` is not deployed. The user kept the AWS-owner review path. See [PUBLIC_ORIGIN.md](PUBLIC_ORIGIN.md) for Google configuration and operator steps. Stored device keys are scoped to the origin; moving it requires a new-device sign-in.
 - **Sponsoring is the backend's development endpoint,** not a paymaster.

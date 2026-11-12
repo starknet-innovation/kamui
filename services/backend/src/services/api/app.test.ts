@@ -1,7 +1,8 @@
 // Kamui: the routes together, driven as HTTP requests with fakes behind them: rate limits on
 // every route that does work, the error mapping, /metrics, and what the logs hold.
 import { describe, expect, test } from 'bun:test';
-import { RpcError } from 'starknet';
+import { RpcError, shortString } from 'starknet';
+import { RecoveryJobs } from '../recovery/jobs';
 import { JwksCache } from '../../jwk/verification';
 import { MemoryLimiter } from '../../limiter';
 import { setLogSink } from '../../log';
@@ -225,4 +226,25 @@ describe('metrics and logs', () => {
     expect((await get('/metrics', { authorization: 'Bearer wrong' })).status).toBe(401);
     expect((await get('/metrics', { authorization: 'Bearer scrape-me' })).status).toBe(200);
   });
+});
+
+
+test('an unresolved recovery blocks a shaped browser relay before any RPC or paid send, without hiding malformed input', async () => {
+  const jobs = new RecoveryJobs();
+  const request = { account: ACCOUNT, jwt: 'in-memory-test-token', newPubkey: '0x1', blinding: '0x2', pepper: '0x3', signature: ['0x1', '0x2'] };
+  jobs.submit('0x' + 'd'.repeat(62), request, () => new Promise(() => {}), () => ({ status: 500, error: 'INTERNAL' }));
+  const { post, seen } = app({ recoveryJobs: jobs });
+  const relay = { account: ACCOUNT, newPubkey: '0x1', signature: ['0x1', '0x2'], proof: 'AAAA', proofFacts: [
+    shortString.encodeShortString('PROOF1'), shortString.encodeShortString('VIRTUAL_SNOS'), '0x1',
+    shortString.encodeShortString('VIRTUAL_SNOS0'), '0x1', '0x2', '0x3', '0x1', '0x4',
+  ] };
+  try {
+    const { result } = await quietly(() => post('/relay', relay));
+    expect([result.status, await result.json()]).toEqual([409, { error: 'IN_PROGRESS' }]);
+    expect(seen.rpc).toBe(0);
+    expect(seen.sent).toBe(0);
+    const { result: invalid } = await quietly(() => post('/relay', { ...relay, proofFacts: [] }));
+    expect([invalid.status, await invalid.json()]).toEqual([400, { error: 'BAD_PROOF_FACTS' }]);
+    expect(seen.rpc).toBe(0);
+  } finally { jobs.close(); }
 });

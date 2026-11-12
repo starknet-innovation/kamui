@@ -245,7 +245,14 @@ export function httpRecoverBackend(
       };
       const retryable = (status: number) => [429, 502, 503, 504].includes(status);
       const fail = (answer: any, status: number): never => {
-        throw new Error(`recover API: ${typeof answer?.error === 'string' ? answer.error : status}`);
+        const code = typeof answer?.error === 'string' ? answer.error : String(status);
+        const advice: Record<string, string> = {
+          RECOVERY_INTERRUPTED: '; recovery was interrupted. Start a fresh sign-in to continue',
+          RECOVERY_SUPERSEDED: '; the recovery transaction was replaced. Start a fresh sign-in to continue',
+          RECOVERY_REVERTED: '; the recovery transaction reverted. Start a fresh sign-in to continue',
+          RECOVERY_JOB_NOT_FOUND: '; recovery may still have completed. Check account ownership before signing in again',
+        };
+        throw new Error(`recover API: ${code}${advice[code] ?? ''}`);
       };
       for (let attempt = 0; ; attempt++) {
         let reply;

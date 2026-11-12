@@ -7,10 +7,16 @@ import { metrics } from '../../metrics';
 import { accountAddress, deployCall, expectedNonce, extractIdentity } from '../../social-account';
 import { proveJwt, proveJwtCalldata, type Proof } from '../prover/prove';
 import type { ProofQueue } from '../prover/queue';
+import type { RecoveryJournal } from './jobs';
+import { journaledTransaction, withRelayerLock, waitForAcceptedTransaction } from './transaction';
 import { assertPepperShape, confirmPepper, type PepperSettings } from './pepper';
 
 export type RecoverContext = {
   provider: RpcProvider;
+  /** Durable paid-send intent journal; supplied only by the job executor. */
+  journal?: RecoveryJournal;
+  /** Prevent legacy routes from starting while a durable recovery is unresolved. */
+  assertRecoveryAvailable?: (account: string) => void;
   /** Funded. Deploys accounts and submits recover. */
   relayer: Account;
   /** The SNIP-36 prover and the unfunded account that signs its virtual transaction. */
@@ -91,11 +97,11 @@ export function precheckRecover(req: RecoverRequest, ctx: Pick<RecoverContext, '
 const recovering = new Set<string>();
 
 /** Authenticate before a job occupies retained storage; paid work runs only when invoked. */
-export async function prepareRecovery(req: RecoverRequest, ctx: RecoverContext): Promise<() => Promise<RecoverResult>> {
+export async function prepareRecovery(req: RecoverRequest, ctx: RecoverContext): Promise<(journal?: RecoveryJournal) => Promise<RecoverResult>> {
   const token = precheckRecover(req, ctx);
   const jwk = await verifyJwt(token, await ctx.jwks.keys(token.iss, token.kid));
   assertPepperShape(req.pepper, ctx.pepper);
-  return () => runRecovery(req, ctx, token, jwk);
+  return (journal) => runRecovery(req, journal ? { ...ctx, journal } : ctx, token, jwk);
 }
 
 export async function recoverAccount(req: RecoverRequest, ctx: RecoverContext): Promise<RecoverResult> {
@@ -132,10 +138,14 @@ async function runRecovery(req: RecoverRequest, ctx: RecoverContext, token: Jwt,
         // pepper, and `prove_jwt` checks the identity again on chain. That is also what lets a
         // user sign in from a recovery file when the pepper service is unavailable or lost.
         await confirmPepper(req, ctx.pepper);
-        const { transaction_hash } = await ctx.relayer.execute(deployCall(token.aud, identity, ctx.classHash));
+        const call = deployCall(token.aud, identity, ctx.classHash);
+        const transaction_hash = ctx.journal
+          ? await journaledTransaction(ctx, call, {}, ctx.journal, 'deploy', { address, identity })
+          : (await withRelayerLock(ctx.relayer, () => ctx.relayer.execute(call))).transaction_hash;
         metrics.relayerTransactions.inc({ kind: 'deploy' });
-        await ctx.provider.waitForTransaction(transaction_hash);
+        await waitForAcceptedTransaction(ctx.provider, transaction_hash);
         log('info', 'account_deployed', { account: address, tx: transaction_hash });
+        ctx.journal?.deploymentConfirmed();
       }
     }
 
@@ -145,7 +155,7 @@ async function runRecovery(req: RecoverRequest, ctx: RecoverContext, token: Jwt,
       calldata: proveJwtCalldata(req.jwt, token, jwk, req.newPubkey, req.blinding, req.pepper),
     };
     const { proof, proof_facts } = await ctx.proofs.run(() => timedProof(prove, ctx));
-    const transaction_hash = await relayRecover(address, req.newPubkey, req.signature, proof, proof_facts, ctx);
+    const transaction_hash = await relayRecover(address, req.newPubkey, req.signature, proof, proof_facts, ctx, { address, identity });
     log('info', req.override ? 'override_recovery_pending' : 'recovered', { account: address, tx: transaction_hash, proving: 'backend' });
     return { address, identity, transaction_hash };
   } finally {
@@ -181,22 +191,26 @@ export async function relayRecover(
   signature: string[],
   proof: string,
   proofFacts: string[],
-  ctx: Pick<RecoverContext, 'relayer' | 'provider'>,
+  ctx: Pick<RecoverContext, 'relayer' | 'provider' | 'journal'>,
+  result?: Omit<RecoverResult, 'transaction_hash'>,
 ): Promise<string> {
   // The gateway rejects a decoded proof above max_proof_size (480,000 bytes on 0.14.5).
   log('debug', 'proof_ready', { account: address, bytes: Buffer.from(proof, 'base64').length, facts: proofFacts.length });
   let transaction_hash: string;
   try {
-    ({ transaction_hash } = await ctx.relayer.execute(
-      { contractAddress: address, entrypoint: 'recover', calldata: CallData.compile([newPubkey, signature]) },
-      { proof, proofFacts },
-    ));
+    const call = { contractAddress: address, entrypoint: 'recover', calldata: CallData.compile([newPubkey, signature]) };
+    if (ctx.journal) {
+      if (!result) throw new Error('RECOVERY_JOURNAL_RESULT_REQUIRED');
+      transaction_hash = await journaledTransaction(ctx, call, { proof, proofFacts }, ctx.journal, 'recover', result);
+    } else {
+      ({ transaction_hash } = await withRelayerLock(ctx.relayer, () => ctx.relayer.execute(call, { proof, proofFacts })));
+    }
   } catch (e) {
     if (e instanceof RpcError) throw new HttpError(400, `REVERTED: ${revertReason(e)}`);
     throw e;
   }
   metrics.relayerTransactions.inc({ kind: 'recover' });
-  await ctx.provider.waitForTransaction(transaction_hash);
+  await waitForAcceptedTransaction(ctx.provider, transaction_hash);
   return transaction_hash;
 }
 

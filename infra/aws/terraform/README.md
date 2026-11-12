@@ -313,7 +313,7 @@ For the engineers who own them. None was changed.
 - **Configuration baked into the image.** `deployments.env` (registry address, class hash, executor address) is copied into the api and rotator images. A change of address is a new image, and one image cannot serve two chains. Environment variables win over the file, so `api_extra_environment` can override.
 - **`RPC_API_KEY`** is in `.env.example` but nothing reads it.
 - **SQLite on a shared volume** needs single-writer and no WAL, see above.
-- **Recovery jobs.** `/recover` now returns a job ID and the client polls `/recover/status`, so a proof can outlive an HTTP connection. Jobs remain in process: replacing the api loses their status, and replacing the prover can interrupt a proof. A durable queue and reconciliation with on-chain transactions are still needed before relying on recovery across deployments.
+- **Recovery jobs.** `/recover` now returns a job ID and the client polls `/recover/status`, so a proof can outlive an HTTP connection. Recovery metadata now persists in `recovery.sqlite` beside `REGISTRY_DB` on the same volume by default. The api journals transaction hashes before broadcasting and reconciles accepted receipts after restart. Replacing the prover can still interrupt a proof; its JWT/proof are not persisted, so a fresh sign-in is needed. Unknown submissions stay locked. Review the storage guarantees and operator procedure in `../../../services/backend/RECOVERY-JOBS.md` before relying on this across deployments.
 - **Relayer nonce.** One relayer key in one process is assumed. A second api task would need nonce coordination as well as a shared queue and registry.
 
 ## Not for production as is

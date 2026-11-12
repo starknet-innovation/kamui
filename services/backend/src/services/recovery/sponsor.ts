@@ -23,6 +23,7 @@ import { metrics } from '../../metrics';
 import type { SponsoredPaymaster } from '../sponsor/paymaster';
 import { budgetFor, type Budgets, type SponsorLedger } from '../sponsor/budgets';
 import { type RecoverContext } from './recover';
+import { withRelayerLock } from './transaction';
 
 export type SponsorRequest = { account: string; calldata: string[] };
 export type SponsorResult = { transaction_hash: string };
@@ -121,7 +122,7 @@ export async function sponsorOutsideExecution(body: SponsorRequest, appKey: stri
         await Promise.all([slot.commit(), accountSlot.commit()]);
         ({ transaction_hash } = await ctx.paymaster.execute(req.account, execution));
       } else {
-        ({ transaction_hash } = await ctx.relayer.execute(call, { resourceBounds: estimate.resourceBounds }));
+        ({ transaction_hash } = await withRelayerLock(ctx.relayer, () => ctx.relayer.execute(call, { resourceBounds: estimate.resourceBounds })));
       }
     } catch (e) {
       if (e instanceof RpcError) {

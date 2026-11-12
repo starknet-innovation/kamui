@@ -1,0 +1,18 @@
+{
+  "date": "2026-11-12",
+  "network": "SN_SEPOLIA",
+  "kind": "synthetic process-exit boundary reconciled against an existing live recovery receipt",
+  "transaction_hash": "0x4cfbc18ba3dec76a7a43ed22870c6b82d1893b2a448d03b29582812c566d97d",
+  "checks": {
+    "childExitedAfterDurableIntent": true,
+    "accountLockedAfterReopen": true,
+    "liveReceiptAccepted": true,
+    "resultRestored": true,
+    "resultSurvivesSecondReopen": true,
+    "newTransactionsSubmitted": 0
+  },
+  "limitations": [
+    "No new transaction was signed or broadcast by this check.",
+    "This does not simulate a live network crash during proof submission."
+  ]
+}

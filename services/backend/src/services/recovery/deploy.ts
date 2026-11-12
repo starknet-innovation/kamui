@@ -8,6 +8,7 @@ import { HOUR } from '../../limiter';
 import { log } from '../../log';
 import { metrics } from '../../metrics';
 import { HEX, isDeployed, type RecoverContext } from './recover';
+import { withRelayerLock } from './transaction';
 
 export type DeployRequest = { aud: string; identity: string };
 export type DeployResult = { address: string; transaction_hash: string | null };
@@ -23,10 +24,11 @@ export async function deployAccount(req: DeployRequest, ip: string, ctx: Recover
   // Kamui: this route has no token, so the pepper behind `identity` cannot be confirmed. With a
   // pepper service configured, deployments only happen through /recover.
   if (ctx.deploysPerHour === 0 || ctx.pepper.serviceUrl) throw new HttpError(403, 'DEPLOY_DISABLED');
+  ctx.assertRecoveryAvailable?.(address);
   if (!(await ctx.limiter.take(`deploy:${ip}`, DEPLOYS_PER_IP, HOUR))) throw new HttpError(429, 'RATE_LIMITED');
   if (!(await ctx.limiter.take('deploy', ctx.deploysPerHour, HOUR))) throw new HttpError(429, 'DEPLOY_CAP');
 
-  const { transaction_hash } = await ctx.relayer.execute(deployCall(req.aud, req.identity, ctx.classHash));
+  const { transaction_hash } = await withRelayerLock(ctx.relayer, () => ctx.relayer.execute(deployCall(req.aud, req.identity, ctx.classHash)));
   await ctx.provider.waitForTransaction(transaction_hash);
   metrics.relayerTransactions.inc({ kind: 'deploy' });
   // Kamui: the client address is not logged.

@@ -29,6 +29,7 @@ import { secretSource } from '../../secrets';
 import { PROVER_TIMEOUT_MS, proverHealth } from '../prover/prove';
 import { ProofQueue } from '../prover/queue';
 import { pepperSettings } from '../recovery/pepper';
+import { RecoveryJobs, recoveryDbPath } from '../recovery/jobs';
 import { type RecoverContext } from '../recovery/recover';
 import { RegistryStore } from '../registry/store';
 import { MemoryLedger, loadBudgets } from '../sponsor/budgets';
@@ -87,7 +88,17 @@ async function rotatorHealth(): Promise<unknown> {
   }
 }
 
+const recoveryJobs = new RecoveryJobs({
+  path: recoveryDbPath(),
+  binding: `${chainId}:${ctx.classHash}`,
+  journalMode: process.env.REGISTRY_JOURNAL_MODE || 'DELETE',
+});
+// Only orphaned metadata is reconciled. No JWT, pepper or proof is resumed from disk.
+void recoveryJobs.reconcile(provider).catch(() => log('error', 'recovery_reconciliation_failed'));
+setInterval(() => { void recoveryJobs.reconcile(provider).catch(() => log('error', 'recovery_reconciliation_failed')); }, 15_000).unref();
+
 const app = buildApp({
+  recoveryJobs,
   chain,
   ctx,
   sponsor: { ...ctx, budgets: loadBudgets(chain, { file: process.env.SPONSOR_BUDGETS_FILE, sponsoredPerHour: process.env.SPONSORED_PER_HOUR }), ledger, paymaster: paymasterFromEnvironment(chainId) },

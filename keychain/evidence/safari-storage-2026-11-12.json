@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-12",
+  "browser": "Native Safari",
+  "version": "27.2",
+  "origin": "http://127.0.0.1:5193/",
+  "data": "Fixed disposable non-secret marker, deliberately not a valid wallet key; encrypted through the actual Kamui vault",
+  "checks": {
+    "write": {"vaultMarkerRecovered": true, "wrappingKeyPresent": true, "wrappingKeyExtractable": false, "localMarkerPresent": true, "sessionMarkerPresent": true, "storagePersisted": false},
+    "reload": {"vaultMarkerRecovered": true, "wrappingKeyPresent": true, "wrappingKeyExtractable": false, "localMarkerPresent": true, "sessionMarkerPresent": true},
+    "explicitFixtureDeletion": {"vaultMarkerRecovered": false, "wrappingKeyPresent": false, "localMarkerPresent": false, "sessionMarkerPresent": false},
+    "freshWriteAfterDeletion": {"vaultMarkerRecovered": true, "wrappingKeyPresent": true, "wrappingKeyExtractable": false}
+  },
+  "baselineSeededAtUtc": "2026-11-12T14:14:31.365Z",
+  "probeTabClosedAfterSeeding": true,
+  "settingsChanged": false,
+  "persistenceRequested": false,
+  "naturallyElapsedItpPurgeObserved": false,
+  "limits": ["Loopback mechanics fixture, not a production HTTPS domain", "No seven-Safari-use-day wait", "Explicit deletion is a model, not ITP", "No real wallet or live chain was used in native Safari"]
+}

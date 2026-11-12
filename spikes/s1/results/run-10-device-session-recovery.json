@@ -1,0 +1,133 @@
+{
+  "date": "2026-11-12",
+  "network": "SN_SEPOLIA",
+  "issuersTested": [
+    "google"
+  ],
+  "account": "0x133739e82cd76b5a6446848ae0cbbbb8cc4762fbb8e0eb5ebc417209423e0e9",
+  "classHash": "0x1e128dae2cb709cac9263afa1c6fdb33f7f1f5c2d969547d9739326d08399f6",
+  "receipts": [
+    {
+      "kind": "revoke_all_sessions",
+      "transaction_hash": "0x6bfb71867f14880a0c1bfb6e4f5b40ab37e64cc9f7929a841112aca584016d",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18033175,
+      "actual_fee": {
+        "amount": "0xddb9c79303ea40",
+        "unit": "FRI"
+      }
+    },
+    {
+      "kind": "remove_stale_device",
+      "transaction_hash": "0xa57746f64450d1f3f623bc3e1fc9751f831abd5b9e4f9cc17093c0b32fccdd",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18033205,
+      "actual_fee": {
+        "amount": "0x10d23b858ddfcc0",
+        "unit": "FRI"
+      }
+    },
+    {
+      "kind": "recovery_file_pepper_down",
+      "transaction_hash": "0x4cfbc18ba3dec76a7a43ed22870c6b82d1893b2a448d03b29582812c566d97d",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18033445,
+      "actual_fee": {
+        "amount": "0x1a6e004d2314f6e0",
+        "unit": "FRI"
+      }
+    }
+  ],
+  "revokeAllSessions": {
+    "before": {
+      "ownerCount": 3,
+      "epoch": 3,
+      "listedSessions": 1
+    },
+    "after": {
+      "ownerCount": 3,
+      "epoch": 4,
+      "listedSessions": 0
+    },
+    "oldSessionPublicKey": "0x661e635df58df40f62e2fe74b18fdf1b1f8f57fc57f6e3cb8d7ed49a8a364",
+    "oldSessionData": [
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0"
+    ],
+    "previouslyAcceptedPublicSessionSignatureNowValid": false
+  },
+  "removeDevice": {
+    "removedPublicKey": "0xe422a5faf71be93a9860beb3744c21a65f0aa8f3886dbdafd5d03eebe5fa5b",
+    "remainingCurrentPublicKeyBeforeLocalForget": "0x286d5e0b438951010673a46b8344184a913d3e5f3b46b7a9b88d67fbd41b98b",
+    "before": {
+      "ownerCount": 3,
+      "epoch": 4
+    },
+    "after": {
+      "ownerCount": 2,
+      "epoch": 5
+    },
+    "removedIsOwner": false,
+    "remainingCurrentIsOwner": true,
+    "removedKeySignatureCheck": {
+      "signatureSourceTransaction": "0x6b70279e39edc95d27e77d01fa0e6b6b8cadd1cd5f347d30431705135ea11bd",
+      "publicKey": "0xe422a5faf71be93a9860beb3744c21a65f0aa8f3886dbdafd5d03eebe5fa5b",
+      "historicalBlock": 18030921,
+      "historicalSignatureResult": [
+        "0x56414c4944"
+      ],
+      "currentSignatureResult": [
+        "0x0"
+      ]
+    },
+    "remainingKeySignatureCheck": {
+      "signatureSourceTransaction": "0x2f83dce71cc1d58e31f5f31edeb6bff80d9475cb757706d51aca3d62dc7c0cd",
+      "publicKey": "0x286d5e0b438951010673a46b8344184a913d3e5f3b46b7a9b88d67fbd41b98b",
+      "currentSignatureResult": [
+        "0x56414c4944"
+      ]
+    }
+  },
+  "recoveryFileWithPepperDown": {
+    "exportedBeforeLocalForget": true,
+    "pepperHealthyBeforeStop": true,
+    "outageStart": {
+      "startedAt": "2026-11-12T14:15:36.336074+00:00",
+      "port8787ConnectionRefused": true
+    },
+    "proofObservedRunningWithPepperPortClosed": true,
+    "unavailableAfterConfirmedRecovery": {
+      "observedAt": "2026-11-12T14:22:36.811977+00:00",
+      "port8787ConnectionRefused": true,
+      "recoveryConfirmed": true
+    },
+    "restored": {
+      "restoredAt": "2026-11-12T14:23:05.632699+00:00",
+      "healthStatus": 200,
+      "body": {
+        "status": "ok"
+      }
+    },
+    "sameAccount": true,
+    "before": {
+      "ownerCount": 2,
+      "epoch": 5
+    },
+    "after": {
+      "ownerCount": 3,
+      "epoch": 6,
+      "currentPublicKey": "0x4f23d98a953d0ea2f132039a98a929769497c8b5e20112d6cd177e2aa6d7ea0",
+      "listedSessions": 0
+    }
+  },
+  "limitations": [
+    "The existing job-based API served this run; the new restart-safe journal was being implemented separately and was not crash-tested by these checks.",
+    "Owner removal was tested after revoke-all, with no remaining live session; its epoch change and removed-key rejection were verified independently.",
+    "Signature rejection checks used already-public on-chain signatures; no device private key was read or entered."
+  ]
+}

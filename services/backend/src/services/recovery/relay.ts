@@ -101,6 +101,7 @@ const inFlight = new Set<string>();
 export async function relayProof(body: RelayRequest, ip: string, ctx: RecoverContext): Promise<RelayResult> {
   // Validate the request
   const req = parseRelayRequest(body);
+  ctx.assertRecoveryAvailable?.(req.account);
   const head = await ctx.provider.getBlockNumber();
 
   // Avoid duplicate requests

@@ -1,0 +1,58 @@
+{
+  "source": "Sepolia run 9 public AVNU session ping",
+  "chainId": "0x534e5f5345504f4c4941",
+  "transaction_hash": "0x74b0c4fcd26701b4d0adea465332beef18749244099ddfc68cecbc6d77648e5",
+  "transaction": {
+    "account_deployment_data": [],
+    "calldata": [
+      "0x1",
+      "0x75a180e18e56da1b1cae181c92a288f586f5fe22c18df21cf97886f1e4b316c",
+      "0x3d82f059acd7c22528fe93d2cd7c941d47411bf7c5525efe7f71eedebd62647",
+      "0x12",
+      "0x133739e82cd76b5a6446848ae0cbbbb8cc4762fbb8e0eb5ebc417209423e0e9",
+      "0x34cc13b274446654ca3233ed2c1620d4c5d1d32fd20b47146a3371064bdc57d",
+      "0xd",
+      "0x414e595f43414c4c4552",
+      "0x243c9ef11dd6e1cc196c7845130a55671d1a8f257098b2d63165eb8a49d00cc",
+      "0x0",
+      "0x6af5e2e6",
+      "0x1",
+      "0x2f8ce9fcc5f6e165ab5dcccf865c4c08e7d752d6b930938195683eef9f43dfc",
+      "0x1541a5f22d1f8d9c088efa3474acd3d04f58894b42e4ffb4bc0dbb4c0b879c7",
+      "0x0",
+      "0x4",
+      "0x661e635df58df40f62e2fe74b18fdf1b1f8f57fc57f6e3cb8d7ed49a8a364",
+      "0x6ac83c723263b78685b29da3ba349a23f1fdd94ff1cae1c13a87141a3247a8",
+      "0x23836506ce4d2615e56e86d48444e46ddd27910304ed0c89bf31ae44d6c9d72",
+      "0x6af5e2e6",
+      "0x1",
+      "0x3a1b3d9917866deda93223c942d1849ebc6042d817405a1c0b77e4bb669520b"
+    ],
+    "fee_data_availability_mode": "L1",
+    "nonce": "0x19d3",
+    "nonce_data_availability_mode": "L1",
+    "paymaster_data": [],
+    "resource_bounds": {
+      "l1_data_gas": {
+        "max_amount": "0x270",
+        "max_price_per_unit": "0x145dd"
+      },
+      "l1_gas": {
+        "max_amount": "0x0",
+        "max_price_per_unit": "0x4bdf069a64cf"
+      },
+      "l2_gas": {
+        "max_amount": "0x493b90",
+        "max_price_per_unit": "0x8820638b8"
+      }
+    },
+    "sender_address": "0xb55e6e912d3c9b91b4d4fdd1b7303cae5b9110d64d1dd98a058eb842a9d894",
+    "signature": [
+      "0x3fa1787fa186b2f9cadcde641dcb021f4ed7b3d0f7bdc7051ea601de174bc3e",
+      "0x77aef522463103c537ca4d4182a86898a02b7e31e908bf219d113bd0bf51ad1"
+    ],
+    "tip": "0x5f5e100",
+    "type": "INVOKE",
+    "version": "0x3"
+  }
+}

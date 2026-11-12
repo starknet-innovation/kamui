@@ -4,6 +4,8 @@ Status: draft for hand-off, 2026-11-11. Written for an agent or engineer picking
 
 ## 1. Goal
 
+Current rollout scope, 2026-11-12: Google only. Existing Apple support is retained, with Apple setup and live testing deferred.
+
 Ship Kamui, a Controller-style embedded wallet for Starknet: social login, session keys, sponsored transactions, one iframe keychain shared by all apps. Built without any Cartridge code.
 
 **Out of scope for v1:** gaming features (achievements, marketplace, starter packs), fiat purchases, EVM-wallet owners, native mobile SDK.
@@ -122,6 +124,8 @@ Status 2026-11-12, paymaster integration: an opt-in SNIP-29 transport routes `/s
 
 Status 2026-11-12, live run 9: job recovery survived a dropped accepted submission response (same job on retry, one proof, one recovery); the managed AVNU service accepted owner session approval and four-element session pings. Scope and replay refusals passed, as did a budget refusal after a dropped successful gateway response. AVNU time bounds needed hex-string serialization, with message hashes unchanged. Receipts and limits are in `spikes/s1/results/RESULTS.md` and `run-9-recovery-jobs-avnu.json`. Restart-safe jobs and external fee controls remain open.
 
+Status 2026-11-12, durable recovery: SQLite now persists terminal results, hashed job capabilities, account locks and pre-broadcast transaction hash/sender/nonce intents. Restart reconciliation requires accepted receipts; interrupted proving needs a fresh sign-in because JWT/pepper/proof are not stored. Unknown intents stay locked; operator resolution requires a finalized replacement and a stopped API. A shared relayer mutex covers local API sends. This remains a single-writer design; budgets/rate limits are still in memory. The runbook is `services/backend/RECOVERY-JOBS.md`. Crash, hash, privacy and acceptance/revert tests cover these boundaries; a synthetic process-exit check reconciled an existing live Sepolia receipt without sending another transaction.
+
 ### Phase 3: SDK and connector
 
 Status 2026-11-12: started in `sdk/` (see its README). Done: address derivation, account reader, owner management, sessions with scopes and spending limits, sponsored calls, and a session account for self-paid transactions, and a pepper recovery file (export and import), with 19 unit tests, 7 devnet tests and a live check on Sepolia. The SDK refuses sessions with unlimited token access by default and always estimates session fees with validation on. The login flow was added the same day: nonce and blinding, the redirect answer, the pepper lookup with its key proof (checked against the real pepper service in process), and `recover` through the backend, skipped when the device already owns the account; 19 more tests. A login ran end to end on Sepolia the same day through `apps/login-demo`, with the pepper service on AWS KMS and the backend from the repo (`spikes/s1/results/RESULTS.md`, run 5). Not done: the wallet-standard connector (step 2). The app-side helpers for the keychain's redirect protocol are in `sdk/src/keychain.ts`.
@@ -140,6 +144,8 @@ Status 2026-11-12, later: the account page lists the account's sessions and revo
 2. Flows: login (Google, Apple), first-time proof with progress, session approval showing contracts, selectors, expiry, fee cap and spending limits, per-transaction approval, session list and revoke, recovery and override recovery with cancel, device list if D4 is (b).
 3. Key storage: device key encrypted at rest in the iframe origin; never exposed to the embedding app.
 4. Strict CSP, pinned dependencies, reviewed release process.
+
+Status 2026-11-12, parallel follow-up: run 10 passed revoke-all, stale-device removal and Google recovery-file sign-in with pepper continuously stopped through confirmation; it was restored afterward. Native Safari 27.2 vault mechanics passed on a benign loopback fixture and modeled total storage loss passed across Chrome/Firefox/WebKit. The naturally elapsed seven-Safari-use-day purge is still pending on a reviewed HTTPS origin, not demonstrated by the fixture. Sign-in/home now explain local key loss and keeping the pepper file outside the browser. `kamui.page` is registered with Cloudflare DNS; `sepolia.kamui.page` is only a proposed Sepolia origin. Configurable HTTPS callback plumbing is prepared, but hosting remains on the AWS-owner review path and no DNS/cloud change was made (`keychain/PUBLIC_ORIGIN.md`). Apple work is deferred by the user.
 
 ### Phase 5: audit and launch
 

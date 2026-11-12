@@ -48,7 +48,7 @@ function context(over: Partial<RecoverContext> = {}) {
     provider: {
       getClassHashAt: async () => (seen.rpc++, CLASS),
       callContract: async () => (seen.rpc++, ['0x1']),
-      waitForTransaction: async () => ({}),
+      waitForTransaction: async () => ({ execution_status: 'SUCCEEDED', finality_status: 'ACCEPTED_ON_L2' }),
     },
     relayer: { execute: async (call: unknown, details: unknown) => (seen.sent.push({ call, details }), { transaction_hash: '0xfeed' }) },
     prover: { account: {}, url: 'http://prover.test' },
@@ -237,4 +237,59 @@ describe('recovery jobs over HTTP', () => {
     await expect(backend.recover(req as any)).rejects.toThrow('recover API: INTERNAL');
     expect(seen.sent).toHaveLength(0);
   });
+});
+
+test('durable HTTP jobs reconcile an accepted recovery after a lost broadcast response without proving or sending again', async () => {
+  const { buildApp } = await import('../api/app');
+  const { RecoveryJobs } = await import('./jobs');
+  const { signedTransactionHash } = await import('./transaction');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { default: fixture } = await import('./fixtures/invoke-v3.json');
+  const directory = mkdtempSync(join(tmpdir(), 'kamui-durable-http-'));
+  const path = join(directory, 'jobs.sqlite');
+  let jobs = new RecoveryJobs({ path });
+  const { ctx, seen } = context();
+  let broadcasts = 0;
+  let preparedHash = '';
+  (ctx.provider as any).getChainId = async () => fixture.chainId;
+  (ctx.relayer as any).getSignedTransaction = async (_call: unknown, details: any) => {
+    const signed = { ...fixture.transaction, proof_facts: details.proofFacts };
+    preparedHash = signedTransactionHash(signed as any, fixture.chainId);
+    return signed;
+  };
+  (ctx.provider as any).invokeSignedTx = async () => { broadcasts++; throw Error('response lost after node acceptance'); };
+  let app = buildApp({ ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA', recoveryJobs: jobs } as any);
+  const jobId = '0x' + 'b'.repeat(62);
+  const post = (route: string, body: unknown) => app.handle(new Request(`http://api.test${route}`, { method: 'POST', body: JSON.stringify(body) }));
+  try {
+    expect((await post('/recover', { ...request(await token()), jobId })).status).toBe(202);
+    for (let i = 0; i < 100 && broadcasts === 0; i++) await new Promise((resolve) => setTimeout(resolve, 1));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(jobs.status(jobId)).toMatchObject({ status: 'running', phase: 'reconciling', transaction_hash: preparedHash });
+    jobs.close();
+    jobs = new RecoveryJobs({ path });
+    (ctx.provider as any).getTransactionReceipt = async (hash: string) => { expect(hash).toBe(preparedHash); return { execution_status: 'SUCCEEDED', finality_status: 'ACCEPTED_ON_L2' }; };
+    app = buildApp({ ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA', recoveryJobs: jobs } as any);
+    const status = await (await post('/recover/status', { jobId })).json();
+    expect(status).toMatchObject({ status: 'succeeded', result: { transaction_hash: preparedHash } });
+    expect(seen.proofs).toBe(1);
+    expect(broadcasts).toBe(1);
+  } finally { jobs.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('an accepted but reverted recovery receipt is never reported as successful', async () => {
+  const { ctx } = context();
+  (ctx.provider as any).waitForTransaction = async () => ({ execution_status: 'REVERTED', finality_status: 'ACCEPTED_ON_L2' });
+  expect(await status(recoverAccount(request(await token()), ctx))).toBe('400 RECOVERY_REVERTED');
+});
+
+test('an accepted but reverted deployment is rejected before proving or clearing its journal', async () => {
+  const { ctx, seen } = context();
+  (ctx.provider as any).getClassHashAt = async () => { throw new RpcError({ code: 20, message: 'Contract not found' } as any, 'starknet_getClassHashAt', {}); };
+  (ctx.provider as any).waitForTransaction = async () => ({ execution_status: 'REVERTED', finality_status: 'ACCEPTED_ON_L2' });
+  expect(await status(recoverAccount(request(await token()), ctx))).toBe('400 RECOVERY_REVERTED');
+  expect(seen.proofs).toBe(0);
+  expect(seen.sent).toHaveLength(1);
 });

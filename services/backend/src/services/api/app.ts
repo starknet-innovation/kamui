@@ -90,8 +90,8 @@ export const metricsResponse = () => new Response(renderMetrics(), { headers: { 
 const outcome = (status: number) => (status < 400 ? 'ok' : status === 429 ? 'rate_limited' : status < 500 ? 'rejected' : 'failed');
 
 export function buildApp(deps: AppDeps) {
-  const { ctx } = deps;
   const jobs = deps.recoveryJobs ?? new RecoveryJobs();
+  const ctx: RecoverContext = { ...deps.ctx, assertRecoveryAvailable: (account) => jobs.assertAccountAvailable(account) };
   const limits = deps.limits ?? DEFAULT_LIMITS;
   const hops = deps.trustedProxyHops ?? 0;
 
@@ -107,7 +107,7 @@ export function buildApp(deps: AppDeps) {
       });
       return { jobId: b.jobId };
     } },
-    '/recover/status': { limit: 'poll', fields: ['jobId'], handler: async (b) => jobs.status(b.jobId) },
+    '/recover/status': { limit: 'poll', fields: ['jobId'], handler: async (b) => { await jobs.reconcile(ctx.provider, b.jobId); return jobs.status(b.jobId); } },
     '/deploy': { limit: 'deploy', fields: ['aud', 'identity'], handler: (b: DeployRequest, client) => deployAccount(b, client, ctx) },
     '/relay': { limit: 'relay', fields: ['account', 'newPubkey', 'proof'], handler: (b: RelayRequest, client) => relayProof(b, client, ctx) },
     '/sponsor': { limit: 'sponsor', fields: ['account'], handler: (b: SponsorRequest, _client, req) => sponsorOutsideExecution(b, req.headers.get(APP_KEY_HEADER), deps.sponsor) },

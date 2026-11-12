@@ -8,6 +8,8 @@
 //   services/backend/.env.local       RPC_URL, AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID,
 //                                     AUTHORIZED_APPLE_RECOVERY_CLIENT_ID (optional)
 //   services/backend/deployments.env  KAMUI_ACCOUNT_CLASS_HASH
+import { keychainOrigin } from './server-config';
+
 const ROOT = `${import.meta.dir}/..`;
 
 async function envFile(path: string): Promise<Record<string, string>> {
@@ -29,6 +31,7 @@ const need = (value: string | undefined, name: string) => {
 
 const PORT = Number(process.env.PORT ?? 5173);
 const API = process.env.API_URL ?? 'http://localhost:3000';
+const { origin, redirectUri } = keychainOrigin({ port: PORT, publicOrigin: process.env.KEYCHAIN_PUBLIC_ORIGIN });
 // Public values only. The environment wins over the backend's files, which is how the browser
 // tests point the keychain at their own fakes.
 const config = {
@@ -39,7 +42,7 @@ const config = {
   classHash: need(process.env.KAMUI_ACCOUNT_CLASS_HASH ?? deployments.KAMUI_ACCOUNT_CLASS_HASH, 'KAMUI_ACCOUNT_CLASS_HASH'),
   pepperUrl: process.env.PEPPER_URL ?? 'http://localhost:8787',
   apiUrl: '/api',
-  redirectUri: `http://localhost:${PORT}/callback`,
+  redirectUri,
   // How often the page asks the chain whether a transaction has landed. starknet.js waits 5 s
   // before its first look by default, which is felt on every approval.
   pollMs: Number(process.env.POLL_MS ?? 2000),
@@ -106,4 +109,4 @@ Bun.serve({
     return new Response('not found', { status: 404 });
   },
 });
-console.log(`keychain on http://localhost:${PORT}`);
+console.log(`keychain on ${origin} (listening on port ${PORT})`);
