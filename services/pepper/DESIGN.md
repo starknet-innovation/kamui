@@ -349,13 +349,13 @@ What this changes in section 5:
 - **No restore drill.** There is nothing to restore from. Question 11's launch gate becomes: the guardrails below are in place and reviewed, and a failover to a replica Region has been exercised.
 - **The key cannot be moved.** "Move the same key to another provider" is no longer possible. Existing accounts depend on this AWS key for as long as they exist.
 - **The key check value still works.** It is one `GenerateMac` call on the fixed tag, recorded when the key is created, and compared at startup.
-- **The derivation is unchanged.** `GenerateMac` with `HMAC_SHA_256` computes the same function as the reference; the service still applies the 250-bit mask. The KMS-backed key holder is `src/kms.ts`, selected with `PEPPER_KEY_SOURCE=kms`. It is tested against a fake KMS client, not against AWS.
+- **The derivation is unchanged.** `GenerateMac` with `HMAC_SHA_256` computes the same function as the reference; the service still applies the 250-bit mask. The KMS-backed key holder is `src/kms.ts`, selected with `PEPPER_KEY_SOURCE=kms`. It is tested against a fake KMS client, and on 2026-11-12 it ran against a real test key (`scripts/kms-live-check.ts`): startup checks, a refused wrong key check value, stable and distinct peppers, and a median of 32 ms per derivation from a laptop to `eu-west-1`. Not shown by that run: that KMS's result is byte-for-byte standard HMAC-SHA-256, since the key's bytes are unknown; a test key with imported material would show it.
 
 The risk accepted with this choice: if the KMS key is deleted, or SNF permanently loses access to the AWS account that holds it, no pepper can ever be derived again. The effects are those listed under "Key loss" in section 5, and nothing can repair them, because accounts are not upgradeable.
 
 What protects the key instead of a backup:
 
-- **Multi-Region replicas** of the key, so that the loss of one Region does not lose the key. To verify: that a KMS-generated HMAC key can be multi-Region.
+- **Multi-Region replicas** of the key, so that the loss of one Region does not lose the key. Confirmed on 2026-11-12: a KMS-generated `HMAC_256` key was created as multi-Region on a test account.
 - **Deletion guardrails:** a key policy and an organisation-level policy that deny `kms:ScheduleKeyDeletion` and `kms:DisableKey` to everyone, the maximum waiting period if deletion is ever scheduled, and an alarm on any attempt.
 - **Account protection:** the key in its own AWS account, very few administrators, hardware MFA on the root user, documented break-glass access, and billing and contact details that cannot lapse. Losing the account is losing the key.
 - **Audit:** every use of the key is recorded by CloudTrail, with alerts on unusual volume.

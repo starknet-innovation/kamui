@@ -2,7 +2,7 @@
 
 TypeScript helpers for Kamui accounts, on starknet.js 10: where an account lives, its owner keys, sessions with scopes and spending limits, and sponsored calls.
 
-It covers what happens once a user has an account. The login itself (the Google redirect, the proof, `recover`) belongs to the keychain and the backend and is not in this package yet.
+It covers the login (from a Google or Apple sign-in to a device key that owns the account) and what happens once a user has an account. Storing the login attempt across the redirect, and the redirect itself, are left to the caller (the keychain).
 
 Not audited, like the contracts. Source-only for now: import from `src/`.
 
@@ -10,6 +10,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 
 | Module | What it does |
 |---|---|
+| `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |
 | `reader` | `KamuiReader`: owners, anchor, session epoch, session data and scope, spending policies, nonces. |
 | `owners` | `signNewOwner`, `addOwnerCall`, `removeOwnerCall`. |
@@ -60,6 +61,33 @@ await relayer.execute(sessionOutsideExecution({
 
 A session that pays its own fees uses `createSessionAccount(...)` and then `execute` as with any starknet.js account. It needs `maxFeePerTx` above zero.
 
+## Logging in
+
+```ts
+import { beginLogin, authUrl, parseLoginRedirect, fetchPepper, completeLogin, httpRecoverBackend, newKeyPair } from '@kamui/sdk';
+
+// Before the redirect: keep `device` and `attempt` (the attempt holds no secret key).
+const device = newKeyPair();
+const attempt = beginLogin('google', device.publicKey);
+location.assign(authUrl(attempt, googleClientId, redirectUri));
+
+// After the redirect.
+const answer = parseLoginRedirect(location.hash, attempt);
+const pepper = await fetchPepper({ serviceUrl, idToken: answer.idToken, attempt, device });
+const login = await completeLogin({
+  provider, chainId, classHash, backend: httpRecoverBackend(apiUrl),
+  idToken: answer.idToken, attempt, device, pepper,
+});
+// login.status is 'already-owner' (nothing was sent) or 'added' (a proof was made).
+```
+
+- A device that already owns the account costs two reads and no proof.
+- A new device, or a first login, costs a proof: the backend deploys the account if needed, proves the token and submits `recover`. Expect tens of seconds.
+- **Adding a device revokes every session on the account.** Warn the user before a login on a new device.
+- If the account already has five owner keys, the oldest is replaced.
+- The id_token's signature is not checked on the client. The pepper service, the backend and the contract each check it.
+- Pepper 0 is refused on mainnet.
+
 ## Rules the SDK enforces for you
 
 - **Spending limits.** Under SNIP-41 a token with no spending policy is unrestricted for a session. `createSessionCalls` therefore refuses a scope that includes `transfer`, `approve` or an allowance increase on a token with no limit, unless you pass `allowUnlimitedSpending`. The contract does not enforce this; the SDK does.
@@ -80,6 +108,7 @@ A session that pays its own fees uses `createSessionAccount(...)` and then `exec
 ```sh
 bun install
 bun test test/unit.test.ts            # 19 tests, no network
+bun test test/login.test.ts           # 19 tests, no network; runs the pepper service in process
 
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0
@@ -93,7 +122,8 @@ Bun 1.2 or later. The devnet tests deploy `DevAccount` (the production owner, se
 
 ## Not here yet
 
-- The login flow: nonce and blinding, the proof request, `recover`, and the pepper lookup.
+- A login run end to end against the real backend and a real issuer. The flow is tested with a fake chain and backend, and against the real pepper service in process.
+- Browser proving (the backend proves; plan D9).
 - A wallet-standard connector and the iframe messaging for the keychain.
 - Override recovery calls.
 - Publishing as a built package.
