@@ -116,13 +116,11 @@ What this does not show:
 
 ## Not done
 
-- **Removing a device, the recovery file download, a sign-in from a recovery file, the session list, revocation and "forget this device"** are covered by the browser tests against fakes, and were not exercised on a live network.
-- **The session registry was only ever a fake here.** The client follows the registry protocol (`kamui.registry.v2`) and the fake checks the signature the way the spec describes, but the keychain has not been run against the backend's registry.
-- **A sign-in from a recovery file when the pepper service is really gone.** The keychain does not contact it, and the backend confirms a pepper with the pepper service only before it deploys a new account, so a sign-in to an existing account goes through (backend tests, `recover.test.ts`). The two were not run together.
+- **Removing a device and "Revoke all sessions"** are covered by the browser tests against fakes only. The session list, revocation, "forget this device", the recovery file and a sign-in from it ran on Sepolia (`../spikes/s1/results/RESULTS.md`, run 8).
+- **A sign-in from a recovery file with the pepper service actually down.** In run 8 the service was up but got no request, and the backend skipped its check because the account existed; stopping the service was not tried.
 - **Safari itself,** private windows and mobile browsers (see Browsers above).
 - **Apple against Apple** (see Signing in), and override recovery.
 - **Only STRK and ETH are recognised by address.** Every other token, including well-known ones, is shown as unverified. The list is in `../sdk/src/tokens.ts` and needs an owner and a process before it grows.
-- **Token names and amounts were not checked in a live run,** only in the browser tests against a fake chain.
 - **A single transaction is always sponsored.** There is no path for the account to pay its own fee from the keychain.
 - **Sessions the registry does not know.** A session approved while the registry was down shows only on the device that approved it until the record gets through, and a session whose record is lost shows nowhere. "Revoke all sessions" still ends them.
 - **The registry trusts the keychain's clock** to within five minutes. A device whose clock is further off cannot list or record sessions; the page then says the list could not be loaded.

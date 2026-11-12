@@ -177,3 +177,35 @@ Not exercised: removing a device, the recovery file download, "forget this devic
 | The session afterwards | Still live: an owner transaction that does not change the owners leaves sessions alone. |
 
 Not exercised live: a denied transaction, and a request for a call to the account itself (both covered by the browser tests).
+
+## Run 8: the audited class, the session registry and a recovery-file sign-in
+
+2026-11-12. Everything from the round after the first internal audit, local, on Sepolia: the pepper service (AWS KMS), the backend with its hardening and the session registry, the prover in Docker, the keychain and the demo app. A new key registry and a new account class, so a new account.
+
+Set-up:
+
+- Key registry deployed from this repository (it has `last_revocation_block`, audit issues 1 and 5): `0x4bc2b2afcce053e788511a851e6aeb004d18adb243df4fe852e1b727bd09808`, block 18030487, owned by the relayer account. The rotator set Google's 2 and Apple's 3 keys.
+- Account class with that registry pinned: `0x1e128dae2cb709cac9263afa1c6fdb33f7f1f5c2d969547d9739326d08399f6`, declared for 65.17 STRK.
+- Account: `0x133739e82cd76b5a6446848ae0cbbbb8cc4762fbb8e0eb5ebc417209423e0e9`.
+
+| Step | Result | Fee (STRK) |
+|---|---|---|
+| First login from the demo app | The backend confirmed the pepper with the pepper service, deployed the account (`0x16ded728…1581`) and proved the token in 34 s; `recover` landed (`0x6b70279e…11bd`). | 0.140 + 1.949 |
+| Session approval | Sponsored (`0x2a3d70d7…52a0`). The keychain recorded the session in the registry, with the owner's signature over the whole record. | 0.087 |
+| Session list | The keychain listed the session from the registry; scope, expiry and limits were read from the account. | |
+| Ping through the session | Confirmed in 8.1 s (`0x4c65b18b…21a7`). | 0.053 |
+| A call outside the session's scope | Refused at fee estimation (`Kamui: invalid session`); nothing was sent or paid. | |
+| Revoke from the keychain | `revoke_session_key`, sponsored (`0x4a898c3a…7717`). The list emptied, and the next ping with that session was refused. | 0.049 |
+| A new session, then a one-off approval of 1.5 STRK | Approval sponsored (`0x713ff321…a33`). The keychain named the token (STRK), the spender and the amount (1.5 STRK, and 1500000000000000000 in the smallest unit). Denied, so nothing was sent. | 0.087 |
+| Sign-in from a recovery file | File downloaded, device forgotten, file chosen, Google sign-in. The pepper service got no request; the backend skipped its pepper check because the account existed; proof and `recover` (`0x65320671…f9a`). Same address, a second device key, and every session ended (D5). | 1.902 |
+
+The relayer spent 93.0 STRK in all, 65.2 of it on the class declaration.
+
+Found and fixed during the run:
+
+- **Native `confirm()` dialogs.** The keychain's "Forget this device", "Remove" and "Revoke all sessions" did nothing in the app's browser pane, which answers native dialogs with "cancel" without showing them. They now confirm inside the page, and a test fails if the keychain opens a native dialog.
+- **Demo app.** Denying a one-off transaction dropped the app's connection although its session was still live.
+
+Seen and not explained: midway through, the keychain page in the pane showed "Sign in" and its storage read empty, while the window the user was looking at was still signed in. The next connection needed no sign-in. Probably a stale tab of the hidden pane; not investigated further.
+
+Not exercised live: Apple, `Revoke all sessions`, removing a device, the registry's replay refusal (covered by the backend's tests), and Safari.

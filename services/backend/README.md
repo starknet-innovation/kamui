@@ -120,7 +120,7 @@ bun test
 
 ## Not done
 
-- **Live runs.** The code before these changes ran on Sepolia on 2026-11-12 (`../../spikes/s1/results/RESULTS.md`, run 5). Since then only the watcher has run against Sepolia (one read-only pass: 5 keys verified). The new api, the budgets, the registry and the reworked rotator have run only against fakes.
+- **Live runs.** This code ran on Sepolia on 2026-11-12 (`../../spikes/s1/results/RESULTS.md`, run 8): a deployment with the pepper confirmed, two proofs, sponsored session and owner calls, the session registry, and a recovery sign-in to an existing account without the pepper check. The rotator set the new registry's keys. Not exercised live: the budgets' refusals, the fee ceiling, the registry's replay refusal and the watcher against the new registry.
 - **One api process is assumed.** The limiter, the sponsor ledger, the proof queue, the per-account locks and the issuer key cache are in process, and one relayer key means one nonce: a second api process needs shared implementations of the first two and nonce coordination (or its own relayer account).
 - **A long proof outlives the connection.** Bun closes an idle connection after 255 s at most; a proof can take longer. `/recover` should become a job the client polls.
 - **The registry's replay check is per database.** It holds with one api process on one file, which is what is assumed above.

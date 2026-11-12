@@ -134,5 +134,4 @@ Bun 1.2 or later. The devnet tests deploy `DevAccount` (the production owner, se
 - Browser proving (the backend proves; plan D9).
 - A wallet-standard connector. Apps connect with the redirect helpers in `keychain`; see `../keychain/README.md` and `../apps/demo-dapp`.
 - Override recovery calls.
-- The registry client against a running registry server. Its tests check the message hash against the protocol's formula, and the backend's tests check requests signed by this client code, but the two were not run over HTTP together.
 - Publishing as a built package.
