@@ -112,7 +112,7 @@ def controller_receipt(rpc, config, snapshot):
         raise ValueError('NEW_CONTROLLER_RECEIPT_INVALID')
     block_hash=felt(receipt.get('block_hash'),True)
     canonical=rpc.request('starknet_getBlockWithTxHashes',{'block_id':{'block_number':number}})
-    if not isinstance(canonical,dict) or felt(canonical.get('block_hash'),True)!=block_hash or canonical.get('block_number')!=number or not isinstance(canonical.get('transactions'),list) or tx_hash not in [felt(value,True) for value in canonical['transactions']]:
+    if not isinstance(canonical,dict) or felt(canonical.get('block_hash'),True)!=block_hash or canonical.get('block_number')!=number or canonical.get('status') not in {'ACCEPTED_ON_L2','ACCEPTED_ON_L1'} or not isinstance(canonical.get('transactions'),list) or tx_hash not in [felt(value,True) for value in canonical['transactions']]:
         raise ValueError('NEW_CONTROLLER_RECEIPT_NOT_CANONICAL')
     tx=rpc.request('starknet_getTransactionByHash',{'transaction_hash':tx_hash})
     if not isinstance(tx,dict) or tx.get('type')!='INVOKE' or felt(tx.get('version'))!='0x3' or felt(tx.get('transaction_hash'),True)!=tx_hash or felt(tx.get('sender_address'),True)!=felt(config['newAdministratorAccount'],True):
@@ -141,6 +141,18 @@ def prepare(rpc, config, action, new_controller_confirmed=False):
             value=call(rpc,registry,block,'has_role',[role,address])
             if value not in {'0x0','0x1'}:raise ValueError('REGISTRY_REPLY_INVALID')
             roles[label+'_'+name]=value=='0x1'
+    if action=='review':
+        proof=controller_receipt(rpc,config,snapshot)
+        return {**snapshot,'roles':roles,'controller':controller,'controllerProof':proof,
+                'status':'review_required','signingOrBroadcastPerformed':False,
+                'warning':'DEFAULT_ADMIN_ROLE_ALSO_CONTROLS_UPGRADE',
+                'grant':{'executorAccount':old,'calls':[{'contractAddress':registry,'entrypoint':'grant_role',
+                    'calldata':[role,new]} for role in [ADMIN,REVOKER]]},
+                'conditionalRenounce':{'executorAccount':old,
+                    'status':'BLOCKED_UNTIL_NEW_ROLES_AND_FRESH_CONTROLLER_RECHECK',
+                    'calls':[{'contractAddress':registry,'entrypoint':'renounce_role',
+                    'calldata':[role,old]} for role in [REVOKER,ADMIN]]},
+                'instruction':'REVIEW_ONLY_NO_CUSTODY_OR_RECOVERY_APPROVAL_INFERRED'}
     if action=='verify':
         if not roles['new_admin'] or not roles['new_revoker'] or roles['old_admin'] or roles['old_revoker']:
             raise ValueError('REGISTRY_HANDOFF_INCOMPLETE')
@@ -176,7 +188,7 @@ def write_private(directory, filename, data):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=['observe','prepare-grant','prepare-renounce','verify'])
+    parser.add_argument('action',choices=['observe','review','prepare-grant','prepare-renounce','verify'])
     parser.add_argument('--registry')
     parser.add_argument('--private-input')
     parser.add_argument('--private-output-directory',required=True)
@@ -190,7 +202,7 @@ def main():
             if not options.private_input or options.registry or (options.new_controller_confirmed and options.action!='prepare-renounce'):raise ValueError('HANDOFF_USAGE')
             data=prepare(Rpc(),load_private(options.private_input),options.action,options.new_controller_confirmed)
         write_private(options.private_output_directory,options.action+'.json',data)
-        print(json.dumps({'status':'observed' if options.action=='observe' else 'verified' if options.action=='verify' else 'unsigned_calls_prepared','signingOrBroadcastPerformed':False}))
+        print(json.dumps({'status':'observed' if options.action=='observe' else 'verified' if options.action=='verify' else 'review_prepared' if options.action=='review' else 'unsigned_calls_prepared','signingOrBroadcastPerformed':False}))
         return 0
     except Exception:
         print('{"status":"refused","error":"HANDOFF_PREPARATION_FAILED","signingOrBroadcastPerformed":false}')

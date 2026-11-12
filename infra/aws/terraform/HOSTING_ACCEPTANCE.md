@@ -1,20 +1,20 @@
 # Sepolia hosting review and acceptance record
 
-Companion to [HOSTING_REVIEW.md](HOSTING_REVIEW.md), prepared 12 November 2026. **User product/storage choices below are recorded; technical approvals and AWS deployment remain pending.** Empty checkboxes mean pending, not failed tests. Use private references for account/resource identifiers and sensitive evidence; never paste secrets, tokens, recovery files, private keys, account IDs or resource identifiers into this record.
+Companion to [HOSTING_REVIEW.md](HOSTING_REVIEW.md), prepared 12 November 2026. **User product/storage choices below are recorded; the requested deployment remains unperformed while the operator completes concrete AWS, custody, DNS and OAuth steps. [Current execution record](../lean/readiness/BETA_ACCEPTANCE-2026-11-12.md).** Empty checkboxes mean pending, not failed tests. Use private references for account/resource identifiers and sensitive evidence; never paste secrets, tokens, recovery files, private keys, account IDs or resource identifiers into this record.
 
 ## Review decisions
 
 | Decision | Named owner | Recorded answer / private evidence reference | Status |
 |---|---|---|---|
 | R1 Beta scope and origins | User; technical reviewers unassigned | Open Sepolia beta, Google only, `sepolia.kamui.page` + `pepper-sepolia.kamui.page` | Scope selected; release/DNS review pending |
-| R2 Accounts/Region, deployment roles, KMS/SCP/audit ownership | Unassigned | Existing two accounts, two EC2 servers, eu-west-1 estimate; supersedes Fargate | Baseline selected; technical review pending |
+| R2 Accounts/Region, deployment roles, KMS/SCP/audit ownership | User (AWS operator/security reviewer) | Existing two accounts, two EC2 servers, eu-west-1 estimate; supersedes Fargate | Baseline selected; technical review pending |
 | R3 Database design and backup/restore guarantees | User selected direction; database reviewer unassigned | PostgreSQL on backend EC2 server; supersedes RDS | Direction selected; implementation/storage review pending |
-| R4 Ingress, DNS/proxy, client-address and abuse controls | Unassigned | Direct HTTPS on EC2, Cloudflare DNS-only, local-only API/database; replacement edge controls pending | Direction selected; implementation/effectiveness pending |
+| R4 Ingress, DNS/proxy, client-address and abuse controls | User (AWS operator/security reviewer) | Direct HTTPS on EC2, Cloudflare DNS-only, local-only API/database; replacement edge controls pending | Direction selected; implementation/effectiveness pending |
 | R5 Release digests, architecture, licences, Wasm profile and browser resources | Unassigned | Pending | Not approved |
-| R6 Signer ownership, registry governance, nonce writers and funding limit | Unassigned | Pending | Not approved |
-| R7 App approval, sponsorship limits and incident handling | Unassigned | Approved apps only; anonymous sponsorship off; per-app/per-account/overall limits | Policy selected; thresholds, durable counters and external AVNU controls pending |
+| R6 Signer ownership, registry governance, nonce writers and funding limit | User (AWS operator/security reviewer) | Dedicated KMS k1 key and new administrator passed live Sepolia run 13; registry authority remains on old relayer | Effective permission isolation, independent recovery and exact role handoff review pending |
+| R7 App approval, sponsorship limits and incident handling | Unassigned | Approved apps only; anonymous sponsorship off; per-app/per-account/overall limits | Policy selected; durable counters implemented; hosted thresholds and external AVNU controls pending |
 | R8 JWT/log/registry privacy and vendor/Region review | Unassigned | Pending | Not approved |
-| R9 Budget, operator, alerts, maintenance and restore ownership | Unassigned | Public-rate estimate in COST_ESTIMATE.md; no ceiling or reviewers supplied | Estimate/approval pending |
+| R9 Budget, operator, alerts, maintenance and restore ownership | User (AWS operator/security reviewer); privacy/alert recipients pending | $100/month planning budget; 4 GiB backend / 1 GiB pepper proposal; seven-day backups/logs selected subject to privacy review | Actual resource review, alert delivery, retention and RPO/RTO acceptance pending |
 
 Review approval means the design may proceed to its specifically approved implementation/deployment stage. It is not a mainnet or general-production sign-off.
 
@@ -48,14 +48,14 @@ Review approval means the design may proceed to its specifically approved implem
 - [ ] Database backup/restore and SQLite-to-PostgreSQL cutover are tested on a disposable copy, including admission fencing and data verification. The plan for stale recovery intents is recorded.
 - [ ] Exactly one API writer runs through a replacement. Stop the API for operator reconciliation; no second instance/CLI is treated as an independent writer.
 - [ ] Public asset delivery uses correct Wasm/Worker MIME and tested CSP/cache/versioning. Measure compressed transfer and first-load/cached behavior; never cache witnesses.
-- [ ] Rotator updates and watcher lag/mismatch/fetch-failure alerts are verified independently; signer identities and nonce ownership are understood.
+- [ ] Manual registry updates and independent watcher lag/mismatch/fetch-failure alerts are verified independently; signer identities and nonce ownership are understood.
 - [ ] Approved-app authentication, anonymous-off policy, durable budget/debit state and separate relayer deploy/recovery limits are implemented and survive restart.
 - [ ] Replacement edge controls, rate limits, large-proof requests and redacted logging are reviewed and tested; direct EC2 has no ALB-associated WAF. Host controls are not equivalent to upstream protection or a spend cap.
 - [ ] AVNU is explicitly selected, its key stays API-side, and the external operator's spending controls and current terms are verified.
 - [ ] Secret rotation is tested through service replacement; a running process is not assumed to reload values automatically.
 
-- [ ] Load test PostgreSQL plus all backend services on 2 GiB; measure memory, CPU credits, disk usage and proof-upload spikes. Resize if needed.
-- [ ] Off-host base backups and WAL archiving work; failure/lag alarms and a disposable restore drill validate agreed RPO/RTO. Retention still requires a decision.
+- [ ] Load test PostgreSQL plus all backend services on the selected 4 GiB backend; measure memory, CPU credits, disk usage and proof-upload spikes. Do not downsize to 2 GiB without measured headroom.
+- [ ] Off-host base backups and WAL archiving work; failure/lag alarms and a disposable restore drill validate agreed RPO/RTO. Seven-day retention is selected subject to privacy review; RPO/RTO and real restore measurements remain pending.
 - [ ] Restoring stale data leaves relaying/sponsorship/rotator writes fenced until signer history, active locks, replay state and budget debits are reconciled. Missing rows do not authorize retries.
 - [ ] Host patching, service restart, certificate renewal, disk-full alerts and recovery after server loss have an assigned operator and tested procedure.
 
@@ -92,25 +92,31 @@ Local Sepolia evidence already exists for several flows in [runs 9 and 10](../..
 
 ## Current evidence, without approval
 
-- Repository review baseline: `3ba7a39`.
+- Current application baseline: `2c0ec18`; older local validation observations below are dated evidence, not a new hosted run.
 - Local `terraform fmt -check -recursive`: passed on 12 November 2026 (Terraform 1.15.5). Revised backend validation is blocked by absent installed module metadata; no init was run.
 - Client-proving target: upstream v1.0.1 / `32596db806409e8e24008cc922bc80ae164854b8` inspected; Kamui integration and existing-account Google V2 recovery passed in local run 11 with Chromium 153; broader resource/browser, first-deployment and hosted-origin acceptance remain pending. The older Docker prover is excluded from the proposed stack.
 - Public documentation checked; AWS accounts, plan/apply, DNS and Google settings untouched.
-- User selected an open Sepolia beta and subsequently chose two EC2 servers with PostgreSQL on the backend server to reduce cost. This supersedes Fargate, RDS and the ALB/WAF layout; DNS-only, Ireland and approved-app sponsorship remain. Public rates/scenarios are recorded in COST_ESTIMATE.md; reviewer names, budget ceiling, technical approvals, implementation deltas and hosted acceptance remain pending.
+- User selected an open Sepolia beta and subsequently chose two EC2 servers with PostgreSQL on the backend server to reduce cost. This supersedes Fargate, RDS and the ALB/WAF layout; DNS-only, Ireland and approved-app sponsorship remain. Public rates/scenarios are recorded in COST_ESTIMATE.md; the user subsequently selected a $100/month planning budget and acts as AWS operator/security reviewer. Actual resource/privacy/funding approval evidence and hosted acceptance remain pending.
 
 ## Local PostgreSQL implementation evidence — 12 November 2026
 
-PostgreSQL registry/recovery adapters, asynchronous commit-before-send, explicit read-only-source SQLite import, versioned schema and same-connection single-writer lease are implemented. Disposable local PostgreSQL 16 tests cover concurrency, replay, import rollback and uncertain recovery receipts. No existing developer database was migrated; no AWS deployment, hosted acceptance, off-host backup/restore drill or physical power-loss test was performed. Durable spending counters and the remaining lean EC2 packaging are still pending. Application use remains strictly stop-old-before-start-new; a SQL lease cannot fence an already-prepared Starknet send.
+PostgreSQL registry/recovery adapters, asynchronous commit-before-send, explicit read-only-source SQLite import, versioned schema and same-connection single-writer lease are implemented. Disposable local PostgreSQL 16 tests cover concurrency, replay, import rollback and uncertain recovery receipts. No existing developer database was migrated; no AWS deployment, hosted acceptance, off-host backup/restore drill or physical power-loss test was performed. Subsequent lean work implemented durable spending counters and EC2 packaging; the local base-backup/WAL restore drill is described below. Actual hosted acceptance remains pending. Application use remains strictly stop-old-before-start-new; a SQL lease cannot fence an already-prepared Starknet send.
 
 ## Lean implementation evidence — follow-up, 12 November 2026
 
-- Durable PostgreSQL count/FRI limits and pause now cover global, operation, approved app and account scopes. Server credentials are distinct from public app keys; default policy/funding stays off. Wallet-management sponsorship needs its own reviewed owner-authenticated path.
+- Durable PostgreSQL count/FRI limits and pause now cover global, operation, approved app and account scopes. Server credentials are distinct from public app keys; default policy/funding stays off. Owner-authorized wallet-management sponsorship is now implemented separately and remains default-off pending hosted limits.
 - The lean host package has image-digest checks, direct HTTPS templates, scoped file mounts, a public keychain build/proxy allow-list, stopped-writer lifecycle checks and reboot/restore fences. These are locally validated artifacts, not cloud acceptance.
 - A real disposable local base-backup/WAL restore through the production wrapper preserved replay rows, an uncertain intent, funding debits and spending pause; the API gate remained blocked. S3 authorization/encryption, retention/RPO/RTO and delivery to real monitoring recipients remain unverified.
 - Backend and browser suites passed locally; the final counts and exact commands are in the lean validation record. No existing user database was migrated and no AWS settings or DNS were changed.
 
 ## Follow-up decisions and implementation — 12 November 2026
 
-The user selected a $100/month planning budget and will act as the AWS operator/security reviewer. Registry administration uses a separate off-server controller and manual updates. Hosted rotator/admin-key mounts are removed; AccessControl role handoff must finish before the lean API's read-only governance startup gate will permit its relayer key to load. The independent watcher checks Google key freshness even without registry events. No signer transaction or AWS operation was performed by this work.
+The user selected a $100/month planning budget and will act as the AWS operator/security reviewer. Registry administration uses a separate off-server controller and manual updates. Hosted rotator/admin-key mounts are removed; AccessControl role handoff must finish before the lean API's read-only governance startup gate will permit its relayer key to load. The independent watcher checks Google key freshness even without registry events. Subsequent dedicated KMS setup and run 13 verified real k1 signing and a separately deployed administrator; no registry authority handoff or hosted deployment has occurred.
 
 Owner-authorized self-management sponsorship is implemented separately from credentialed app sponsorship, with zero default wallet funding and preserved PostgreSQL v3 debit/pause state. Live run-12 approval is limited to four attempts/12 test STRK/max5 each and is not approval of hosted limits. Cloud inspector results, actual role handoff, privacy/retention, funding thresholds, upstream abuse acceptance and real alert delivery remain pending.
+
+## Hosted acceptance preparation — 12 November 2026
+
+Read-only probes from the operator workstation found that neither selected subdomain resolves; HTTPS keychain `/live` and pepper `/health` are unavailable. This records an unavailable deployment boundary, not a failed Google or proving flow. No DNS, Google OAuth, AWS setting or registry authority was changed during these checks.
+
+The [fixed-origin HTTPS checker](../lean/readiness/hosted_acceptance.py) sends GET requests only, refuses redirects and credentials, validates TLS, checks reviewed public Google/account/registry/executor/RPC pins, no-frame/CSP/no-store headers, denied private routes, the reviewed main bundle hash and all pinned prover/Worker/Wasm bytes, MIME and cache headers. Six local tests verify its refusal and pin checks. Full asset verification downloads about 113 MB and must be run deliberately against the hosted release. It does not exercise login, proving, funding, private host isolation, backups or real alerts. Follow the [ordered hosted runbook](../lean/readiness/BETA_ACCEPTANCE-2026-11-12.md); do not mark other acceptance boxes from a successful public checker alone.

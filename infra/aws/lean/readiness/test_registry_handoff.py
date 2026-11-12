@@ -25,7 +25,7 @@ class Rpc:
         if method=='starknet_getClass':return {'abi':[{'type':'interface','items':[{'type':'function','name':name} for name in ['has_role','get_role_admin','grant_role','renounce_role','set_key','remove_key','upgrade']]}]}
         if method=='starknet_getTransactionReceipt':return {'transaction_hash':'0x6','block_number':120,'block_hash':'0xdef','execution_status':'SUCCEEDED','finality_status':'ACCEPTED_ON_L2'}
         if method=='starknet_getTransactionByHash':return {'transaction_hash':'0x6','type':'INVOKE','sender_address':'0x3','version':'0x3','signature':['0x1','0x0','0x1','0x0']}
-        if method=='starknet_getBlockWithTxHashes':return {'block_number':120,'block_hash':'0xdef','transactions':['0x6']}
+        if method=='starknet_getBlockWithTxHashes':return {'block_number':120,'block_hash':'0xdef','status':'ACCEPTED_ON_L2','transactions':['0x6']}
         if method=='starknet_call':
             request=params['request']
             if request['entry_point_selector']==handoff.SELECTORS['get_public_key']:return LIMBS
@@ -97,6 +97,27 @@ class HandoffTest(unittest.TestCase):
         rpc.request=lambda method,params: '0x7' if method=='starknet_getClassHashAt' and params.get('block_id')=={'block_hash':'0xdef'} else original(method,params)
         with self.assertRaisesRegex(ValueError,'NEW_ADMINISTRATOR_CLASS_CHANGED'):
             handoff.prepare(rpc,CONFIG,'prepare-renounce',True)
+
+    def test_review_checks_live_controller_and_writes_only_conditional_renunciation(self):
+        rpc=Rpc();plan=handoff.prepare(rpc,CONFIG,'review')
+        self.assertEqual(plan['status'],'review_required')
+        self.assertEqual(plan['controllerProof']['transactionHash'],'0x6')
+        self.assertFalse(plan['roles']['new_admin'])
+        self.assertEqual([call['calldata'] for call in plan['grant']['calls']],[[handoff.ADMIN,'0x3'],[handoff.REVOKER,'0x3']])
+        self.assertEqual(plan['conditionalRenounce']['status'],'BLOCKED_UNTIL_NEW_ROLES_AND_FRESH_CONTROLLER_RECHECK')
+        self.assertEqual([call['calldata'] for call in plan['conditionalRenounce']['calls']],[[handoff.REVOKER,'0x2'],[handoff.ADMIN,'0x2']])
+        self.assertFalse(plan['signingOrBroadcastPerformed'])
+        self.assertTrue(all(method in handoff.RPC_READS for method,_ in rpc.calls))
+        with self.assertRaises(ValueError):handoff.prepare(Rpc(),{**CONFIG,'controllerProofTransactionHash':''},'review')
+
+    def test_controller_proof_refuses_nonaccepted_canonical_block(self):
+        rpc=Rpc();original=rpc.request
+        def request(method,params):
+            value=original(method,params)
+            return {**value,'status':'PRE_CONFIRMED'} if method=='starknet_getBlockWithTxHashes' else value
+        rpc.request=request
+        with self.assertRaisesRegex(ValueError,'NEW_CONTROLLER_RECEIPT_NOT_CANONICAL'):
+            handoff.prepare(rpc,CONFIG,'review')
 
     def test_outputs_are_private_and_never_overwritten(self):
         with tempfile.TemporaryDirectory() as temporary:

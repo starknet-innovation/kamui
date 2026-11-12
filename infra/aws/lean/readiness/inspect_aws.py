@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import tempfile
 
 REGION = 'eu-west-1'
 READS = {
@@ -28,7 +29,7 @@ def load_private(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_size > 65536:
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077 or info.st_size > 65536:
             raise ValueError('PRIVATE_INPUT_REQUIRED')
         raw = os.read(fd, 65537)
         if len(raw) > 65536:
@@ -61,13 +62,31 @@ class Aws:
     def request(self, profile, service, operation, inputs):
         if (service, operation) not in READS:
             raise ValueError('READ_OPERATION_REQUIRED')
-        # Resource references go through stdin, not shell interpolation or argv.
-        args = ['aws', service, operation, '--profile', profile, '--region', REGION,
-                '--output', 'json', '--no-cli-pager', '--no-cli-auto-prompt',
-                '--cli-input-json', 'file:///dev/stdin']
-        result = subprocess.run(args, input=json.dumps(inputs), capture_output=True,
-                                text=True, timeout=40,
-                                env={**os.environ, 'AWS_PAGER': '', 'AWS_CLI_AUTO_PROMPT': 'off'})
+        if not re.fullmatch(r'[A-Za-z0-9_.-]{1,128}', profile):
+            raise ValueError('INPUT_INVALID')
+        # The installed CLI does not consistently support file:///dev/stdin for
+        # this option. Use a private regular file, never JSON or identifiers in argv.
+        blocked = {'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
+                   'AWS_SECURITY_TOKEN', 'AWS_ROLE_ARN', 'AWS_ROLE_SESSION_NAME',
+                   'AWS_WEB_IDENTITY_TOKEN_FILE', 'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
+                   'AWS_CONTAINER_CREDENTIALS_FULL_URI', 'AWS_CONTAINER_AUTHORIZATION_TOKEN',
+                   'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE'}
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in blocked and not key.startswith('AWS_ENDPOINT_URL')}
+        environment.update(AWS_PAGER='', AWS_CLI_AUTO_PROMPT='off',
+                           AWS_EC2_METADATA_DISABLED='true', AWS_MAX_ATTEMPTS='1',
+                           AWS_RETRY_MODE='standard', AWS_IGNORE_CONFIGURED_ENDPOINT_URLS='true')
+        with tempfile.TemporaryDirectory(prefix='kamui-aws-read-') as temporary:
+            path = Path(temporary)/'request.json'
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, 'w') as output:
+                json.dump(inputs, output)
+            args = ['aws', service, operation, '--profile', profile, '--region', REGION,
+                    '--output', 'json', '--no-cli-pager', '--no-cli-auto-prompt',
+                    '--cli-connect-timeout', '5', '--cli-read-timeout', '15',
+                    '--cli-input-json', 'file://' + str(path)]
+            result = subprocess.run(args, capture_output=True, text=True, timeout=40,
+                                    env=environment)
         if result.returncode:
             raise RuntimeError('AWS_READ_UNAVAILABLE')
         return json.loads(result.stdout or '{}')

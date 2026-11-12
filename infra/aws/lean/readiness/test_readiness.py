@@ -1,6 +1,9 @@
 import copy
 import importlib.util
 import json
+import os
+import stat
+from types import SimpleNamespace
 from pathlib import Path
 import tempfile
 import unittest
@@ -86,6 +89,36 @@ class ReadinessTest(unittest.TestCase):
         result=inventory.inspect(data,client)
         self.assertNotIn('PRIVATE_FAILURE_SENTINEL',json.dumps(result))
         self.assertEqual(result['checks']['backend_account_matches'],'unavailable')
+
+    def test_cli_transport_uses_private_file_and_explicit_profile_without_overrides(self):
+        seen = []
+        def invoke(args, **options):
+            path = Path(args[args.index('--cli-input-json') + 1].removeprefix('file://'))
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+            self.assertEqual(json.loads(path.read_text()), {'Bucket': 'PRIVATE_BUCKET_SENTINEL'})
+            self.assertNotIn('PRIVATE_BUCKET_SENTINEL', ' '.join(args))
+            self.assertEqual(args[args.index('--profile') + 1], 'fixture')
+            self.assertEqual(options['env']['AWS_MAX_ATTEMPTS'], '1')
+            self.assertEqual(options['env']['AWS_EC2_METADATA_DISABLED'], 'true')
+            for key in ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_ENDPOINT_URL', 'AWS_ENDPOINT_URL_S3', 'AWS_ROLE_ARN', 'AWS_WEB_IDENTITY_TOKEN_FILE', 'AWS_CONTAINER_CREDENTIALS_FULL_URI']:
+                self.assertNotIn(key, options['env'])
+            seen.append(path)
+            return SimpleNamespace(returncode=0, stdout='{"ok":true}')
+        overrides = dict.fromkeys(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_ENDPOINT_URL', 'AWS_ENDPOINT_URL_S3', 'AWS_ROLE_ARN', 'AWS_WEB_IDENTITY_TOKEN_FILE', 'AWS_CONTAINER_CREDENTIALS_FULL_URI'], 'PRIVATE_ENV_SENTINEL')
+        with patch.dict(os.environ, overrides), patch.object(inventory.subprocess, 'run', side_effect=invoke):
+            self.assertEqual(inventory.Aws().request('fixture', 's3api', 'head-bucket', {'Bucket': 'PRIVATE_BUCKET_SENTINEL'}), {'ok': True})
+        self.assertFalse(seen[0].exists())
+
+    def test_cli_transport_failure_is_sanitized_and_private_request_is_removed(self):
+        seen = []
+        def invoke(args, **options):
+            seen.append(Path(args[args.index('--cli-input-json') + 1].removeprefix('file://')))
+            return SimpleNamespace(returncode=1, stdout='PRIVATE_OUTPUT_SENTINEL', stderr='PRIVATE_ERROR_SENTINEL')
+        with patch.object(inventory.subprocess, 'run', side_effect=invoke):
+            with self.assertRaisesRegex(RuntimeError, '^AWS_READ_UNAVAILABLE$'):
+                inventory.Aws().request('fixture', 'sts', 'get-caller-identity', {})
+        self.assertFalse(seen[0].exists())
 
     def test_review_template_remains_incomplete_and_boolean_strings_do_not_approve(self):
         data=json.loads((HERE/'review.example.json').read_text())
