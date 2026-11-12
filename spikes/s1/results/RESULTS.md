@@ -129,3 +129,21 @@ A finding for the SDK, the second of its kind:
 Not covered: a recovery on a full owner set, override recovery, and storage-write counts (no state diff in this RPC's traces).
 
 Leftover state: the first attempt added a throwaway second key before failing, and the script only removes the key it added on the rerun. The test account therefore still has two owners, the device key and that throwaway key, whose private key was never stored.
+
+## Run 5: login through the whole chain, with a pepper
+
+2026-11-12. Everything from the repo, running locally against Sepolia: the SDK's login flow in a browser (`apps/login-demo`), the pepper service on a test AWS KMS key, the backend in `services/backend`, the prover, and the class from run 4. Same machine.
+
+Account: `0x3ec3b3ead6762ecf0172e0d5e3f9df472e66608e3f483f300a784dc9652d193`. It is a new account with a new identity: the pepper is part of the address, so it differs from the account in runs 3 and 4 for the same Google user.
+
+| Step | Result |
+|---|---|
+| First login | Works, 60.2 s from the token arriving to a usable account. Pepper service with key proof 0.2 s; backend's own confirmation of the pepper 38 ms; deployment, proof (35.0 s) and recovery 59.6 s. One owner, session epoch 1. Recovery tx `0x4449ee434c57b45337ffba998b63b06f466a770d77912b35eec81622c7c2211`. |
+| Sign in again from the same device | Nothing was sent: the pepper service saw one request and the backend none, and the account did not change. The page's own result was replaced by the next step before it was read, so this is from the service logs and the chain. |
+| Sign in as a new device | Works, 44.6 s (no deployment). Two owners, session epoch 2. Recovery tx `0x59db6a90bd794648b8f48e9c08ea1a57bffdba60e443e2b8a1314cab0e6e1ea`. |
+
+First time on a live network for: the SDK's login flow, the key proof, a pepper derived by AWS KMS, the backend confirming the pepper before paying, a proof with a non-zero pepper, and a returning device skipping the proof.
+
+Pepper service timings, from its log: 106 to 212 ms for a request from the browser (the first includes fetching Google's keys), 37 to 38 ms for the backend's confirmation.
+
+Not covered: the pepper recovery file used for a login, override recovery, Apple, and a refused wrong pepper on a live run (covered in tests only).

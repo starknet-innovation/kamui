@@ -50,7 +50,7 @@ bun test
 
 ## Not done
 
-- **This copy has not run against a chain.** The Sepolia runs used upstream's checkout with a small patch. The same flow through this folder, with the pepper service and a non-zero pepper, is the next live test.
+- **One live run only.** This folder ran on Sepolia on 2026-11-12 with the pepper service and a non-zero pepper: a first login, a returning device and a new device (`../../spikes/s1/results/RESULTS.md`, run 5).
 - **Hardening:** rate limits are per process, there are no metrics or alerts, and the relayer and prover keys are read from environment variables.
 - **A watcher** that compares each key written to the registry with the issuer's published keys (plan D8).
 - **The prover's real memory need.** It is somewhere between 8 and 19.5 GB per proof.

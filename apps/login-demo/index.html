@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kamui login demo</title>
+    <style>
+      body { font: 15px/1.5 system-ui, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; color: #1b1b1f; }
+      h1 { font-size: 22px; }
+      button { font: inherit; padding: 8px 14px; margin: 4px 8px 4px 0; cursor: pointer; }
+      code, pre { font: 13px/1.5 ui-monospace, monospace; }
+      pre { background: #f4f4f6; padding: 12px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+      .note { color: #5c5c66; }
+      table { border-collapse: collapse; }
+      td { padding: 2px 16px 2px 0; vertical-align: top; }
+    </style>
+  </head>
+  <body>
+    <h1>Kamui login demo</h1>
+    <p class="note">Development page. It runs the SDK's login flow against the local pepper service and backend, on Sepolia.</p>
+    <div id="actions"></div>
+    <table id="result"></table>
+    <h2 style="font-size: 16px">Log</h2>
+    <pre id="log"></pre>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

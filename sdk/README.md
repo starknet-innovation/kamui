@@ -123,7 +123,7 @@ Bun 1.2 or later. The devnet tests deploy `DevAccount` (the production owner, se
 
 ## Not here yet
 
-- A login run end to end against the real backend and a real issuer. The flow is tested with a fake chain and backend, and against the real pepper service in process.
+- More than one live run. The login ran end to end on Sepolia once, through `../apps/login-demo` (`../spikes/s1/results/RESULTS.md`, run 5): a first login, a returning device and a new device.
 - Browser proving (the backend proves; plan D9).
 - A wallet-standard connector and the iframe messaging for the keychain.
 - Override recovery calls.
