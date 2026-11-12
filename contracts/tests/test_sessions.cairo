@@ -1,12 +1,13 @@
 //! Session keys on the self-paid path (`__validate__`): every SNIP-41 Part C step and its order.
 use core::num::traits::Zero;
-use kamui::account::{IKamuiAccountDispatcher, IKamuiAccountDispatcherTrait};
+use kamui::core::{IKamuiAccountDispatcher, IKamuiAccountDispatcherTrait};
 use kamui::mocks::{ITargetDispatcher, ITargetDispatcherTrait};
 use kamui::session::interface::{
     AllowedCall, ISessionKeyManagerDispatcher, ISessionKeyManagerDispatcherTrait,
     ISessionKeyManagerExtDispatcher, ISessionKeyManagerExtDispatcherTrait,
     SESSION_KEY_INTERFACE_ID, SessionData,
 };
+use openzeppelin_interfaces::accounts::{IPublicKeyDispatcher, IPublicKeyDispatcherTrait};
 use openzeppelin_interfaces::introspection::{ISRC5Dispatcher, ISRC5DispatcherTrait};
 use openzeppelin_interfaces::src9::ISRC9_V2_ID;
 use snforge_std::signature::stark_curve::{StarkCurveKeyPairImpl, StarkCurveSignerImpl};
@@ -15,7 +16,7 @@ use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp_global,
     start_cheat_caller_address, start_cheat_nonce, start_cheat_resource_bounds,
     start_cheat_signature, start_cheat_tip, start_cheat_transaction_hash,
-    start_cheat_transaction_version,
+    start_cheat_transaction_version, store,
 };
 use starknet::account::Call;
 use starknet::{ContractAddress, ResourcesBounds, SyscallResultTrait};
@@ -23,6 +24,7 @@ use starknet::{ContractAddress, ResourcesBounds, SyscallResultTrait};
 pub const NOW: u64 = 1_000;
 pub const VALID_UNTIL: u64 = 5_000;
 pub const FEE_CAP: u128 = 1_000_000;
+pub const IDENTITY: felt252 = 0xabc;
 
 pub fn owner_key() -> KeyPair<felt252, felt252> {
     KeyPairTrait::from_secret_key(0x1111)
@@ -41,8 +43,15 @@ pub struct Env {
 
 pub fn setup() -> Env {
     start_cheat_block_timestamp_global(NOW);
+    // The production account: deployed from (aud, identity) with key 0. A real account gets its
+    // key from a recovery proof; here it is written straight to storage.
     let account_class = declare("KamuiAccount").unwrap_syscall().contract_class();
-    let (account, _) = account_class.deploy(@array![owner_key().public_key]).unwrap_syscall();
+    let mut calldata = array![];
+    let aud: ByteArray = "aud";
+    aud.serialize(ref calldata);
+    calldata.append(IDENTITY);
+    let (account, _) = account_class.deploy(@calldata).unwrap_syscall();
+    store(account, selector!("Account_public_key"), array![owner_key().public_key].span());
     let target_class = declare("Target").unwrap_syscall().contract_class();
     let (target, _) = target_class.deploy(@array![]).unwrap_syscall();
     let (other, _) = target_class.deploy(@array![]).unwrap_syscall();
@@ -96,24 +105,24 @@ fn validate_raw(
     IKamuiAccountDispatcher { contract_address: env.account }.__validate__(calls)
 }
 
-fn default_fees(env: Env) {
+pub fn default_fees(env: Env) {
     start_cheat_transaction_version(env.account, 3);
     start_cheat_resource_bounds(env.account, bounds(1_000, 10));
     start_cheat_tip(env.account, 0);
 }
 
 /// A correctly signed session transaction at `nonce`.
-fn validate_session(env: Env, calls: Array<Call>, nonce: felt252) -> felt252 {
+pub fn validate_session(env: Env, calls: Array<Call>, nonce: felt252) -> felt252 {
     let tx_hash = 0xabc000 + nonce;
     let signature = session_signature(session_key(), tx_hash, VALID_UNTIL.into());
     validate_raw(env, calls, signature, tx_hash, nonce)
 }
 
-fn ext(env: Env) -> ISessionKeyManagerExtDispatcher {
+pub fn ext(env: Env) -> ISessionKeyManagerExtDispatcher {
     ISessionKeyManagerExtDispatcher { contract_address: env.account }
 }
 
-fn manager(env: Env) -> ISessionKeyManagerDispatcher {
+pub fn manager(env: Env) -> ISessionKeyManagerDispatcher {
     ISessionKeyManagerDispatcher { contract_address: env.account }
 }
 
@@ -668,7 +677,7 @@ fn rotating_the_owner_key_kills_every_session() {
     );
     let (r, s) = new_owner.sign(message).unwrap();
     as_owner(env);
-    let account = IKamuiAccountDispatcher { contract_address: env.account };
+    let account = IPublicKeyDispatcher { contract_address: env.account };
     account.set_public_key(new_owner.public_key, array![r, s].span());
 
     assert_eq!(account.get_public_key(), new_owner.public_key);

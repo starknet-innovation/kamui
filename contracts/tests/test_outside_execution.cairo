@@ -1,5 +1,5 @@
 //! Session keys on the sponsored path (`execute_from_outside_v2`): SNIP-41 Part F.
-use kamui::account::OutsideExecutionSNIP12Metadata;
+use kamui::core::OutsideExecutionSNIP12Metadata;
 use kamui::mocks::{ITargetDispatcher, ITargetDispatcherTrait};
 use kamui::session::interface::{
     ISessionKeyManagerExtDispatcher, ISessionKeyManagerExtDispatcherTrait,

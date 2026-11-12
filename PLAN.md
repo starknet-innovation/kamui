@@ -92,7 +92,7 @@ Status after the first pass (details in [SPIKES.md](SPIKES.md)): S3 and S4 are c
 
 ### Phase 1: contracts
 
-Status 2026-11-11: started in `contracts/`. `SessionKeyComponent` (step 2), Kamui's own `execute_from_outside_v2` and a first single-owner account are written from the spec, with 65 passing snforge tests. Not done: social login integration (step 1), upgrade path, owner set, spending policy, the storage-write gas profile, a devnet run. Open choices made in the code are listed at the top of `contracts/src/session/component.cairo`.
+Status 2026-11-12: in `contracts/` (see its README). Done: steps 1 to 4 except the upgrade path and owner model, that is `SocialComponent`, `JwkRegistry` and `ProverExecutor` copied in unchanged, `SessionKeyComponent` from the spec, Kamui's own `execute_from_outside_v2`, the admin blocklist, and an account in which every key change (rotation, recovery, finalized override) revokes all sessions. 119 snforge tests pass, including upstream's run against the Kamui account. A devnet run confirms at most one storage write per session transaction. Not done: upgrade path (D1), owner set (D4), pepper (D2), spending policy, and a real-proof recovery of the new class on Sepolia.
 
 1. Fork social-account's `social_account` package into the `kamui` repo. Keep `SocialComponent`, `JwkRegistry` and `ProverExecutor`.
 2. Write `SessionKeyComponent` to SNIP-41 as revised in PR 180, from the spec. Include the fee cap, epoch (D5), limit mechanism (D6) and scope decision (D7).

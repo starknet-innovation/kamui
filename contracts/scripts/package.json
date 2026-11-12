@@ -1,0 +1,11 @@
+{
+  "name": "kamui-contract-scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "profile": "bun run devnet-profile.ts"
+  },
+  "dependencies": {
+    "starknet": "10.8.0"
+  }
+}

@@ -9,6 +9,10 @@ openzeppelin_account = "4.0.1"
 openzeppelin_introspection = "4.0.1"
 openzeppelin_interfaces = "2.2.0"
 openzeppelin_utils = "2.2.0"
+openzeppelin_upgrades = "4.0.1"
+openzeppelin_access = "4.0.1"
+alexandria_encoding = "0.10.0"
+garaga = "1.1.0"
 
 [dev-dependencies]
 snforge_std = "0.64.0"
@@ -23,3 +27,6 @@ test = "snforge test"
 
 [tool.scarb]
 allow-prebuilt-plugins = ["snforge_std"]
+
+[cairo]
+sierra-replace-ids = false # needed by garaga
