@@ -32,7 +32,7 @@ import {
 } from '../../sdk/src';
 import { forget, loadLogin, loadPendingDevice, saveLogin, savePendingDevice, type AccountRecord } from './vault';
 
-type Config = { googleClientId: string; rpcUrl: string; classHash: string; pepperUrl: string; apiUrl: string; redirectUri: string };
+type Config = { googleClientId: string; rpcUrl: string; classHash: string; pepperUrl: string; apiUrl: string; redirectUri: string; pollMs: number };
 
 const REQUEST = 'kamui.keychain.request';
 const ATTEMPT = 'kamui.keychain.attempt';
@@ -40,7 +40,7 @@ const ATTEMPT = 'kamui.keychain.attempt';
 const view = document.getElementById('view')!;
 const statusLine = document.getElementById('status')!;
 const config = (await (await fetch('/config.json')).json()) as Config;
-const provider = new RpcProvider({ nodeUrl: config.rpcUrl });
+const provider = new RpcProvider({ nodeUrl: config.rpcUrl, transactionRetryIntervalFallback: config.pollMs });
 
 //
 // Small DOM helpers
@@ -326,9 +326,11 @@ async function resume() {
 
 async function main() {
   if (location.pathname === '/connect') {
-    // Read the request once, while the referrer still says who sent it.
-    const request = parseConnectRequest(location.hash, document.referrer);
+    // Read the request once, while the referrer still says who sent it, and take it out of the
+    // address bar before anything else, whether or not it turns out to be acceptable.
+    const fragment = location.hash;
     history.replaceState(null, '', '/connect');
+    const request = parseConnectRequest(fragment, document.referrer);
     if (request) sessionStorage.setItem(REQUEST, JSON.stringify(request));
   } else if (location.pathname === '/callback') {
     await finishLogin();

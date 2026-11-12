@@ -28,14 +28,18 @@ const need = (value: string | undefined, name: string) => {
 
 const PORT = Number(process.env.PORT ?? 5173);
 const API = process.env.API_URL ?? 'http://localhost:3000';
-// Public values only.
+// Public values only. The environment wins over the backend's files, which is how the browser
+// tests point the keychain at their own fakes.
 const config = {
-  googleClientId: need(secrets.AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID, 'AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID'),
-  rpcUrl: need(secrets.RPC_URL, 'RPC_URL'),
-  classHash: need(deployments.KAMUI_ACCOUNT_CLASS_HASH, 'KAMUI_ACCOUNT_CLASS_HASH'),
+  googleClientId: need(process.env.GOOGLE_CLIENT_ID ?? secrets.AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID, 'AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID'),
+  rpcUrl: need(process.env.RPC_URL ?? secrets.RPC_URL, 'RPC_URL'),
+  classHash: need(process.env.KAMUI_ACCOUNT_CLASS_HASH ?? deployments.KAMUI_ACCOUNT_CLASS_HASH, 'KAMUI_ACCOUNT_CLASS_HASH'),
   pepperUrl: process.env.PEPPER_URL ?? 'http://localhost:8787',
   apiUrl: '/api',
   redirectUri: `http://localhost:${PORT}/callback`,
+  // How often the page asks the chain whether a transaction has landed. starknet.js waits 5 s
+  // before its first look by default, which is felt on every approval.
+  pollMs: Number(process.env.POLL_MS ?? 2000),
 };
 
 const build = await Bun.build({ entrypoints: [`${import.meta.dir}/src/main.ts`], target: 'browser' });

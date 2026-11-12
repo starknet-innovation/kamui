@@ -4,12 +4,14 @@
   "type": "module",
   "scripts": {
     "start": "bun run server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "playwright test"
   },
   "dependencies": {
     "starknet": "10.8.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.0",
     "typescript": "^5.6.0"
   }
 }

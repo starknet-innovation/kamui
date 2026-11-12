@@ -47,13 +47,21 @@ bun run server.ts      # http://localhost:5173
 
 ## Tested
 
-- The protocol, its refusals and the app-side helpers: 16 tests in `../sdk/test/keychain.test.ts`.
-- Live on Sepolia on 2026-11-12, through the demo app: sign-in on a new device, the approval screen, a sponsored session call, a call outside the session refused by the account, and the device list (`../spikes/s1/results/RESULTS.md`, run 6).
+- **The protocol,** its refusals and the app-side helpers: 16 tests in `../sdk/test/keychain.test.ts`.
+- **The pages and key storage, in Chrome:** 21 tests in `tests/`. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the pepper service and the issuer) with fakes at the network level. They cover sign-in, a remembered device, a stale sign-in page, a key removed elsewhere, how the key is stored, forgetting the device, approving and denying a request, the requests the keychain refuses, an app name containing markup, removing a device, the recovery file, and the content security policy.
+- **Live on Sepolia** on 2026-11-12, through the demo app: sign-in on a new device, the approval screen, a sponsored session call, a call outside the session refused by the account, and the device list (`../spikes/s1/results/RESULTS.md`, run 6).
+
+```sh
+bun install
+bun run test        # needs Google Chrome; set BUN to the bun binary if `bun` on PATH is older than 1.2
+```
+
+The browser tests found two things, both fixed: a refused request stayed in the address bar, and the page waited five seconds before its first look for a transaction (now two, and configurable with `POLL_MS`).
 
 ## Not done
 
-- **No automated tests of the pages or the vault.** They have only been exercised by hand in one browser.
-- **Removing a device, the recovery file download and "forget this device"** are implemented and were not exercised in the live run.
+- **One browser.** The tests run in Chrome only. Safari and Firefox store keys and send referrers under their own rules and have not been tried.
+- **Removing a device, the recovery file download and "forget this device"** are covered by the browser tests against fakes, and were not exercised on a live network.
 - **A login from a recovery file,** Apple, and override recovery.
 - **Per-transaction approval** for calls outside a session.
 - **A list of live sessions** with revocation. The account does not enumerate sessions; this needs the session and app registry (plan, Phase 2 step 4).
