@@ -22,7 +22,7 @@
 //!   this only for sessions without a whitelist).
 //! - Contract-scoped whitelists (`add_or_update_scoped_session_key`).
 //! - A session epoch: bumping it revokes every session in one write. The account must bump it
-//!   whenever the owner key changes.
+//!   whenever its owners change.
 #[starknet::component]
 pub mod SessionKeyComponent {
     use core::ecdsa::check_ecdsa_signature;
@@ -357,7 +357,7 @@ pub mod SessionKeyComponent {
             }
         }
 
-        /// Revokes every session. The account must call this whenever the owner key changes.
+        /// Revokes every session. The account must call this whenever its owners change.
         fn bump_session_epoch(ref self: ComponentState<TContractState>) {
             let new_epoch = self.Session_epoch.read() + 1;
             self.Session_epoch.write(new_epoch);

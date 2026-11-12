@@ -33,18 +33,18 @@ pub mod Target {
     }
 }
 
-/// A Kamui account with a plain owner key and no social login, for devnets, where there are no
-/// SNIP-36 proofs to recover with. Sessions and outside execution are the production code.
+/// A Kamui account whose first owner key is set at deployment, with no social login. For
+/// devnets, where there are no SNIP-36 proofs to recover with. Owners, sessions and outside
+/// execution are the production code.
 #[starknet::contract(account)]
 pub mod DevAccount {
-    use openzeppelin_account::AccountComponent;
-    use openzeppelin_interfaces::accounts::IPublicKey;
     use openzeppelin_introspection::src5::SRC5Component;
     use crate::core::KamuiCoreComponent;
+    use crate::owners::OwnersComponent;
     use crate::session::component::SessionKeyComponent;
     use crate::session::interface::HasAccountOwner;
 
-    component!(path: AccountComponent, storage: account, event: AccountEvent);
+    component!(path: OwnersComponent, storage: owners, event: OwnersEvent);
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
     component!(path: SessionKeyComponent, storage: session, event: SessionEvent);
     component!(path: KamuiCoreComponent, storage: core, event: CoreEvent);
@@ -55,6 +55,8 @@ pub mod DevAccount {
     impl OutsideExecutionV2Impl =
         KamuiCoreComponent::OutsideExecutionV2Impl<ContractState>;
     #[abi(embed_v0)]
+    impl OwnersImpl = OwnersComponent::OwnersImpl<ContractState>;
+    #[abi(embed_v0)]
     impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
     #[abi(embed_v0)]
     impl SessionKeyManagerImpl =
@@ -63,15 +65,15 @@ pub mod DevAccount {
     impl SessionKeyManagerExtImpl =
         SessionKeyComponent::SessionKeyManagerExtImpl<ContractState>;
 
-    impl OZPublicKeyImpl = AccountComponent::PublicKeyImpl<ContractState>;
-    impl AccountInternalImpl = AccountComponent::InternalImpl<ContractState>;
+    impl OwnersReadImpl = OwnersComponent::ReadImpl<ContractState>;
+    impl OwnersInternalImpl = OwnersComponent::InternalImpl<ContractState>;
     impl SessionInternalImpl = SessionKeyComponent::InternalImpl<ContractState>;
     impl CoreInternalImpl = KamuiCoreComponent::InternalImpl<ContractState>;
 
     #[storage]
     struct Storage {
         #[substorage(v0)]
-        account: AccountComponent::Storage,
+        owners: OwnersComponent::Storage,
         #[substorage(v0)]
         src5: SRC5Component::Storage,
         #[substorage(v0)]
@@ -84,7 +86,7 @@ pub mod DevAccount {
     #[derive(Drop, starknet::Event)]
     enum Event {
         #[flat]
-        AccountEvent: AccountComponent::Event,
+        OwnersEvent: OwnersComponent::Event,
         #[flat]
         SRC5Event: SRC5Component::Event,
         #[flat]
@@ -95,27 +97,20 @@ pub mod DevAccount {
 
     #[constructor]
     fn constructor(ref self: ContractState, public_key: felt252) {
-        self.account.initializer(public_key);
+        self.owners.initializer(public_key);
         self.core.initializer();
     }
 
     impl AccountOwner of HasAccountOwner<ContractState> {
         fn assert_only_self(self: @ContractState) {
-            self.account.assert_only_self();
+            self.owners.assert_only_self();
         }
     }
 
-    #[abi(embed_v0)]
-    impl PublicKeyImpl of IPublicKey<ContractState> {
-        fn get_public_key(self: @ContractState) -> felt252 {
-            OZPublicKeyImpl::get_public_key(self)
-        }
-
-        fn set_public_key(
-            ref self: ContractState, new_public_key: felt252, signature: Span<felt252>,
-        ) {
-            OZPublicKeyImpl::set_public_key(ref self, new_public_key, signature);
-            self.session.bump_session_epoch();
+    impl OwnersHooks of OwnersComponent::OwnersHooksTrait<ContractState> {
+        fn after_owners_changed(ref self: OwnersComponent::ComponentState<ContractState>) {
+            let mut contract = self.get_contract_mut();
+            contract.session.bump_session_epoch();
         }
     }
 }

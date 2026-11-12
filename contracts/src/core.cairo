@@ -27,13 +27,13 @@ pub impl OutsideExecutionSNIP12Metadata of openzeppelin_utils::cryptography::sni
 
 #[starknet::component]
 pub mod KamuiCoreComponent {
-    use AccountComponent::InternalTrait as AccountInternalTrait;
+    use OwnersComponent::ReadTrait as OwnersReadTrait;
     use SRC5Component::InternalTrait as SRC5InternalTrait;
     use SessionKeyComponent::InternalTrait as SessionInternalTrait;
     use core::num::traits::Zero;
-    use openzeppelin_account::AccountComponent;
     use openzeppelin_account::extensions::src9::snip12_utils::OutsideExecutionStructHash;
     use openzeppelin_account::utils::is_tx_version_valid;
+    use openzeppelin_interfaces::accounts::ISRC6_ID;
     use openzeppelin_interfaces::src9::{ISRC9_V2, ISRC9_V2_ID, OutsideExecution};
     use openzeppelin_introspection::src5::SRC5Component;
     use openzeppelin_utils::cryptography::snip12::OffchainMessageHash;
@@ -41,6 +41,7 @@ pub mod KamuiCoreComponent {
     use starknet::account::Call;
     use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess};
     use starknet::{get_block_timestamp, get_caller_address, get_contract_address, get_tx_info};
+    use crate::owners::OwnersComponent;
     use crate::session::component::SessionKeyComponent;
     use crate::session::interface::SESSION_KEY_INTERFACE_ID;
     use super::{IKamuiAccount, OutsideExecutionSNIP12Metadata};
@@ -65,7 +66,7 @@ pub mod KamuiCoreComponent {
     impl KamuiAccount<
         TContractState,
         +HasComponent<TContractState>,
-        impl Account: AccountComponent::HasComponent<TContractState>,
+        impl Owners: OwnersComponent::HasComponent<TContractState>,
         impl Session: SessionKeyComponent::HasComponent<TContractState>,
         +SRC5Component::HasComponent<TContractState>,
         +Drop<TContractState>,
@@ -79,7 +80,7 @@ pub mod KamuiCoreComponent {
             execute_calls(calls.span())
         }
 
-        /// 2 elements: owner. 4 elements: session (SNIP-41). Anything else is refused.
+        /// 2 elements: any owner key. 4 elements: session (SNIP-41). Anything else is refused.
         /// Returns 0 instead of panicking on an invalid signature.
         fn __validate__(ref self: ComponentState<TContractState>, calls: Array<Call>) -> felt252 {
             // Only the protocol validates transactions. A contract calling this mid-transaction
@@ -90,8 +91,8 @@ pub mod KamuiCoreComponent {
             let tx_info = get_tx_info().unbox();
             let signature = tx_info.signature;
             let valid = if signature.len() == 2 {
-                let account = get_dep_component!(@self, Account);
-                account._is_valid_signature(tx_info.transaction_hash, signature)
+                let owners = get_dep_component!(@self, Owners);
+                owners.is_valid_owner_signature(tx_info.transaction_hash, signature)
             } else if signature.len() == 4 {
                 let mut session = get_dep_component_mut!(ref self, Session);
                 session.validate_session_transaction(calls.span())
@@ -113,8 +114,8 @@ pub mod KamuiCoreComponent {
         ) -> felt252 {
             let signature = signature.span();
             let valid = if signature.len() == 2 {
-                let account = get_dep_component!(self, Account);
-                account._is_valid_signature(hash, signature)
+                let owners = get_dep_component!(self, Owners);
+                owners.is_valid_owner_signature(hash, signature)
             } else if signature.len() == 4 {
                 let session = get_dep_component!(self, Session);
                 session.is_valid_session_signature(hash, signature)
@@ -133,7 +134,7 @@ pub mod KamuiCoreComponent {
     impl OutsideExecutionV2<
         TContractState,
         +HasComponent<TContractState>,
-        impl Account: AccountComponent::HasComponent<TContractState>,
+        impl Owners: OwnersComponent::HasComponent<TContractState>,
         impl Session: SessionKeyComponent::HasComponent<TContractState>,
         +SRC5Component::HasComponent<TContractState>,
         +Drop<TContractState>,
@@ -169,9 +170,9 @@ pub mod KamuiCoreComponent {
                     Errors::INVALID_SESSION,
                 );
             } else {
-                let account = get_dep_component!(@self, Account);
+                let owners = get_dep_component!(@self, Owners);
                 assert(
-                    account._is_valid_signature(message_hash, signature),
+                    owners.is_valid_owner_signature(message_hash, signature),
                     Errors::INVALID_SIGNATURE,
                 );
             }
@@ -196,9 +197,10 @@ pub mod KamuiCoreComponent {
         impl SRC5: SRC5Component::HasComponent<TContractState>,
         +Drop<TContractState>,
     > of InternalTrait<TContractState> {
-        /// Registers the SNIP-9 v2 and SNIP-41 interface ids.
+        /// Registers the SRC-6 account, SNIP-9 v2 and SNIP-41 interface ids.
         fn initializer(ref self: ComponentState<TContractState>) {
             let mut src5 = get_dep_component_mut!(ref self, SRC5);
+            src5.register_interface(ISRC6_ID);
             src5.register_interface(ISRC9_V2_ID);
             src5.register_interface(SESSION_KEY_INTERFACE_ID);
         }

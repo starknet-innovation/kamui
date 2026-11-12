@@ -43,6 +43,16 @@ pub trait ISocialRecoverable<T> {
     fn cancel_override_recovery(ref self: T);
 }
 
+/// Kamui change to upstream: how the component reaches the account's keys. Upstream calls
+/// `get_public_key` and `set_public_key` on the account; Kamui has an owner set instead.
+pub trait RecoveryTarget<TContractState> {
+    /// The value a recovery proof is bound to (the `current_pubkey` slot of the proven message).
+    /// Must change whenever the account's keys change, so a proof cannot be replayed.
+    fn recovery_anchor(self: @TContractState) -> felt252;
+    /// Gives `new_pubkey` access to the account. Called once the proof has been checked.
+    fn apply_recovery(ref self: TContractState, new_pubkey: felt252, signature: Span<felt252>);
+}
+
 #[derive(Drop, Debug, PartialEq, starknet::Event)]
 pub struct RecoveredEvent {
     pub new_pubkey: felt252,
@@ -62,7 +72,6 @@ pub mod SocialComponent {
     use SRC5Component::InternalTrait;
     use core::num::traits::Zero;
     use core::poseidon::poseidon_hash_span;
-    use openzeppelin_interfaces::accounts::{IPublicKeyDispatcher, IPublicKeyDispatcherTrait};
     use openzeppelin_introspection::src5::SRC5Component;
     use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
     use starknet::syscalls::send_message_to_l1_syscall;
@@ -75,7 +84,7 @@ pub mod SocialComponent {
     use crate::jwt::verification::{verify_and_extract, verify_recovery_aud};
     use crate::social::proof_facts::ProofFactsVerificationTrait;
     use super::{
-        FINALIZE_WINDOW, ISocialRecoverable, JWK_REGISTRY_ADDRESS, PROOF_VALIDITY_BLOCKS,
+        FINALIZE_WINDOW, ISocialRecoverable, RecoveryTarget, JWK_REGISTRY_ADDRESS, PROOF_VALIDITY_BLOCKS,
         PendingOverrideRecoveryCanceledEvent, PendingOverrideRecoveryEvent, RECOVERY_DELAY,
         RecoveredEvent, SOCIAL_COMPONENT_ID,
     };
@@ -106,7 +115,10 @@ pub mod SocialComponent {
 
     #[embeddable_as(SocialRecoverableImpl)]
     impl SocialRecoverable<
-        TContractState, +HasComponent<TContractState>,
+        TContractState,
+        +HasComponent<TContractState>,
+        +RecoveryTarget<TContractState>,
+        +Drop<TContractState>,
     > of ISocialRecoverable<ComponentState<TContractState>> {
         fn prove_jwt(
             ref self: ComponentState<TContractState>,
@@ -145,8 +157,7 @@ pub mod SocialComponent {
             }
 
             let account_address = get_contract_address();
-            let current_pubkey = IPublicKeyDispatcher { contract_address: account_address }
-                .get_public_key();
+            let current_pubkey = self.get_contract().recovery_anchor();
 
             send_message_to_l1_syscall(
                 to_address: Zero::zero(),
@@ -164,8 +175,7 @@ pub mod SocialComponent {
         ) {
             let info = get_execution_info();
             let account_address = get_contract_address();
-            let current_pubkey = IPublicKeyDispatcher { contract_address: account_address }
-                .get_public_key();
+            let current_pubkey = self.get_contract().recovery_anchor();
             let identity = self.identity.read();
 
             let facts = ProofFactsVerificationTrait::extract_verified_program(info);
@@ -189,8 +199,8 @@ pub mod SocialComponent {
                 self.pending_revocation_count.write(registry().revocation_count());
                 self.emit(PendingOverrideRecoveryEvent { new_pubkey, ready_at });
             } else {
-                IPublicKeyDispatcher { contract_address: account_address }
-                    .set_public_key(new_pubkey, signature);
+                let mut contract = self.get_contract_mut();
+                contract.apply_recovery(new_pubkey, signature);
                 self.last_recovery.write(get_block_timestamp());
 
                 self.emit(RecoveredEvent { new_pubkey });
@@ -204,9 +214,7 @@ pub mod SocialComponent {
         fn finalize_override_recovery(
             ref self: ComponentState<TContractState>, new_pubkey: felt252, signature: Span<felt252>,
         ) {
-            let account_address = get_contract_address();
-            let current_pubkey = IPublicKeyDispatcher { contract_address: account_address }
-                .get_public_key();
+            let current_pubkey = self.get_contract().recovery_anchor();
 
             let pending_recovery = self.pending_recovery.read();
             assert(pending_recovery != 0, 'NO_PENDING_RECOVERY');
@@ -227,8 +235,8 @@ pub mod SocialComponent {
 
             // Clear before the key change, so the on_key_changed hook sees nothing to cancel.
             clear_pending(ref self);
-            IPublicKeyDispatcher { contract_address: account_address }
-                .set_public_key(new_pubkey, signature);
+            let mut contract = self.get_contract_mut();
+            contract.apply_recovery(new_pubkey, signature);
 
             self.last_recovery.write(get_block_timestamp());
 

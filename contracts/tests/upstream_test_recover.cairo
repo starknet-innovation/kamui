@@ -1,9 +1,12 @@
+// Kamui: adapted from upstream. The account has an owner set, so `get_public_key` and
+// `set_public_key` became `is_owner`, `get_owners_anchor` and `add_owner` (4 call sites).
 //! `recover` is the only part of SocialAccount that runs on the live chain. Without proof facts
 //! it must be refused everywhere, mainnet or not.
 
 use core::hash::{HashStateExTrait, HashStateTrait};
 use core::poseidon::{PoseidonTrait, poseidon_hash_span};
-use openzeppelin_interfaces::accounts::{IPublicKeyDispatcher, IPublicKeyDispatcherTrait, ISRC6_ID};
+use kamui::owners::{IOwnersDispatcher, IOwnersDispatcherTrait};
+use openzeppelin_interfaces::accounts::ISRC6_ID;
 use openzeppelin_interfaces::introspection::{ISRC5Dispatcher, ISRC5DispatcherTrait};
 use snforge_std::signature::stark_curve::{StarkCurveKeyPairImpl, StarkCurveSignerImpl};
 use snforge_std::signature::{KeyPairTrait, SignerTrait};
@@ -72,7 +75,7 @@ fn key_change_clears_pending_override() {
 
     let (new_key, signature) = accept_ownership(account);
     start_cheat_caller_address(account, account);
-    IPublicKeyDispatcher { contract_address: account }.set_public_key(new_key, signature);
+    IOwnersDispatcher { contract_address: account }.add_owner(new_key, signature);
 
     assert(load(account, selector!("pending_recovery"), 1) == array![0], 'PENDING_NOT_CLEARED');
     assert(load(account, selector!("pending_ready_at"), 1) == array![0], 'READY_AT_NOT_CLEARED');
@@ -133,7 +136,7 @@ fn finalize_works_until_the_window_closes() {
 
     start_cheat_block_timestamp(account, 1000 + FINALIZE_WINDOW);
     finalize(account, new_key, signature).unwrap();
-    assert!(IPublicKeyDispatcher { contract_address: account }.get_public_key() == new_key);
+    assert!(IOwnersDispatcher { contract_address: account }.is_owner(new_key));
 }
 
 #[test]
@@ -190,7 +193,7 @@ fn recover_with_valid_facts_sets_the_key() {
     let mut spy = spy_events();
     recover(account, new_key, signature).unwrap();
 
-    assert!(IPublicKeyDispatcher { contract_address: account }.get_public_key() == new_key);
+    assert!(IOwnersDispatcher { contract_address: account }.is_owner(new_key));
     assert!(load(account, selector!("last_recovery"), 1) == array![500]);
     spy
         .assert_emitted(
@@ -244,7 +247,7 @@ fn override_facts_queue_a_pending_recovery() {
     recover(account, NEW_KEY, array![].span()).unwrap();
 
     let ready_at = 500 + RECOVERY_DELAY;
-    assert!(IPublicKeyDispatcher { contract_address: account }.get_public_key() == 0);
+    assert!(IOwnersDispatcher { contract_address: account }.get_owners_anchor() == 0);
     let pending = poseidon_hash_span([NEW_KEY, 0].span());
     assert!(load(account, selector!("pending_recovery"), 1) == array![pending]);
     assert!(load(account, selector!("pending_ready_at"), 1) == array![ready_at.into()]);

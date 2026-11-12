@@ -110,6 +110,9 @@ pub fn is_blocked_selector(selector: felt252) -> bool {
         // Kamui session extensions
         || selector == selector!("add_or_update_scoped_session_key")
         || selector == selector!("revoke_all_sessions")
+        // Owner set
+        || selector == selector!("add_owner")
+        || selector == selector!("remove_owner")
         // Protocol entry points
         || selector == selector!("__validate__")
         || selector == selector!("__validate_declare__")

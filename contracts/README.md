@@ -6,13 +6,21 @@ Cairo contracts for the Kamui account. Not audited. Do not deploy with real fund
 
 | File | What it is |
 |---|---|
-| `src/account.cairo` | `KamuiAccount`: social login and recovery, session keys, outside execution. Deployed from `(aud, identity)` with owner key 0 until the first recovery. |
+| `src/account.cairo` | `KamuiAccount`: social login and recovery, an owner set, session keys, outside execution. Deployed from `(aud, identity)` with no owner until the first recovery. Not upgradeable (plan D1). |
+| `src/owners.cairo` | `OwnersComponent`: up to 5 owner keys, one per device (plan D4). |
 | `src/core.cairo` | `KamuiCoreComponent`: `__validate__`, `__execute__`, `is_valid_signature` and Kamui's own SNIP-9 `execute_from_outside_v2`, for owner and session signatures. |
 | `src/session/` | `SessionKeyComponent`, written from SNIP-41 (starknet-io/SNIPs PR 180 at `ae0970c`). The choices it makes where the SNIP is open are listed at the top of `component.cairo`. |
-| `src/jwt/`, `src/social/` | Copied unchanged from keep-starknet-strange/social-account (MIT). See `THIRD_PARTY.md`. |
-| `src/mocks.cairo` | Test contracts, including `DevAccount`: the same core and sessions with a plain owner key, for devnets. |
+| `src/jwt/`, `src/social/` | From keep-starknet-strange/social-account (MIT). Unchanged except `social/component.cairo`, which reaches the account's keys through a `RecoveryTarget` trait instead of `get_public_key` and `set_public_key`. See `THIRD_PARTY.md`. |
+| `src/mocks.cairo` | Test contracts, including `DevAccount`: the same core, owners and sessions with a first owner key set at deployment, for devnets. |
 
-Every change of owner key goes through `set_public_key`, including `recover` and a finalized override. That function drops any pending override and revokes every session.
+## Owners, recovery and sessions
+
+- Any owner key signs for the account, with a plain `[r, s]` signature.
+- A login on a new device (`recover`, or a finalized override) adds that device's key. Existing keys keep working.
+- If the set is full (5 keys), a recovery replaces the oldest key, so a user who lost every device can still get back in. An owner adding a key by hand gets an error instead.
+- An owner can remove a key, but not the last one.
+- Every change of the owner set (a login on a new device, a key added or removed by an owner) revokes every session and drops any pending override recovery (plan D5). Sessions have to be approved again afterwards.
+- Recovery proofs and new-owner signatures are bound to an anchor that changes with every change of the set, so a proof cannot be replayed to bring back a removed key.
 
 ## Build and test
 
@@ -24,7 +32,7 @@ scarb build
 snforge test
 ```
 
-119 tests: 65 for sessions and outside execution, 5 for recovery with sessions, and upstream's 49 (20 in `tests/upstream_*.cairo` run against `KamuiAccount`, 29 unit tests in `src/jwt`).
+134 tests: 64 for sessions and outside execution, 21 for owners and recovery, and upstream's 49 (20 in `tests/upstream_*.cairo` run against `KamuiAccount`, with four call sites adapted to the owner set, and 29 unit tests in `src/jwt`).
 
 ## Devnet profile
 
@@ -35,7 +43,7 @@ docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --see
 cd scripts && bun install && bun run devnet-profile.ts
 ```
 
-Result on 2026-11-12 (devnet image built 2026-11-09, gas price 1 gwei-equivalent in fri):
+Result on 2026-11-12, rerun after the owner set (devnet image built 2026-11-09):
 
 | Transaction | Account storage writes | L2 gas |
 |---|---:|---:|
@@ -47,11 +55,13 @@ Result on 2026-11-12 (devnet image built 2026-11-09, gas price 1 gwei-equivalent
 
 This meets SNIP-41's storage budget: at most one write per session transaction, and none on the self-paid path after the first. The sponsored write is the SNIP-9 nonce, which any SNIP-9 account pays.
 
+The L2 gas column is what the devnet reported. It did not change at all when the owner check went from one key to a loop over the owner set, so treat it as a rough figure, not as a measure of execution cost.
+
 The sponsored transactions are signed over typed data built by starknet.js's own `outsideExecution.getTypedData`, so the message hash matches what standard tooling produces.
 
 ## Not done
 
-- Upgrade path (plan D1) and multi-device owner set (plan D4).
-- Pepper (plan D2): upstream supports it in `prove_jwt`; nothing here supplies one.
+- Pepper service (plan D2): upstream supports a pepper in `prove_jwt`; nothing here supplies one yet.
+- A real measure of owner-transaction cost with 1 to 5 keys.
 - Spending policy (SNIP-41 Part H).
-- A run of `prove_jwt` and `recover` for `KamuiAccount` on Sepolia with a real proof. Adding sessions changes the class, so it needs its own declaration.
+- A run of `prove_jwt` and `recover` for `KamuiAccount` on Sepolia with a real proof. The class differs from upstream's, so it needs its own declaration, and upstream's backend and SDK need small changes (they read `get_public_key`; Kamui exposes `get_owners_anchor`).

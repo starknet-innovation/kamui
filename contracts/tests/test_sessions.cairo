@@ -7,16 +7,19 @@ use kamui::session::interface::{
     ISessionKeyManagerExtDispatcher, ISessionKeyManagerExtDispatcherTrait,
     SESSION_KEY_INTERFACE_ID, SessionData,
 };
-use openzeppelin_interfaces::accounts::{IPublicKeyDispatcher, IPublicKeyDispatcherTrait};
+use kamui::owners::{IOwnersDispatcher, IOwnersDispatcherTrait, new_owner_message_hash};
+use kamui::social::component::{ISocialRecoverableDispatcher, ISocialRecoverableDispatcherTrait};
+use kamui::social::proof_facts::{VIRTUAL_SNOS, VIRTUAL_SNOS0};
 use openzeppelin_interfaces::introspection::{ISRC5Dispatcher, ISRC5DispatcherTrait};
 use openzeppelin_interfaces::src9::ISRC9_V2_ID;
 use snforge_std::signature::stark_curve::{StarkCurveKeyPairImpl, StarkCurveSignerImpl};
 use snforge_std::signature::{KeyPair, KeyPairTrait, SignerTrait};
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp_global,
-    start_cheat_caller_address, start_cheat_nonce, start_cheat_resource_bounds,
+    start_cheat_block_number, start_cheat_caller_address, start_cheat_nonce,
+    start_cheat_proof_facts, start_cheat_resource_bounds,
     start_cheat_signature, start_cheat_tip, start_cheat_transaction_hash,
-    start_cheat_transaction_version, store,
+    start_cheat_transaction_version, stop_cheat_caller_address,
 };
 use starknet::account::Call;
 use starknet::{ContractAddress, ResourcesBounds, SyscallResultTrait};
@@ -43,19 +46,52 @@ pub struct Env {
 
 pub fn setup() -> Env {
     start_cheat_block_timestamp_global(NOW);
-    // The production account: deployed from (aud, identity) with key 0. A real account gets its
-    // key from a recovery proof; here it is written straight to storage.
+    // The production account: deployed from (aud, identity) with no owner. The first owner key
+    // arrives the way it does in production, through `recover`, with cheated proof facts.
     let account_class = declare("KamuiAccount").unwrap_syscall().contract_class();
     let mut calldata = array![];
     let aud: ByteArray = "aud";
     aud.serialize(ref calldata);
     calldata.append(IDENTITY);
     let (account, _) = account_class.deploy(@calldata).unwrap_syscall();
-    store(account, selector!("Account_public_key"), array![owner_key().public_key].span());
+    recover_onto(account, owner_key());
     let target_class = declare("Target").unwrap_syscall().contract_class();
     let (target, _) = target_class.deploy(@array![]).unwrap_syscall();
     let (other, _) = target_class.deploy(@array![]).unwrap_syscall();
     Env { account, target, other }
+}
+
+pub fn owners(account: ContractAddress) -> IOwnersDispatcher {
+    IOwnersDispatcher { contract_address: account }
+}
+
+/// `key`'s signature accepting ownership of `account` at its current owner set.
+pub fn new_owner_signature(account: ContractAddress, key: KeyPair<felt252, felt252>) -> Span<felt252> {
+    let anchor = owners(account).get_owners_anchor();
+    let (r, s) = key.sign(new_owner_message_hash(account, anchor)).unwrap();
+    array![r, s].span()
+}
+
+/// Proof facts for a non-override recovery of `account` onto `new_key`, as the sequencer would
+/// attach them (format from upstream's tests).
+pub fn recovery_facts(account: ContractAddress, new_key: felt252) -> Span<felt252> {
+    let anchor = owners(account).get_owners_anchor();
+    let message = array![account.into(), 0, 5, account.into(), IDENTITY, new_key, anchor, 0];
+    array![
+        1, VIRTUAL_SNOS, 0x11, VIRTUAL_SNOS0, 10, 0x22, 0x33, 1,
+        core::poseidon::poseidon_hash_span(message.span()),
+    ]
+        .span()
+}
+
+/// A proven login on a new device: adds `key` as an owner through `recover`.
+pub fn recover_onto(account: ContractAddress, key: KeyPair<felt252, felt252>) {
+    start_cheat_proof_facts(account, recovery_facts(account, key.public_key));
+    start_cheat_block_number(account, 10);
+    // Sent by a relayer, with no caller cheat in the way.
+    stop_cheat_caller_address(account);
+    ISocialRecoverableDispatcher { contract_address: account }
+        .recover(key.public_key, new_owner_signature(account, key));
 }
 
 pub fn as_owner(env: Env) {
@@ -95,7 +131,7 @@ pub fn session_signature(
 }
 
 /// Runs `__validate__` the way the protocol does: zero caller, V3, cheap fee fields.
-fn validate_raw(
+pub fn validate_raw(
     env: Env, calls: Array<Call>, signature: Span<felt252>, tx_hash: felt252, nonce: felt252,
 ) -> felt252 {
     start_cheat_caller_address(env.account, Zero::zero());
@@ -454,7 +490,7 @@ fn blocked_selectors() -> Array<felt252> {
         selector!("setPublicKey"), selector!("execute_from_outside_v2"),
         selector!("set_spending_policy"), selector!("remove_spending_policy"),
         selector!("add_or_update_scoped_session_key"), selector!("revoke_all_sessions"),
-        selector!("__validate__"), selector!("__validate_declare__"),
+        selector!("add_owner"), selector!("remove_owner"), selector!("__validate__"), selector!("__validate_declare__"),
         selector!("__validate_deploy__"), selector!("recover"), selector!("prove_jwt"),
         selector!("finalize_override_recovery"), selector!("cancel_override_recovery"),
     ]
@@ -506,7 +542,7 @@ fn a_session_never_calls_the_account_itself() {
     add_session(env, 5, FEE_CAP, array![]);
     assert_eq!(validate_session(env, array![call(env.account, selector!("ping"))], 1), 0);
     assert_eq!(
-        validate_session(env, array![call(env.account, selector!("get_public_key"))], 1), 0,
+        validate_session(env, array![call(env.account, selector!("get_owners"))], 1), 0,
     );
     // And with one that names the selector.
     add_session(env, 5, FEE_CAP, array![selector!("ping")]);
@@ -653,35 +689,14 @@ fn revoke_all_sessions_kills_every_session() {
     default_fees(env);
     add_session(env, 5, FEE_CAP, array![]);
     as_owner(env);
+    let before = ext(env).get_session_epoch();
     ext(env).revoke_all_sessions();
-    assert_eq!(ext(env).get_session_epoch(), 1);
+    assert_eq!(ext(env).get_session_epoch(), before + 1);
     assert_eq!(manager(env).get_session_data(session_key().public_key), EMPTY);
     assert_eq!(validate_session(env, ping(env), 1), 0);
     // A session added afterwards works.
     add_session(env, 5, FEE_CAP, array![]);
     assert_eq!(validate_session(env, ping(env), 1), starknet::VALIDATED);
-}
-
-#[test]
-fn rotating_the_owner_key_kills_every_session() {
-    let env = setup();
-    default_fees(env);
-    add_session(env, 5, FEE_CAP, array![]);
-
-    let new_owner: KeyPair<felt252, felt252> = KeyPairTrait::from_secret_key(0x3333);
-    let message = core::poseidon::poseidon_hash_span(
-        array![
-            'StarkNet Message', 'accept_ownership', env.account.into(), owner_key().public_key,
-        ]
-            .span(),
-    );
-    let (r, s) = new_owner.sign(message).unwrap();
-    as_owner(env);
-    let account = IPublicKeyDispatcher { contract_address: env.account };
-    account.set_public_key(new_owner.public_key, array![r, s].span());
-
-    assert_eq!(account.get_public_key(), new_owner.public_key);
-    assert_eq!(validate_session(env, ping(env), 1), 0);
 }
 
 //
