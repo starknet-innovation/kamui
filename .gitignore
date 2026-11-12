@@ -10,3 +10,5 @@ node_modules/
 target/
 .snfoundry_cache/
 .DS_Store
+# Machine-local dev server config (absolute paths)
+.claude/launch.json
