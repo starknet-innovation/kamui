@@ -1,18 +1,32 @@
 // Entry point. `bun run src/index.ts` serves; `--print-key-check` prints the key check value.
+// PEPPER_KEY_SOURCE picks the key holder: env (development) or kms (AWS KMS).
 import { createApp } from './app';
-import { loadConfig, loadDeriver, loadKey } from './config';
+import { keySource, kmsSettings, loadConfig, loadDeriver, loadKey, loadKmsDeriver } from './config';
 import { keyCheckValue } from './derive';
 import { cachedJwks, fetchJwks } from './jwt';
+import { awsKms, macKeyCheckValue } from './kms';
 import { stdoutLogger } from './log';
 
+const source = keySource(process.env);
+const kms = source === 'kms' ? await awsKms(kmsSettings(process.env).keyId, kmsSettings(process.env).region) : undefined;
+
+// Run once when the key is created, and record the output as PEPPER_KEY_CHECK.
 if (process.argv.includes('--print-key-check')) {
-  console.log(keyCheckValue(loadKey(process.env)));
+  console.log(kms ? await macKeyCheckValue(kms.client) : keyCheckValue(loadKey(process.env)));
   process.exit(0);
 }
 
 const cfg = loadConfig(process.env);
+let deriver;
+if (kms) {
+  const loaded = await loadKmsDeriver(process.env, kms);
+  deriver = loaded.deriver;
+  stdoutLogger({ event: 'kms_key', multi_region: loaded.key.multiRegion === true });
+} else {
+  deriver = loadDeriver(process.env);
+}
 const handle = createApp({
-  deriver: loadDeriver(process.env),
+  deriver,
   audiences: cfg.audiences,
   lookupKey: cachedJwks(fetchJwks, Date.now),
   now: Date.now,

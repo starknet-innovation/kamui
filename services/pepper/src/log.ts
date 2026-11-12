@@ -6,7 +6,7 @@
 import type { IssuerName } from './jwt';
 
 export type LogEntry = {
-  event: 'start' | 'request' | 'internal_error';
+  event: 'start' | 'request' | 'internal_error' | 'kms_key';
   request_id?: string;
   /** HTTP status of the response. */
   status?: number;
@@ -21,6 +21,8 @@ export type LogEntry = {
   /** Class name of an unexpected error. Never its message: messages may quote input. */
   error_class?: string;
   port?: number;
+  /** Whether the KMS key has replicas in other Regions. Logged once at startup. */
+  multi_region?: boolean;
 };
 
 export type Logger = (entry: LogEntry) => void;

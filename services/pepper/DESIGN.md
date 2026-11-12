@@ -349,7 +349,7 @@ What this changes in section 5:
 - **No restore drill.** There is nothing to restore from. Question 11's launch gate becomes: the guardrails below are in place and reviewed, and a failover to a replica Region has been exercised.
 - **The key cannot be moved.** "Move the same key to another provider" is no longer possible. Existing accounts depend on this AWS key for as long as they exist.
 - **The key check value still works.** It is one `GenerateMac` call on the fixed tag, recorded when the key is created, and compared at startup.
-- **The derivation is unchanged.** `GenerateMac` with `HMAC_SHA_256` computes the same function as the reference; the service still applies the 250-bit mask. `PepperDeriver` in `src/derive.ts` is where a KMS-backed implementation goes. It is not written yet.
+- **The derivation is unchanged.** `GenerateMac` with `HMAC_SHA_256` computes the same function as the reference; the service still applies the 250-bit mask. The KMS-backed key holder is `src/kms.ts`, selected with `PEPPER_KEY_SOURCE=kms`. It is tested against a fake KMS client, not against AWS.
 
 The risk accepted with this choice: if the KMS key is deleted, or SNF permanently loses access to the AWS account that holds it, no pepper can ever be derived again. The effects are those listed under "Key loss" in section 5, and nothing can repair them, because accounts are not upgradeable.
 
@@ -377,3 +377,7 @@ Answers question 6 with yes. The key has no backup outside AWS KMS, so an export
 - A login can take the pepper from the file instead of asking the service. The client must check that the file's pepper, with the login token's claims, gives the file's account address before using it.
 - What the file gives away: its holder learns that user's account address. It gives no access to the account: recovery still needs a login token from the issuer and a proof.
 - The keychain should offer the export after the first login, explain what the file is for, and let the user protect it with a passphrase. Passphrase protection is not implemented in the SDK yet.
+
+### 2026-11-12: the key proof is required
+
+Answers question 3 with yes. Every pepper request must carry the device public key, the blinding value and a signature by the device key bound to the token's nonce (section 4). `REQUIRE_KEY_PROOF` stays on by default; the switch exists for development only. The SDK's login flow has to produce the proof, and its signatures must be checked against this service when that flow is written.

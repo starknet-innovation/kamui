@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "3.1167.0",
     "@scure/starknet": "1.1.0"
   },
   "devDependencies": {

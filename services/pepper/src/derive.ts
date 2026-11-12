@@ -67,6 +67,17 @@ export function keyCheckValue(key: Uint8Array): string {
   return createHmac('sha256', key).update(KEY_CHECK_TAG).digest('hex').slice(0, 16);
 }
 
+/** The message whose MAC is the key check value. Shared by every kind of key holder. */
+export function keyCheckMessage(): Uint8Array {
+  return new TextEncoder().encode(KEY_CHECK_TAG);
+}
+
+/** The key check value from the MAC of `keyCheckMessage()`: its first 16 hex characters. */
+export function keyCheckFromMac(mac: Uint8Array): string {
+  if (mac.length !== 32) throw new Error('BAD_MAC_LENGTH');
+  return Buffer.from(mac).toString('hex').slice(0, 16);
+}
+
 function assertKey(key: Uint8Array) {
   if (key.length !== KEY_BYTES) throw new Error('BAD_KEY_LENGTH');
 }
