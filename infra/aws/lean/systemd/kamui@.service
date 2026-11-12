@@ -1,0 +1,25 @@
+[Unit]
+Description=Kamui %i host stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/kamui/lean
+Environment=CONFIG_DIRECTORY=/etc/kamui
+Environment=STATE_DIRECTORY=/var/lib/kamui
+ExecStartPre=/usr/bin/python3 /opt/kamui/lean/scripts/host.py %i validate
+ExecStart=/usr/bin/python3 /opt/kamui/lean/scripts/host.py %i up
+ExecStop=/usr/bin/python3 /opt/kamui/lean/scripts/host.py %i down
+TimeoutStartSec=240
+TimeoutStopSec=60
+# Docker access is root-equivalent. Never grant the socket to application containers.
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

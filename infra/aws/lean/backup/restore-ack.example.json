@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "generation": "REPLACE_WITH_CURRENT_BLOCKED_GENERATION",
+  "mode": "restored",
+  "reviewRef": "REPLACE_WITH_PRIVATE_RECONCILIATION_REFERENCE",
+  "apiAndRotatorStopped": true,
+  "originalWriterCannotRestart": true,
+  "signerHistoryReconciled": true,
+  "uncertainIntentsRetained": true,
+  "replayAndBudgetsConservative": true
+}

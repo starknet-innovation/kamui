@@ -135,3 +135,7 @@ What this does not show:
 - **Embedded modes** (iframe with the Storage Access API, or popup) for apps that cannot afford a page reload.
 - **Reviewed hosting and a production build/domain.** `KEYCHAIN_PUBLIC_ORIGIN` can now pin an HTTPS callback, preserving localhost defaults. `kamui.page` is registered with Cloudflare DNS; the proposed `sepolia.kamui.page` is not deployed. The user kept the AWS-owner review path. See [PUBLIC_ORIGIN.md](PUBLIC_ORIGIN.md) for Google configuration and operator steps. Stored device keys are scoped to the origin; moving it requires a new-device sign-in.
 - **Sponsorship** can use the development relayer or the optional separate AVNU transport. AVNU was tested on Sepolia; external fee/spending controls still need operator review (`../services/backend/PAYMASTER.md`).
+
+## Lean production image
+
+`Dockerfile` builds browser JavaScript ahead of startup and includes the complete verified prover assets/notices. Production mode reads only explicit public configuration, never the backend developer secret file. Its `/api` proxy allows exact routes/methods, bounds bodies and outbound time, strips arbitrary response headers and forwards caller sponsorship credentials only on `POST /api/sponsor`. It does not inject a privileged token. [Host package](../infra/aws/lean/README.md), [validation](../infra/aws/lean/VALIDATION.md). Hosted wallet-management sponsorship remains off pending a dedicated owner-authenticated funding path; local browser tests use mocked services.

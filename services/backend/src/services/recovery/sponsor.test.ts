@@ -66,7 +66,7 @@ describe('sponsoring', () => {
     const { ctx, sent, bounds } = context();
     const result = await sponsorOutsideExecution(call(), null, ctx);
     expect(result).toEqual({ transaction_hash: '0xabc' });
-    expect(sent).toEqual([{ call: { contractAddress: ACCOUNT, entrypoint: 'execute_from_outside_v2', calldata: ['0x1', '0x2'] }, details: { resourceBounds: bounds } }]);
+    expect(sent).toEqual([{ call: { contractAddress: ACCOUNT, entrypoint: 'execute_from_outside_v2', calldata: ['0x1', '0x2'] }, details: { resourceBounds: bounds, tip: 0n } }]);
   });
 
   test('refuses a contract that is not a Kamui account', async () => {
@@ -84,7 +84,7 @@ describe('sponsoring', () => {
   });
 });
 
-describe('finding #4: the budget is spent only by submitted transactions', () => {
+describe('preflight refusals are free; possible paid sends consume the budget', () => {
   test('rejected calls do not use the budget', async () => {
     resetMetrics();
     const { ctx, sent, state } = context({ anonymous: { txPerPeriod: 3 } });
@@ -101,13 +101,14 @@ describe('finding #4: the budget is spent only by submitted transactions', () =>
     expect(metrics.sponsor.get({ budget: 'anonymous', decision: 'sponsored' })).toBe(1);
   });
 
-  test('a failure of the node or of the relayer does not use the budget either', async () => {
+  test('an uncertain local submission consumes budget and cannot be retried as free', async () => {
     const { ctx } = context({ anonymous: { txPerPeriod: 1 } });
     const execute = ctx.relayer.execute;
     (ctx.relayer as any).execute = async () => { throw new Error('socket hang up'); };
     await expect(sponsorOutsideExecution(call(), null, ctx)).rejects.toThrow('socket hang up');
     (ctx.relayer as any).execute = execute;
-    expect(await status(sponsorOutsideExecution(call(), null, ctx))).toBe('ok');
+    expect(await ctx.ledger.used('anonymous:total', 3_600_000)).toBe(1);
+    expect(await status(sponsorOutsideExecution(call(), null, ctx))).toBe('429 SPONSOR_CAP');
   });
 
   test('submitted transactions count, the cap holds, and it frees up after the period', async () => {

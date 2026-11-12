@@ -18,6 +18,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY src ./src
+# Normalize source permissions only; runtime KMS settings/secrets are never copied.
+RUN chmod -R a+rX /app/src && chmod a+r /app/package.json
 # The base image ships an unprivileged user `bun` (uid 1000).
 USER bun
 EXPOSE 8787

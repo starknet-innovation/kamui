@@ -21,3 +21,16 @@ export function keychainOrigin(settings: { port: number; publicOrigin?: string }
   }
   return { origin: url.origin, redirectUri: `${url.origin}/callback` };
 }
+
+const publicPosts = new Set(['/recover/status', '/deploy/authenticated', '/relay', '/sponsor', '/registry/sessions', '/registry/sessions/list', '/registry/sessions/remove']);
+/** Explicit routes only: never expose metrics, operator commands, or legacy proving. */
+export function apiProxyAllowed(path: string, method: string): boolean {
+  return method === 'POST' ? publicPosts.has(path) : method === 'GET' && (path === '/live' || path === '/health/api');
+}
+
+export function publicHttpsUrl(value: string | undefined, name: string): string {
+  let url: URL;
+  try { if (!value) throw Error(); url = new URL(value); } catch { throw new Error(`${name}_INVALID`); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search) throw new Error(`${name}_INVALID`);
+  return value!;
+}

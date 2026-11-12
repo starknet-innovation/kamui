@@ -1,0 +1,158 @@
+# Host package: images and configuration are supplied by the reviewed release manifest.
+# Run through scripts/host.sh; no local source build and no public API/database port.
+name: kamui-backend
+x-runtime: &runtime
+  restart: "no"
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  logging: { driver: local, options: { max-size: "10m", max-file: "3" } }
+  tmpfs: ["/tmp:rw,nosuid,nodev,size=64m"]
+services:
+  caddy:
+    <<: *runtime
+    image: ${CADDY_IMAGE:?Digest-pinned CADDY_IMAGE required}
+    ports: ["80:80", "443:443"]
+    cap_add: [NET_BIND_SERVICE]
+    environment: { KEYCHAIN_HOST: "sepolia.kamui.page" }
+    volumes:
+      - ../caddy/backend.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${STATE_DIRECTORY:-/var/lib/kamui}/caddy:/data
+      - ${STATE_DIRECTORY:-/var/lib/kamui}/caddy-config:/config
+    networks: [edge, frontend]
+    depends_on: { keychain: { condition: service_healthy } }
+    mem_limit: 96m
+  keychain:
+    <<: *runtime
+    image: ${KEYCHAIN_IMAGE:?Digest-pinned KEYCHAIN_IMAGE required}
+    env_file: ["${CONFIG_DIRECTORY:-/etc/kamui}/keychain.public.env"]
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "5173"
+      API_URL: http://api:3000
+      KEYCHAIN_PUBLIC_ORIGIN: https://sepolia.kamui.page
+      PEPPER_URL: https://pepper-sepolia.kamui.page
+      KEYCHAIN_TRUST_PROXY: "true"
+      APPLE_CLIENT_ID: ""
+    networks: [frontend, api]
+    mem_limit: 320m
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:5173/live');process.exit(r.ok?0:1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  api:
+    <<: *runtime
+    image: ${BACKEND_IMAGE:?Digest-pinned BACKEND_IMAGE required}
+    command: ["bun", "run", "service:api"]
+    env_file: ["${CONFIG_DIRECTORY:-/etc/kamui}/backend.public.env"]
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      STORAGE_BACKEND: postgres
+      DATABASE_URL_FILE: /run/secrets/DATABASE_URL
+      SECRET_SOURCE: files
+      RESTORE_GATE_FILE: /run/kamui/restore-gate/state.json
+      FUNDING_POLICY_FILE: /etc/kamui/funding-policy.json
+      TRUSTED_PROXY_HOPS: "2"
+      METRICS_HOST: 0.0.0.0
+      ROTATOR_URL: http://rotator:3001
+      AUTHORIZED_APPLE_RECOVERY_CLIENT_ID: ""
+    secrets: [DATABASE_URL, RELAYER_PRIVATE_KEY]
+    volumes:
+      - ${STATE_DIRECTORY:-/var/lib/kamui}/restore-gate:/run/kamui/restore-gate:ro
+      - ${CONFIG_DIRECTORY:-/etc/kamui}/funding-policy.json:/etc/kamui/funding-policy.json:ro
+    networks: [api, database, rotator, api_egress]
+    mem_limit: 512m
+    depends_on: { postgres: { condition: service_healthy } }
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:3000/live');process.exit(r.ok?0:1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  postgres:
+    <<: *runtime
+    image: ${POSTGRES_IMAGE:?Digest-pinned PostgreSQL-with-pgBackRest image required}
+    environment:
+      POSTGRES_DB: kamui
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
+      APP_PASSWORD_FILE: /run/secrets/APP_DATABASE_PASSWORD
+      PGDATA: /var/lib/postgresql/data
+    secrets: [POSTGRES_PASSWORD, APP_DATABASE_PASSWORD]
+    volumes:
+      - ${POSTGRES_DATA_DIRECTORY:-${STATE_DIRECTORY:-/var/lib/kamui}/postgres}:/var/lib/postgresql/data
+      - ./init-app-role.sh:/docker-entrypoint-initdb.d/10-kamui-app-role.sh:ro
+      - ${CONFIG_DIRECTORY:-/etc/kamui}/backup/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ../backup/postgresql-backup.conf:/etc/postgresql/kamui.conf:ro
+    user: "999:999"
+    command: ["postgres", "-c", "include=/etc/postgresql/kamui.conf"]
+    networks: [database, backup_egress]
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=64m", "/var/run/postgresql:rw,nosuid,nodev,size=4m,uid=999,gid=999"]
+    shm_size: 128m
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "kamui"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+  rotator:
+    <<: *runtime
+    image: ${BACKEND_IMAGE:?Digest-pinned BACKEND_IMAGE required}
+    command: ["bun", "run", "service:rotator"]
+    env_file: ["${CONFIG_DIRECTORY:-/etc/kamui}/rotator.public.env"]
+    environment: { NODE_ENV: production, SECRET_SOURCE: files, RESTORE_GATE_FILE: /run/kamui/restore-gate/state.json }
+    volumes:
+      - ${STATE_DIRECTORY:-/var/lib/kamui}/restore-gate:/run/kamui/restore-gate:ro
+    secrets: [OWNER_PRIVATE_KEY]
+    networks: [rotator, rotator_egress]
+    mem_limit: 192m
+  watcher:
+    <<: *runtime
+    image: ${BACKEND_IMAGE:?Digest-pinned BACKEND_IMAGE required}
+    command: ["bun", "run", "service:watcher"]
+    env_file: ["${CONFIG_DIRECTORY:-/etc/kamui}/watcher.public.env"]
+    environment: { NODE_ENV: production }
+    networks: [watcher_egress]
+    mem_limit: 128m
+  operator:
+    <<: *runtime
+    profiles: [operator]
+    env_file: ["${CONFIG_DIRECTORY:-/etc/kamui}/backend.public.env"]
+    image: ${BACKEND_IMAGE:?Digest-pinned BACKEND_IMAGE required}
+    user: "0:0"
+    restart: "no"
+    command: ["bun", "-e", "console.error('OPERATOR_COMMAND_REQUIRED');process.exit(1)"]
+    environment:
+      NODE_ENV: production
+      CHAIN_ID: SN_SEPOLIA
+      DATABASE_URL_FILE: /run/secrets/DATABASE_URL
+      RESTORE_GATE_FILE: /run/kamui/restore-gate/state.json
+    secrets:
+      - source: OPERATOR_DATABASE_URL
+        target: DATABASE_URL
+    volumes:
+      - ${STATE_DIRECTORY:-/var/lib/kamui}/restore-gate:/run/kamui/restore-gate
+      - ${CONFIG_DIRECTORY:-/etc/kamui}/operator:/run/kamui/operator:ro
+    networks: [database]
+    mem_limit: 256m
+secrets:
+  OPERATOR_DATABASE_URL: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/OPERATOR_DATABASE_URL" }
+  DATABASE_URL: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/DATABASE_URL" }
+  RELAYER_PRIVATE_KEY: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/RELAYER_PRIVATE_KEY" }
+  OWNER_PRIVATE_KEY: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/OWNER_PRIVATE_KEY" }
+  POSTGRES_PASSWORD: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/POSTGRES_PASSWORD" }
+  APP_DATABASE_PASSWORD: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/APP_DATABASE_PASSWORD" }
+networks:
+  edge: {}
+  frontend: { internal: true }
+  api: { internal: true }
+  database: { internal: true }
+  rotator: { internal: true }
+  api_egress: {}
+  backup_egress: {}
+  rotator_egress: {}
+  watcher_egress: {}

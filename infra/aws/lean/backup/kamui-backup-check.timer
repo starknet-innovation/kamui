@@ -1,0 +1,9 @@
+[Unit]
+Description=Kamui hourly WAL archive check (review before enabling)
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+Unit=kamui-backup@check.service
+[Install]
+WantedBy=timers.target

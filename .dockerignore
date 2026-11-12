@@ -1,0 +1,15 @@
+.git
+**/node_modules
+**/.env
+**/.env.*
+**/*.local
+**/data
+**/test-results
+**/evidence
+**/playwright-report
+**/dist
+spikes
+services
+apps
+contracts
+infra

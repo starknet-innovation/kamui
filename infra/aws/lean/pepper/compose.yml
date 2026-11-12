@@ -1,0 +1,46 @@
+name: kamui-pepper
+x-runtime: &runtime
+  restart: unless-stopped
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  logging: { driver: local, options: { max-size: "10m", max-file: "3" } }
+  tmpfs: ["/tmp:rw,nosuid,nodev,size=32m"]
+services:
+  caddy:
+    <<: *runtime
+    image: ${CADDY_IMAGE:?Digest-pinned CADDY_IMAGE required}
+    ports: ["80:80", "443:443"]
+    cap_add: [NET_BIND_SERVICE]
+    environment: { PEPPER_HOST: "pepper-sepolia.kamui.page" }
+    volumes:
+      - ../caddy/pepper.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${STATE_DIRECTORY:-/var/lib/kamui}/caddy:/data
+      - ${STATE_DIRECTORY:-/var/lib/kamui}/caddy-config:/config
+    networks: [edge, pepper]
+    mem_limit: 96m
+    depends_on: { pepper: { condition: service_healthy } }
+  pepper:
+    <<: *runtime
+    image: ${PEPPER_IMAGE:?Digest-pinned PEPPER_IMAGE required}
+    env_file: ["${CONFIG_DIRECTORY:-/etc/kamui}/pepper.private.env"]
+    environment:
+      NODE_ENV: production
+      PEPPER_KEY_SOURCE: kms
+      PORT: "8787"
+      TRUST_PROXY: "true"
+      REQUIRE_KEY_PROOF: "true"
+      ALLOWED_ORIGINS: https://sepolia.kamui.page
+      APPLE_AUDIENCES: ""
+      AWS_REGION: eu-west-1
+    networks: [pepper, kms_egress]
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:8787/health');process.exit(r.ok?0:1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+networks:
+  edge: {}
+  pepper: { internal: true }
+  kms_egress: {}

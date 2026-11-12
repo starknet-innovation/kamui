@@ -3,12 +3,15 @@ import '../env'; // Public deployment defaults only; no RPC or signing-key acces
 import { shortString } from 'starknet';
 import { migrateSqliteToPostgres } from '../storage/migrate-sqlite';
 
+import { loadRuntimeSecretFiles } from '../secrets';
+
 const [acknowledgement, registryPath, recoveryPath, ...extra] = process.argv.slice(2);
 if (acknowledgement !== '--api-stopped' || !registryPath || !recoveryPath || extra.length) {
   console.error('Usage: bun run src/scripts/migrate-postgres.ts --api-stopped <registry-sqlite-path> <recovery-sqlite-path>');
   process.exit(1);
 }
 try {
+  await loadRuntimeSecretFiles(process.env, ['DATABASE_URL']);
   const url = process.env.DATABASE_URL;
   const chain = process.env.CHAIN_ID;
   const classHash = process.env.KAMUI_ACCOUNT_CLASS_HASH;

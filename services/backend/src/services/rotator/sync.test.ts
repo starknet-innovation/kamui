@@ -147,3 +147,11 @@ describe('finding #2: the rotator', () => {
     expect(await storedKey({ ...ctx, provider: { ...ctx.provider, callContract: async () => { throw new Error("execution failed: 'UNKNOWN_KID'"); } } }, GOOGLE, 'k')).toBeNull();
   });
 });
+
+test('a blocked restore prevents JWK writes after the read-only sync plan is prepared', async () => {
+  const {ctx,publish,sent} = chain();
+  publish([jwk('test-restore-kid')]);
+  ctx.assertPaidAvailable = () => {throw new Error('RESTORE_RECONCILIATION_REQUIRED');};
+  await expect(syncOnce(ctx,GOOGLE)).rejects.toThrow('RESTORE_RECONCILIATION_REQUIRED');
+  expect(sent).toHaveLength(0);
+});

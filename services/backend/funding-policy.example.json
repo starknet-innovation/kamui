@@ -1,0 +1,38 @@
+{
+  "global": {
+    "periodSeconds": 3600,
+    "txPerPeriod": 0,
+    "perAccountPerPeriod": 0,
+    "maxFeePerTx": "0",
+    "maxFeePerPeriod": "0",
+    "perAccountMaxFeePerPeriod": "0"
+  },
+  "operations": {
+    "sponsor": {
+      "periodSeconds": 3600,
+      "txPerPeriod": 0,
+      "perAccountPerPeriod": 0,
+      "maxFeePerTx": "0",
+      "maxFeePerPeriod": "0",
+      "perAccountMaxFeePerPeriod": "0"
+    },
+    "deployment": {
+      "periodSeconds": 3600,
+      "txPerPeriod": 0,
+      "perAccountPerPeriod": 0,
+      "maxFeePerTx": "0",
+      "maxFeePerPeriod": "0",
+      "perAccountMaxFeePerPeriod": "0"
+    },
+    "recovery": {
+      "periodSeconds": 3600,
+      "txPerPeriod": 0,
+      "perAccountPerPeriod": 0,
+      "maxFeePerTx": "0",
+      "maxFeePerPeriod": "0",
+      "perAccountMaxFeePerPeriod": "0"
+    }
+  },
+  "apps": {},
+  "allowExternalPaymaster": false
+}

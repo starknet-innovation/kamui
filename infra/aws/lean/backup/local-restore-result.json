@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "postgres": "16.15 (Debian 16.15-1.pgdg13+2)",
+  "backup": "pgBackRest 2.60.0",
+  "hostControlLockVerified": true,
+  "canonicalPromotionVerified": true,
+  "wrongPromotionTargetRefused": true,
+  "previousDataRetained": true,
+  "restoreWrapperVerified": true,
+  "nonemptyTargetRefused": true,
+  "baseBackupRestored": true,
+  "postBackupWalReplayed": true,
+  "uncertainIntentRetained": true,
+  "replayRowsRetained": 2,
+  "fundingDebitsRetained": 2,
+  "spendingPauseRetained": true,
+  "admission": "blocked",
+  "awsAccess": false,
+  "checkedDate": "2026-11-12",
+  "scope": "Disposable local POSIX repository with shared host lock, production restore/promotion wrappers, base backup and post-backup WAL; no AWS/S3 or production data",
+  "powerLossTested": false
+}

@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "generation": "REPLACE_WITH_CURRENT_BLOCKED_GENERATION",
+  "mode": "fresh",
+  "reviewRef": "REPLACE_WITH_PRIVATE_REVIEW_REFERENCE",
+  "apiAndRotatorStopped": true,
+  "originalWriterCannotRestart": true
+}

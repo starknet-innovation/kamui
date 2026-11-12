@@ -216,7 +216,7 @@ export async function watchForever(deps: WatcherDeps, pollMs: number, repeatMs =
   }
 }
 
-if (import.meta.main) {
+async function main(): Promise<void> {
   const provider = makeProvider();
   const { chain, confirmed } = await resolveChain(provider);
   exitOnWrongChain(confirmed);
@@ -237,3 +237,5 @@ if (import.meta.main) {
   }
   await watchForever(deps, Number(process.env.WATCHER_POLL_SECONDS ?? 60) * 1000);
 }
+
+if (import.meta.main) void main().catch(() => { log('error', 'watcher_startup_failed'); process.exit(1); });

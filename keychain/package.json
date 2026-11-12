@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run server.ts",
+    "build:production": "bun run scripts/build-production.ts",
     "typecheck": "tsc --noEmit",
     "test": "playwright test",
     "prover:assets": "bun scripts/prover-assets.ts"

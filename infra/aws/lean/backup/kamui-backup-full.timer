@@ -1,0 +1,9 @@
+[Unit]
+Description=Kamui daily PostgreSQL full backup (review before enabling)
+[Timer]
+OnCalendar=*-*-* 02:15:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+Unit=kamui-backup@full.service
+[Install]
+WantedBy=timers.target

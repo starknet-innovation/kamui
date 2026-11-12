@@ -49,3 +49,7 @@ Changed for Kamui (each change is marked `Kamui:` in the code):
 - `deployments.env` replaces upstream's committed `.env` (this repository does not allow files named `.env`) and is loaded by `src/env.ts`. It holds the Kamui class hash; `SOCIAL_ACCOUNT_CLASS_HASH` is now `KAMUI_ACCOUNT_CLASS_HASH`.
 
 Upstream states that this code is a proof of concept and not audited for production.
+
+## Lean backup/runtime packaging
+
+The optional lean PostgreSQL image installs unmodified pgBackRest from the base distribution, and the HTTPS package runs an unmodified Caddy image. Source, license/version references and review limitations are in `infra/aws/lean/backup/README.md` and `infra/aws/lean/README.md`. The local drill used PostgreSQL 16.15 and pgBackRest 2.60.0; hosted image digests/licenses must be reviewed and pinned. No third-party wallet implementation was consulted for this work.

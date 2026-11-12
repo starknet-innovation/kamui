@@ -29,7 +29,7 @@ describe.skipIf(!url)('PostgreSQL backend storage factory (explicit disposable d
       expect(first.recoveryJobs.durable).toBe(true);
       expect(first.store.journalMode).toBe('postgresql');
       inspector = new SQL(target.toString());
-      expect((await inspector`SELECT value FROM kamui_storage_meta WHERE key = 'schema_version'`)[0].value).toBe('1');
+      expect((await inspector`SELECT value FROM kamui_storage_meta WHERE key = 'schema_version'`)[0].value).toBe('2');
       expect((await inspector`SELECT value FROM recovery_meta WHERE key = 'binding'`)[0].value).toBe(binding);
       const now = 1_800_000_000;
       const session = { publicKey: '0x2', origin: 'https://app.example', validUntil: now + 3600, maxCalls: 2, maxFeePerTx: '0x0', calls: [], limits: [] };

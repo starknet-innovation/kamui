@@ -4,6 +4,7 @@ import { HttpError } from '../../http';
 import { hash, stark, type Account, type Call, type RpcProvider } from 'starknet';
 import type { RecoveryJournal } from './jobs';
 import type { RecoverResult } from './recover';
+import type { FundingController } from '../sponsor/funding';
 
 export class ConfirmedTransactionReverted extends HttpError {
   constructor(readonly transactionHash: string) { super(400, 'RECOVERY_REVERTED'); }
@@ -40,8 +41,15 @@ export function signedTransactionHash(tx: Signed, chainId: string): string {
   });
 }
 
+/** Conservative maximum signed resource charge, including a nonzero L2 tip. */
+export function signedMaxFee(tx: Pick<Signed, 'resource_bounds' | 'tip'>): bigint {
+  const bounds = Object.values(tx.resource_bounds);
+  const resourceFee = bounds.reduce((sum, bound) => sum + BigInt(bound.max_amount) * BigInt(bound.max_price_per_unit), 0n);
+  return resourceFee + BigInt(tx.tip) * BigInt(tx.resource_bounds.l2_gas.max_amount);
+}
+
 export async function journaledTransaction(
-  ctx: { relayer: Account; provider: RpcProvider },
+  ctx: { relayer: Account; provider: RpcProvider; funding?: FundingController; assertPaidAvailable?: () => void | Promise<void> },
   call: Call,
   details: Parameters<Account['getSignedTransaction']>[1],
   journal: RecoveryJournal,
@@ -49,9 +57,13 @@ export async function journaledTransaction(
   result: Omit<RecoverResult, 'transaction_hash'>,
 ): Promise<string> {
   return withRelayerLock(ctx.relayer, async () => {
+  await ctx.assertPaidAvailable?.();
   const signed = await ctx.relayer.getSignedTransaction(call, details);
   const transaction_hash = signedTransactionHash(signed, await ctx.provider.getChainId());
+  await ctx.assertPaidAvailable?.();
+  if (ctx.funding) await ctx.funding.debit({ kind: kind === 'recover' ? 'recovery' : 'deployment', account: result.address, maxFee: signedMaxFee(signed), id: transaction_hash });
   await journal.beforeSend({ kind, ...result, transaction_hash, sender_address: signed.sender_address, nonce: signed.nonce });
+  await ctx.assertPaidAvailable?.();
   const response = await ctx.provider.invokeSignedTx(signed);
   if (!('transaction_hash' in response) || BigInt(response.transaction_hash) !== BigInt(transaction_hash)) throw new Error('TRANSACTION_HASH_MISMATCH');
   return transaction_hash;

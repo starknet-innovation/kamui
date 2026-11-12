@@ -1,0 +1,102 @@
+# Lean Google-only Sepolia host package
+
+**Written for review; not deployed.** This package replaces the older Fargate/ALB/NAT/RDS target with two x86 Linux EC2 hosts in the existing separate test accounts. Backend runs keychain, API, PostgreSQL, rotator and watcher; pepper runs separately with its existing KMS HMAC key. The operator must obtain AWS/network/key/security and privacy review before running any provisioning or host-install commands. No AWS account, resource, policy, DNS or OAuth setting was changed while preparing this package.
+
+The user selected open Sepolia access at `sepolia.kamui.page` and `pepper-sepolia.kamui.page`, Google only, client proving and DNS-only Cloudflare. Costs and untested sizing assumptions are in [COST_ESTIMATE.md](../terraform/COST_ESTIMATE.md). There is no managed WAF/ALB or automatic host/database failover. Proxy/body/time limits and application spending limits do not replace upstream denial-of-service protection. Public Wasm delivery also incurs egress independently of paid-transaction budgets. A reviewer must accept the public abuse and egress exposure or add a separately priced edge before public launch.
+
+## Layout and boundaries
+
+- `backend/compose.yml`: PostgreSQL 16 plus pgBackRest image, unprivileged application database role, API and keychain on private service networks; no published API, metrics, database or rotator ports. Each signer file is mounted only into its consumer. The database and restore gate persist under `/var/lib/kamui`.
+- `pepper/compose.yml`: pepper with `PEPPER_KEY_SOURCE=kms` and mandatory key check. Only its own host role may reach the existing key. No HMAC key material, static AWS credentials or signing key is installed here.
+- `caddy/`: direct HTTPS, certificate renewal, request bounds, no access logging and an excluded HTTP request-error logger (custom sponsor headers/URI must not enter logs), overwritten client-address header and explicit route restrictions. API counts two trusted proxy hops: Caddy then keychain. Caddy admin is disabled.
+- `scripts/host.py`: digest-manifest validation and explicit pull/start/stop/status. It does not build source, update code or fetch secrets on startup. Docker errors are suppressed into fixed status codes to avoid registry/account metadata in shared logs. Private operator diagnosis must redact secrets and identifiers.
+- `systemd/`: explicit role stack start/stop and one-minute local service/disk/gate checks. Database/WAL/backup monitoring is in [backup/README.md](backup/README.md). Alerts require an operator-configured recipient; a failing local timer alone is not delivered paging.
+
+The API and rotator mount the **whole restore-gate directory** read-only; atomic gate-file replacement must remain visible. Never replace that with a single-file bind mount. A missing, invalid or blocked gate refuses signing startup. The lifecycle preflight refuses equal canonical `OWNER_ADDRESS` and `RELAYER_ADDRESS`: the historical test registry uses a shared signer, so its governance/ownership must be reviewed and separated before this stack can start concurrent rotator/API writers. It does not rotate an owner or create a signing key.
+
+The PostgreSQL lease is not a distributed fence for a prepared Starknet send: stop and confirm exit of the old API before any replacement, including after database loss. Independent processes sharing a signer still require nonce coordination/separation review.
+
+Default funding stays off until explicit reviewed policy and pause controls are configured. The optional `backend/avnu.compose.yml` enables AVNU only when the release operator sets `KAMUI_ENABLE_AVNU=1` plus `AVNU_PAYMASTER_URL` to the reviewed public endpoint and its private API-key file is present. A missing endpoint refuses Compose validation instead of selecting a local fallback. Persist these two non-secret options in a reviewed systemd drop-in if enabling the overlay under systemd. External spending controls/terms and the policy allowing an external transport must also be approved. Public app IDs are not authentication. Approved app backends hold their own sponsor credential; the keychain proxy never inserts one and does not put it into browser configuration. Wallet management sponsorship remains disabled until a separately reviewed owner-authenticated wallet funding path exists.
+
+## Images and local preparation
+
+Build on the workstation/CI for the target architecture, outside either small host. The keychain image checks the complete pinned prover manifest and prebuilds browser JS. Its production mode requires explicit public configuration, reads no backend developer secret file and performs no startup bundle. Install the already-pinned prover assets first; do not substitute another wallet implementation.
+
+```sh
+docker build --platform linux/amd64 -f keychain/Dockerfile -t kamui-keychain:review .
+docker build --platform linux/amd64 -f services/backend/src/services/api/Dockerfile -t kamui-backend:review services/backend
+docker build --platform linux/amd64 -f services/pepper/Dockerfile -t kamui-pepper:review services/pepper
+docker build --platform linux/amd64 -f infra/aws/lean/backup/Dockerfile -t kamui-postgres:review infra/aws/lean/backup
+```
+
+Review image sources, architecture, vulnerability scan and upstream notices, then publish using the organization's approved registry procedure. Record immutable image references in a private `/etc/kamui/release.env` based on `release.env.example`. Every image needs `@sha256:<digest>`; runtime lifecycle refuses a tag-only release. Pin and review base image digests before a hosted build: repository Dockerfiles currently pin application versions but some upstream base references are tags. No image has been published by this work.
+
+## Operator provisioning review
+
+Choose maintained x86 Linux images with Docker Engine/Compose v2, Python 3 and systemd. `scripts/provision.example.sh` is an **unexecuted operator template**, not an approved plan. It uses existing reviewed subnet/security group/instance profile objects; it does not create them. Its private result file must stay outside Git and shared logs. The AWS owner must confirm the existing pepper key's real Region and approved instance profile before using the Ireland estimate.
+
+Review inbound TCP 80/443 only, stable public addressing (an operator-associated Elastic IP or an explicit DNS-update procedure), routing/egress, EBS encryption, volume preservation, IMDSv2, role reachability and Session Manager access. Do not add inbound SSH by default. Container IMDSv2 access requires a hop limit that supports the bridge; the template proposes two. This does not isolate host-role credentials between containers: backend backup S3 permissions can also be reached by other containers unless reviewed host metadata restrictions prevent it; there are no per-container instance profiles here. Review metadata access restrictions, especially Caddy/keychain versus the pepper or backup consumer. Do not put the Docker socket into any app container or grant untrusted users Docker access. [EC2 roles](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html), [Docker daemon access](https://docs.docker.com/engine/security/protect-access/)
+
+The initial provisioning template uses `t3.medium` (4 GiB) backend and `t3.micro` (1 GiB) pepper, 40 GB total gp3. The smaller 2 GiB backend remains an unverified cost comparison; the current $100 planning target is proposed, not approved. The provisioning example splits 30 GB backend/10 GB pepper. Container ceilings plus operating-system demand can exceed 2 GiB; these are safety bounds, not a validated simultaneous memory budget. Load-test retained database plus all services, proof uploads and backup activity. The 4 GiB initial choice provides headroom but still needs workload validation; do not downsize merely because the smaller instance price is lower. Standard CPU credits avoid surplus-credit charges but can throttle; monitor credits and latency. Patch/image/reboot and larger-host maintenance require planned downtime.
+
+## Operator host installation
+
+After infrastructure and security review, copy this release's `lean/` directory to `/opt/kamui/lean`; do not clone mutable `main` or build on host startup. Retain the previous reviewed package and manifest privately for rollback.
+
+Prepare root-owned `/etc/kamui` and persistent encrypted `/var/lib/kamui` directories. Copy the role's `*.env.example` to the corresponding name without `.example`; fill public network/class/issuer values from reviewed deployment records. Keep per-service runtime files private (`0600`) even when they currently contain only public settings. Keep the pepper resource reference only in the pepper host's private file; never paste account identifiers or resource references into this repository.
+
+Secret files are placed privately by the authorized operator/secret-delivery system, never by chat or a command argument. API mounts `/etc/kamui/secrets/DATABASE_URL` and `RELAYER_PRIVATE_KEY`; rotator mounts only `OWNER_PRIVATE_KEY`. File-backed app secrets must be readable by UID 1000 and `0400`/`0600`. The operator container instead mounts `/etc/kamui/secrets/OPERATOR_DATABASE_URL`, root-owned `0400`/`0600`, as its `/run/secrets/DATABASE_URL`. It names the same application database/role; it is not a superuser credential. This separate scoped copy is needed because root with all capabilities dropped cannot read a different UID's `0400` file. Rotate both URL files together; do not add broad DAC capabilities or signing keys to the operator. PostgreSQL mounts separate `POSTGRES_PASSWORD` and `APP_DATABASE_PASSWORD` files, readable by UID 999. The application database URL must identify role/database `kamui` and match the app password. AVNU's optional `PAYMASTER_API_KEY` is API-only. No `AWS_ACCESS_KEY_ID` or static AWS secret key is installed. File mounts scope access, not compromise of the host/root/Docker daemon.
+
+Prepare PostgreSQL data directory ownership as UID/GID 999, Caddy storage writable by its reviewed image user, and the restore-gate directory as root:GID 1000 mode `0750` (API/rotator UID/GID 1000 may read/traverse, but cannot modify the host directory). Gate files are mode `0644`; no secret payload belongs in them. The writer preserves a precreated directory's group. The lifecycle preflight checks this layout. For example, after review: `sudo install -d -o root -g 1000 -m 0750 /var/lib/kamui/restore-gate`. Keep the parent state directory root-owned and private. Do not silently re-own an existing database or replace a secret file without checking the consumer and rollback plan. The init script creates a non-superuser application owner only for a new empty PostgreSQL data directory; it does not rotate passwords in existing databases.
+
+Install the fixed funding policy path `/etc/kamui/funding-policy.json` with default-disabled example values, owned by UID 1000 and mode `0400`/`0600` so only its API consumer can read it. It contains credential hashes, never the bearer tokens. The operator container does not mount this policy. Configure private pgBackRest S3 repository/retention following [backup/README.md](backup/README.md). S3 uses the instance role; do not place access keys into pgBackRest configuration. The pgBackRest config must be readable by PostgreSQL UID 999 (for example owner `999:999`, mode `0400`); the operator host parent directory stays private. Normalize the public bind-mounted PostgreSQL init script to mode `0755` and `backup/postgresql-backup.conf` to `0644` before starting the UID 999 server. Do not copy private key files into that public source/config tree. No backup/retention policy is approved merely by copying its example.
+
+Run `scripts/host.py backend prepare` to start PostgreSQL alone for initial database/migration/backup checks before arming the restore gate; run the gate CLI and stopped-API SQLite cutover exactly as their runbooks require. Do not start API/rotator against restored or unverified data. Once gate and schema/data acceptance are complete:
+
+```sh
+sudo python3 /opt/kamui/lean/scripts/host.py backend validate
+sudo python3 /opt/kamui/lean/scripts/host.py backend pull
+sudo python3 /opt/kamui/lean/scripts/host.py backend up
+sudo python3 /opt/kamui/lean/scripts/host.py backend status
+```
+
+Use `pepper` in place of `backend` on the pepper host. `up` uses already-built images and waits for health; it never performs a source build or automatically unpauses funding. Install the corresponding `kamui@.service` and monitor timer only after this explicit acceptance. Register the exact HTTPS Google callback and DNS records via their owners; do not change the Google client ID to bypass a callback error. DNS-only records must point to operator-provisioned addresses, not example values. Native browser sign-in is still a user-assisted hosted acceptance check.
+
+## Maintenance, monitoring and rollback
+
+Before release or patch/reboot, pause paid admission, stop the old role stack and verify it has exited. Retain database/gate directories and complete an accepted backup. Replace only the reviewed image manifest/package, then restart one writer; verify registry/replay data, recovery locks, rotator/watcher status, certificates and actual funding counters before unpausing. Rollback must not replace the current database with a stale snapshot or use an older binary that bypasses restore/funding guards.
+
+`monitor.py` checks expected running/healthy services, at least 2 GiB/15% free host disk, and a ready backend restore gate. The backup timer separately checks base-backup freshness/WAL archiving. Add operator alerts for failed timers, failed/restarting containers, TLS renewal failures, database disk growth, CPU-credit throttling, watcher lag/mismatch/fetch failure and spending refusal/ledger errors. Container logs are size-bounded; logs and metrics must exclude tokens, proof bodies, private keys and registry identities. Bounded files are not a retention/privacy approval. Test delivery to the real approved recipient before beta access.
+
+Check HTTPS `/config.json` contains only public values, `/api/metrics` and legacy proving return refusal, application/database ports are unreachable externally, spoofed forwarding headers cannot select a bucket, and the registered Google flow succeeds. Acceptance of local builds/configuration is not proof of AWS ingress, KMS permissions, DNS, TLS issuance, browser resource sufficiency, incident response or external AVNU controls.
+
+### Stopped-writer operator container
+
+`backend/compose.yml` has an inactive `operator` profile. It gets only its root-readable operator database URL and whole restore-gate directory, plus read-only `/etc/kamui/operator` input files; it has no relayer, registry-owner or paymaster secret. It requires no Bun installation on the host. Keep source SQLite snapshots and acknowledgement JSON private in that input directory. Use the fixed wrapper while the API/rotator and their automatic supervisors are stopped:
+
+```sh
+sudo python3 /opt/kamui/lean/scripts/host.py backend prepare
+sudo python3 /opt/kamui/lean/scripts/wallet-control.py restore initialize
+sudo python3 /opt/kamui/lean/scripts/wallet-control.py restore status
+# After the backup/restore runbook's explicit checks, using its reviewed JSON file:
+sudo python3 /opt/kamui/lean/scripts/wallet-control.py restore acknowledge acknowledgement.json
+sudo python3 /opt/kamui/lean/scripts/wallet-control.py spending status
+```
+
+Fresh acknowledgement must precede any schema bootstrap; an imported/restored database requires the restored-data reconciliation procedure, not a fresh acknowledgement. Run `wallet-control.py migrate registry.sqlite recovery.sqlite` only for the stopped-API cutover using consistent SQLite snapshots; import remains separate from fresh initialization. To persist a pause, stop writers and run `wallet-control.py spending pause`; `resume` is an explicit reviewed operator action after all release/restore and funding checks. This wrapper never bypasses the database lease or supplies signing credentials.
+
+## Local package validation — 12 November 2026
+
+Production keychain image build and container smoke passed with synthetic public configuration, verified pinned assets, metrics denial and sanitized upstream failure. Both Caddy configurations passed `caddy adapt --validate` with networking disabled. Seven Python package-boundary tests passed (digest-only manifest, private application/database ports, signer consumer scoping, shared-signer refusal), and six keychain server tests plus TypeScript passed. An actual Linux permission probe also passed: UID 1000 reads the API-owned URL, root with capabilities dropped cannot read it, the separately root-owned operator URL permits fresh acknowledgement and paused funding status, and UID 1000 can read the ready gate. The root integration run covers the browser matrix and backend/restore behavior separately. No EC2 instance, production TLS issuance, real KMS access, external paymaster send or paging delivery was tested by this package preparation.
+
+### Boot and host-image restore fence
+
+Install `kamui-backend-boot-fence.service` plus the `kamui@backend.service.d/restore-fence.conf` drop-in together with the backend unit. The backend Compose services deliberately use `restart: "no"`: Docker must not auto-start a signer against an old ready gate before the boot fence runs. On a new host, configure files/images and persistent directories first, start `kamui-backend-boot-fence.service` explicitly with `sudo systemctl start kamui-backend-boot-fence.service`, then use `backend prepare` and the reviewed fresh gate/database procedure. The unit initializes a missing gate as fresh-blocked; an existing gate is reblocked as restored/unverified. Fresh acknowledgement requires an empty database. A current-boot marker is written only after successful fencing; the lifecycle wrapper refuses full backend startup without it.
+
+Each later OS boot blocks API/rotator admission again and requires operator reconciliation/acknowledgement before starting paid writers. The fence is `RemainAfterExit`, so an ordinary reviewed stop/ack/start within one boot does not reblock the gate. A runtime API/rotator failure is left stopped and alerted rather than silently restarted. Confirm no old container or supervisor retains an `unless-stopped`/automatic restart policy before installing/upgrading this package.
+
+A restored full EBS/OS image can contain an old ready gate. Keep Docker/stack autostart disabled while recovering that image, install/verify the boot fence and signing-container restart policies, then perform the restored-data acknowledgement procedure. Live memory snapshots/hibernated VM clones or any second writable host are unsupported: do not resume them as another signer. This local boot mechanism is not an external anti-cloning/fencing service.
+
+Host lifecycle mutations and operator actions share a nonblocking OS lock at `/var/lib/kamui/.operator.lock`. Stopped-state checks reject running, restarting, paused and unknown paid-writer states. Do not bypass the wrapper with concurrent raw Compose commands; the backup/restore wrappers must participate in the same host lock. Refusal means investigate the active operation rather than deleting its lock file.
+
+A PostgreSQL restore is written only to a separate empty replacement directory while admission remains blocked. **Promote that restored directory to the fixed canonical `/var/lib/kamui/postgres` path before acknowledgement**, using the reviewed backup promotion command under the common host lock with every service stopped. Keep the former data directory aside; never silently overwrite it. Normal lifecycle, operator acknowledgement and monitoring refuse a noncanonical `POSTGRES_DATA_DIRECTORY` override, preventing a later systemd start from returning to the old database under a ready gate. Temporary overrides belong only to the blocked raw backup/restore procedure; they are not a persistent deployment selection.

@@ -70,6 +70,12 @@ The job store is bounded to 32 active jobs and 1000 retained jobs total. Termina
 
 This protocol replaces the old synchronous response; deploy the backend and SDK/keychain together.
 
+## Durable hosted funding
+
+PostgreSQL mode now uses [FUNDING.md](FUNDING.md): global/operation/app/account count and fee limits, separate deployment/recovery budgets, conservative pre-send debits and a persisted pause. New databases start paused and the example policy is all zero. Approved app servers need a private credential distinct from the public app identifier. The hosted keychain's own wallet-management sponsorship remains off pending a dedicated owner-authenticated funding route; no credential is embedded in public pages.
+
+Hosted runtime supports `SECRET_SOURCE=files` for scoped signing-key mounts, `DATABASE_URL_FILE` and optional `PAYMASTER_API_KEY_FILE`; values and files cannot be configured ambiguously. The restore gate blocks startup, POST admission and paid sends when missing/blocked, and guards JWK rotator writes. [Lean package](../../infra/aws/lean/README.md), [backup/restore](../../infra/aws/lean/backup/README.md).
+
 ## Sponsorship and budgets
 
 `POST /sponsor` takes `{ account, calldata }` as before. A budget (`src/services/sponsor/budgets.ts`) has a number of transactions per period, a share of them one account may use, and the most the relayer pays for one transaction.
@@ -151,11 +157,11 @@ The selected lean target runs PostgreSQL on the backend server, with pepper in i
 
 - **Live runs.** This code ran on Sepolia on 2026-11-12 (`../../spikes/s1/results/RESULTS.md`, run 8): a deployment with the pepper confirmed, two proofs, sponsored session and owner calls, the session registry, and a recovery sign-in to an existing account without the pepper check. The rotator set the new registry's keys. Not exercised live: the budgets' refusals, the fee ceiling, the registry's replay refusal and the watcher against the new registry.
 - **Google-only live run 10:** revoke-all, removal of a stale device and recovery-file sign-in with pepper stopped passed on Sepolia; see `../../spikes/s1/results/run-10-device-session-recovery.md`.
-- **One api process is assumed.** The limiter, the sponsor ledger, the per-account locks and the issuer key cache are in process, and one relayer key means one nonce: a second api process needs shared implementations of the first two and nonce coordination (or its own relayer account).
+- **One api process is assumed.** The HTTP attempt limiter and issuer cache remain in process. PostgreSQL job locks and funding counters are durable, but one relayer key still means one nonce; the enforced writer lease does not make this a multi-replica service or fence an already-prepared Starknet send.
 - **Recovery jobs and AVNU ran live** on Sepolia on 2026-11-12 (run 9): recovery after a dropped submission response, AVNU owner/session calls, scope/replay refusals and a budget refusal after a lost success response. No mainnet claim follows from this.
-- **Recovery metadata is durable; proof work is not.** Results and transaction intents survive restart on a retained database volume. Interrupted proving needs a fresh sign-in, unknown transaction intents stay locked, and reloading a keychain page does not resume polling. Sponsor budgets and rate limits still live in memory.
-- **The registry's replay check is per database.** It holds with one api process on one file, which is what is assumed above.
-- **Budgets** count transactions, not fees. There is a ceiling per transaction but no fee total per period, and no usage report per app.
-- **Keys** are still read from the environment.
-- **Client-side V2 acceptance.** The pinned Wasm integration and durable relay are prepared, but an actual Kamui `prove_jwt` browser proof and recovery have not yet passed live. Prior runs used the historical backend prover. See [CLIENT_PROVING.md](../../keychain/CLIENT_PROVING.md) for browser/resources/assets and remaining acceptance.
+- **Recovery metadata is durable; proof work is not.** Results and transaction intents survive restart on a retained database volume. Interrupted proving needs a fresh sign-in, unknown transaction intents stay locked, and reloading a keychain page does not resume polling. PostgreSQL paid-attempt count/fee budgets survive restarts; generic HTTP rate limits remain in memory. SQLite development retains its historical memory ledger.
+- **The registry's replay check is per database.** It is enforced in the selected database, including PostgreSQL and explicit SQLite imports. Restoring stale history requires the external host fence and conservative reconciliation.
+- **Budgets:** PostgreSQL now enforces both counts and worst-case fee totals per period; no per-app usage UI is implemented. AVNU actual fees remain external to signed local bounds. Funding policy thresholds/app approval and the keychain wallet-management funding route still need review.
+- **Keys:** hosted processes support scoped private file mounts, while development may use environment values. Neither is a non-extractable Stark-curve signer; host compromise, custody and role isolation need security review.
+- **Client-side V2 acceptance.** The pinned Wasm integration passed an existing-account Google recovery on Sepolia in run 11. Hosted-origin, first-deployment, broader browser/resource and cloud restore acceptance remain pending. See [CLIENT_PROVING.md](../../keychain/CLIENT_PROVING.md) for browser/resources/assets and remaining acceptance.
 - **Override recovery with a pepper** has not been exercised.

@@ -159,3 +159,12 @@ pgTest('unknown recovery metadata is refused rather than copying unsupported or 
   recovery.close();
   await expect(migrateSqliteToPostgres(url, source)).rejects.toThrow('SQLITE_MIGRATION_INVALID_SOURCE');
 });
+
+pgTest('refuses an already-funded target even if registry and recovery tables are empty', async () => {
+  const source = fixture();
+  await initializePostgres(sql);
+  await sql`INSERT INTO funding_debits(id,kind,account,fee,created_at,external) VALUES ('fixture-attempt','deployment','0x1',1,1,false)`;
+  await expect(migrateSqliteToPostgres(url, source)).rejects.toThrow('SQLITE_MIGRATION_TARGET_NOT_EMPTY');
+  expect((await sql`SELECT count(*)::int AS n FROM funding_debits`)[0].n).toBe(1);
+  expect((await sql`SELECT count(*)::int AS n FROM recovery_jobs`)[0].n).toBe(0);
+});

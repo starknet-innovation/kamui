@@ -1,5 +1,6 @@
 // PostgreSQL bootstrap and the single API/operator writer lease. Never log the URL.
 import { SQL } from 'bun';
+import { FUNDING_SCHEMA_SQL } from '../services/sponsor/funding';
 import { REGISTRY_SCHEMA_SQL } from '../services/registry/postgres-store';
 import { RECOVERY_POSTGRES_SCHEMA } from '../services/recovery/postgres-store';
 
@@ -68,9 +69,10 @@ export async function initializePostgres(sql: SQL, _binding?: string): Promise<v
     await tx`SELECT pg_advisory_xact_lock(${POSTGRES_WRITER_LOCK[0]}, 2)`;
     await tx.unsafe('CREATE TABLE IF NOT EXISTS kamui_storage_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
     const [version] = await tx`SELECT value FROM kamui_storage_meta WHERE key = 'schema_version'`;
-    if (version && version.value !== '1') throw new Error('POSTGRES_SCHEMA_VERSION_UNSUPPORTED');
+    if (version && !['1', '2'].includes(version.value)) throw new Error('POSTGRES_SCHEMA_VERSION_UNSUPPORTED');
     await tx.unsafe(REGISTRY_SCHEMA_SQL);
     await tx.unsafe(RECOVERY_POSTGRES_SCHEMA);
-    await tx`INSERT INTO kamui_storage_meta (key, value) VALUES ('schema_version', '1') ON CONFLICT (key) DO NOTHING`;
+    await tx.unsafe(FUNDING_SCHEMA_SQL);
+    await tx`INSERT INTO kamui_storage_meta (key, value) VALUES ('schema_version', '2') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
   });
 }

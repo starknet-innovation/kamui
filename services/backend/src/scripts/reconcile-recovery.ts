@@ -3,6 +3,8 @@
 import { env, makeProvider } from '../env';
 import { openBackendStorage } from '../storage/backend-storage';
 
+import { loadRuntimeSecretFiles } from '../secrets';
+
 const [originalHash, replacementHash] = process.argv.slice(2);
 if (!originalHash || !replacementHash || ![originalHash, replacementHash].every((v) => /^0x[0-9a-fA-F]{1,64}$/.test(v))) {
   console.error('Usage: bun run src/scripts/reconcile-recovery.ts <original-tx-hash> <finalized-replacement-tx-hash>');
@@ -10,6 +12,7 @@ if (!originalHash || !replacementHash || ![originalHash, replacementHash].every(
 }
 let storage: Awaited<ReturnType<typeof openBackendStorage>> | undefined;
 try {
+  await loadRuntimeSecretFiles(process.env, ['DATABASE_URL']);
   const provider = makeProvider();
   storage = await openBackendStorage(process.env, `${await provider.getChainId()}:${env('KAMUI_ACCOUNT_CLASS_HASH')}`, () => {
     console.error(JSON.stringify({ status: 'refused', error: 'POSTGRES_WRITER_LEASE_LOST' }));

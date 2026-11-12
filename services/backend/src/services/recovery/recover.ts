@@ -8,11 +8,14 @@ import { accountAddress, deployCall, expectedNonce, extractIdentity } from '../.
 import type { Proof } from '../prover/prove';
 import type { ProofQueue } from '../prover/queue';
 import type { RecoveryJournal } from './jobs';
+import type { FundingController } from '../sponsor/funding';
 import { journaledTransaction, withRelayerLock, waitForAcceptedTransaction } from './transaction';
 import { assertPepperShape, confirmPepper, type PepperSettings } from './pepper';
 
 export type RecoverContext = {
   provider: RpcProvider;
+  funding?: FundingController;
+  assertPaidAvailable?: () => void | Promise<void>;
   /** Durable paid-send intent journal; supplied only by the job executor. */
   journal?: RecoveryJournal;
   /** Prevent legacy routes from starting while a durable recovery is unresolved. */
@@ -193,7 +196,7 @@ export async function relayRecover(
   signature: string[],
   proof: string,
   proofFacts: string[],
-  ctx: Pick<RecoverContext, 'relayer' | 'provider' | 'journal'>,
+  ctx: Pick<RecoverContext, 'relayer' | 'provider' | 'journal' | 'funding' | 'assertPaidAvailable'>,
   result?: Omit<RecoverResult, 'transaction_hash'>,
 ): Promise<string> {
   // The gateway rejects a decoded proof above max_proof_size (480,000 bytes on 0.14.5).

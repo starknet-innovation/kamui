@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import { RpcError, shortString } from 'starknet';
 import { RecoveryJobs } from '../recovery/jobs';
 import { JwksCache } from '../../jwk/verification';
+import { HttpError } from '../../http';
 import { MemoryLimiter } from '../../limiter';
 import { setLogSink } from '../../log';
 import { resetMetrics } from '../../metrics';
@@ -247,4 +248,28 @@ test('an unresolved recovery blocks a shaped browser relay before any RPC or pai
     expect([invalid.status, await invalid.json()]).toEqual([400, { error: 'BAD_PROOF_FACTS' }]);
     expect(seen.rpc).toBe(0);
   } finally { jobs.close(); }
+});
+
+
+test('HTTP sponsorship forwards the approved server credential and never logs it', async () => {
+  const credential = 'synthetic-server-fixture-credential';
+  const lines: string[] = [];
+  let reads = 0, sends = 0, debits = 0;
+  const budget = {name:'approved',txPerPeriod:10,periodSeconds:3600,perAccountPerPeriod:10,maxFeePerTx:1000n};
+  const sponsor:any = {
+    classHash: CLASS,
+    provider:{getClassHashAt:async()=>{reads++;return CLASS;}},
+    relayer:{estimateInvokeFee:async()=>({overall_fee:10n,resourceBounds:{l2_gas:{max_amount:2n,max_price_per_unit:5n}}}),execute:async()=>{sends++;return{transaction_hash:'0xabc'};}},
+    budgets:{anonymous:{...budget,txPerPeriod:0},byKey:new Map([[APP_KEY,budget]])},ledger:new MemoryLedger(),
+    funding:{authorizeApp:(key:string,token:string)=>{if(key!==APP_KEY||token!==credential)throw new HttpError(403,'APP_AUTH_REQUIRED');},debit:async()=>{debits++;}},
+  };
+  const previous=setLogSink(line=>lines.push(line));
+  try {
+    const {post}=app({sponsor});
+    expect((await post('/sponsor',BODIES['/sponsor'],{'x-kamui-app-key':APP_KEY})).status).toBe(403);
+    expect(reads).toBe(0);
+    expect((await post('/sponsor',BODIES['/sponsor'],{'x-kamui-app-key':APP_KEY,'x-kamui-sponsor-token':credential})).status).toBe(200);
+    expect(reads).toBe(1);expect(debits).toBe(1);expect(sends).toBe(1);
+    expect(lines.join('')).not.toContain(credential);
+  } finally {setLogSink(previous);}
 });

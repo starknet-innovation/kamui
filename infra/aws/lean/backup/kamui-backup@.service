@@ -1,0 +1,14 @@
+[Unit]
+Description=Kamui PostgreSQL backup (%i)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/kamui/backup/operator.settings
+ExecStart=/opt/kamui/lean/backup/backup.sh %i
+PrivateTmp=true
+ProtectHome=true
+NoNewPrivileges=true
+# docker access is host-equivalent authority; restrict this service to operators.

@@ -96,6 +96,20 @@ integration('transactions use the locked session and queue outside queries until
   } finally { release(); await lease.close(); }
 });
 
+integration('version-one upgrade preserves replay state and initializes spending paused', async () => {
+  await initializePostgres(sql);
+  await sql.unsafe('DROP TABLE funding_debits, funding_control');
+  await sql`UPDATE kamui_storage_meta SET value = '1' WHERE key = 'schema_version'`;
+  await sql`INSERT INTO registry_used_messages(message, expires) VALUES ('0x777', 9999999999)`;
+  await initializePostgres(sql);
+  expect((await sql`SELECT value FROM kamui_storage_meta WHERE key = 'schema_version'`)[0].value).toBe('2');
+  expect((await sql`SELECT message FROM registry_used_messages WHERE message = '0x777'`)).toHaveLength(1);
+  expect((await sql`SELECT paused FROM funding_control WHERE key = 'global'`)[0].paused).toBe(true);
+  await sql`UPDATE funding_control SET paused = false WHERE key = 'global'`;
+  await initializePostgres(sql);
+  expect((await sql`SELECT paused FROM funding_control WHERE key = 'global'`)[0].paused).toBe(false);
+});
+
 integration('schema initialization is repeatable and refuses unknown versions', async () => {
   await initializePostgres(sql);
   await initializePostgres(sql);

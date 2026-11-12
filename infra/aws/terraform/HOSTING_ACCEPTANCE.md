@@ -101,3 +101,10 @@ Local Sepolia evidence already exists for several flows in [runs 9 and 10](../..
 ## Local PostgreSQL implementation evidence — 12 November 2026
 
 PostgreSQL registry/recovery adapters, asynchronous commit-before-send, explicit read-only-source SQLite import, versioned schema and same-connection single-writer lease are implemented. Disposable local PostgreSQL 16 tests cover concurrency, replay, import rollback and uncertain recovery receipts. No existing developer database was migrated; no AWS deployment, hosted acceptance, off-host backup/restore drill or physical power-loss test was performed. Durable spending counters and the remaining lean EC2 packaging are still pending. Application use remains strictly stop-old-before-start-new; a SQL lease cannot fence an already-prepared Starknet send.
+
+## Lean implementation evidence — follow-up, 12 November 2026
+
+- Durable PostgreSQL count/FRI limits and pause now cover global, operation, approved app and account scopes. Server credentials are distinct from public app keys; default policy/funding stays off. Wallet-management sponsorship needs its own reviewed owner-authenticated path.
+- The lean host package has image-digest checks, direct HTTPS templates, scoped file mounts, a public keychain build/proxy allow-list, stopped-writer lifecycle checks and reboot/restore fences. These are locally validated artifacts, not cloud acceptance.
+- A real disposable local base-backup/WAL restore through the production wrapper preserved replay rows, an uncertain intent, funding debits and spending pause; the API gate remained blocked. S3 authorization/encryption, retention/RPO/RTO and delivery to real monitoring recipients remain unverified.
+- Backend and browser suites passed locally; the final counts and exact commands are in the lean validation record. No existing user database was migrated and no AWS settings or DNS were changed.

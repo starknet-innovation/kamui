@@ -1,0 +1,9 @@
+# Optional only after AVNU terms/external spending controls and local policy are reviewed.
+services:
+  api:
+    environment:
+      PAYMASTER_URL: ${AVNU_PAYMASTER_URL:?Reviewed AVNU endpoint required}
+      PAYMASTER_API_KEY_FILE: /run/secrets/PAYMASTER_API_KEY
+    secrets: [PAYMASTER_API_KEY]
+secrets:
+  PAYMASTER_API_KEY: { file: "${CONFIG_DIRECTORY:-/etc/kamui}/secrets/PAYMASTER_API_KEY" }

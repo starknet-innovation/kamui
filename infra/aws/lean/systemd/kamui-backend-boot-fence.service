@@ -1,0 +1,17 @@
+[Unit]
+Description=Block Kamui signing admission once per backend OS boot
+Requires=docker.service
+After=docker.service
+Before=kamui@backend.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Group=root
+UMask=0077
+Environment=CONFIG_DIRECTORY=/etc/kamui
+Environment=STATE_DIRECTORY=/var/lib/kamui
+ExecStart=/usr/bin/python3 /opt/kamui/lean/scripts/boot-fence.py
+TimeoutStartSec=120
+NoNewPrivileges=yes

@@ -25,6 +25,7 @@ import { byteArraysFromFelts, filterEligibleKeys, modulusHash, modulusLimbs, reg
 import { ISSUERS, fetchJwks, type IssuerJwks } from '../../jwk/verification';
 import { errorCode, log } from '../../log';
 import { secretSource } from '../../secrets';
+import { assertRestoreReady } from '../../storage/restore-fence';
 
 // Kamui: the limb and hash arithmetic moved to jwk/modulus.ts, shared with the watcher.
 export { byteArraysFromFelts, filterEligibleKeys, modulusLimbs, storedKey };
@@ -41,6 +42,7 @@ export function extractRefreshDelay(headers: Headers): number {
 
 /** What the rotator needs from the chain and the issuer; tests pass fakes. */
 export type Ctx = {
+  assertPaidAvailable?: () => void | Promise<void>;
   registryOwner: { execute(calls: Call[]): Promise<{ transaction_hash: string }> };
   provider: {
     getEvents: Parameters<typeof registryEvents>[0]['getEvents'];
@@ -74,8 +76,9 @@ export function planSync(issuer: Map<string, bigint[]>, stored: Map<string, bigi
 
 // ponytail: one owner account, one nonce. Issuer loops run concurrently, so submissions are serialized.
 let txLock: Promise<unknown> = Promise.resolve();
-function submitKeyUpdates({ registryOwner, provider }: Ctx, calls: Call[]): Promise<string> {
+function submitKeyUpdates({ registryOwner, provider, assertPaidAvailable }: Ctx, calls: Call[]): Promise<string> {
   const run = txLock.then(async () => {
+    await assertPaidAvailable?.();
     const { transaction_hash } = await registryOwner.execute(calls);
     await provider.waitForTransaction(transaction_hash);
     return transaction_hash;
@@ -182,11 +185,13 @@ async function syncForever(ctx: Ctx, iss: string, once: boolean) {
 }
 
 // MAIN SCRIPT
-if (import.meta.main) {
+async function main(): Promise<void> {
+  try { assertRestoreReady(process.env); } catch { log('error', 'restore_reconciliation_required'); process.exit(1); }
   const provider = makeProvider();
   const { chain, confirmed } = await resolveChain(provider);
   exitOnWrongChain(confirmed);
   const ctx: Ctx = {
+    assertPaidAvailable: () => assertRestoreReady(process.env),
     provider,
     registryOwner: new Account({
       provider,
@@ -214,3 +219,5 @@ if (import.meta.main) {
 
   await Promise.all(ISSUERS.map((i) => syncForever(ctx, i.iss, once)));
 }
+
+if (import.meta.main) void main().catch(() => { log('error', 'rotator_startup_failed'); process.exit(1); });

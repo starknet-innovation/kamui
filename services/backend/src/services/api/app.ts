@@ -55,6 +55,8 @@ export type AppDeps = {
   enableServerProving?: boolean;
   recoveryJobs?: RecoveryJobsService;
   ctx: RecoverContext;
+  /** Restore fence, checked before any POST work, including status/replay reads. */
+  admissionGuard?: () => void | Promise<void>;
   sponsor: SponsorContext;
   registry: RegistryContext;
   limiter: Limiter;
@@ -135,7 +137,7 @@ export function buildApp(deps: AppDeps) {
       await jobs.submit(b.jobId, request, (journal) => relayProof(b, client, { ...ctx, journal }), describeJobError);
       return { jobId: b.jobId };
     } },
-    '/sponsor': { limit: 'sponsor', fields: ['account'], handler: (b: SponsorRequest, _client, req) => sponsorOutsideExecution(b, req.headers.get(APP_KEY_HEADER), deps.sponsor) },
+    '/sponsor': { limit: 'sponsor', fields: ['account'], handler: (b: SponsorRequest, _client, req) => sponsorOutsideExecution(b, req.headers.get(APP_KEY_HEADER), deps.sponsor, req.headers.get('x-kamui-sponsor-token')) },
     '/registry/sessions': { limit: 'registry', fields: ['account'], handler: (b) => putSession(b, deps.registry) },
     '/registry/sessions/list': { limit: 'registry', fields: ['account'], handler: (b) => listSessions(b, deps.registry) },
     '/registry/sessions/remove': { limit: 'registry', fields: ['account', 'publicKey'], handler: (b) => removeSession(b, deps.registry) },
@@ -163,6 +165,8 @@ export function buildApp(deps: AppDeps) {
   };
 
   async function post(path: string, route: Route, req: Request, socketAddress: string | undefined): Promise<Response> {
+    try { await deps.admissionGuard?.(); }
+    catch (error) { const described = describeError(error); return json({ error: described.error }, described.status); }
     const client = clientAddress(socketAddress, req.headers.get('x-forwarded-for'), hops);
     const limit = limits[route.limit];
     for (const [scope, key, max] of [['client', `${route.limit}:${client}`, limit.perClient], ['global', `${route.limit}:*`, limit.global]] as const) {

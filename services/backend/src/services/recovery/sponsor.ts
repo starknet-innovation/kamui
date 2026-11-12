@@ -14,8 +14,7 @@
 // Order of work (audit finding #4): the cheap attempt limits run in the api's route wrapper
 // before this is called; then the request is parsed, the class is read, a slot is reserved in
 // the budget, the fee is estimated, and the transaction is sent. The slot is committed only
-// when the transaction was submitted on the local path; every other local outcome releases it.
-// For AVNU it is committed before sending, because even a failed answer may hide a submission.
+// before either transport is called. Preflight refusals release slots; uncertain sends stay spent.
 import { RpcError } from 'starknet';
 import { HttpError } from '../../http';
 import { log } from '../../log';
@@ -24,10 +23,11 @@ import type { SponsoredPaymaster } from '../sponsor/paymaster';
 import { budgetFor, type Budgets, type SponsorLedger } from '../sponsor/budgets';
 import { type RecoverContext } from './recover';
 import { withRelayerLock } from './transaction';
+import type { FundingController } from '../sponsor/funding';
 
 export type SponsorRequest = { account: string; calldata: string[] };
 export type SponsorResult = { transaction_hash: string };
-export type SponsorContext = Pick<RecoverContext, 'provider' | 'relayer' | 'classHash'> & { budgets: Budgets; ledger: SponsorLedger; paymaster?: SponsoredPaymaster };
+export type SponsorContext = Pick<RecoverContext, 'provider' | 'relayer' | 'classHash'> & { budgets: Budgets; ledger: SponsorLedger; paymaster?: SponsoredPaymaster; funding?: FundingController; assertPaidAvailable?: () => void | Promise<void> };
 
 const HEX = /^0x[0-9a-fA-F]{1,64}$/;
 /** Generous for a multicall, small enough to bound what one request can cost. */
@@ -57,8 +57,10 @@ export function maxFee(estimate: { overall_fee: bigint | string | number; resour
   return worst > estimated ? worst : estimated;
 }
 
-export async function sponsorOutsideExecution(body: SponsorRequest, appKey: string | null, ctx: SponsorContext): Promise<SponsorResult> {
+export async function sponsorOutsideExecution(body: SponsorRequest, appKey: string | null, ctx: SponsorContext, credential?: string | null): Promise<SponsorResult> {
   const req = parseSponsorRequest(body);
+  await ctx.assertPaidAvailable?.();
+  ctx.funding?.authorizeApp(appKey, credential);
   const execution = ctx.paymaster?.prepare(req.calldata);
   const budget = budgetFor(ctx.budgets, appKey);
   if (!budget) {
@@ -111,19 +113,21 @@ export async function sponsorOutsideExecution(body: SponsorRequest, appKey: stri
       decide('refused_fee');
       throw new HttpError(402, 'FEE_ABOVE_CEILING');
     }
+    if (ctx.funding && !ctx.paymaster && (!estimate.resourceBounds || Object.keys(estimate.resourceBounds).length === 0)) throw new HttpError(503, 'SIGNED_FEE_BOUNDS_REQUIRED');
     let transaction_hash: string;
     try {
-      // The local path passes the estimate's bounds into the signed transaction. The AVNU
-      // path cannot carry those bounds through SNIP-29; see PAYMASTER.md.
-      if (ctx.paymaster && execution) {
-        // External submission is not atomic with our ledger. Debit conservatively before
-        // sending: a timeout or invalid answer may hide a submitted, paid transaction.
+      // Both local and external sends are debited before the call that may submit.
+      // Even a thrown local RPC answer can conceal acceptance: never release that attempt.
+      const send = async () => {
+        await ctx.assertPaidAvailable?.();
+        if (ctx.funding) await ctx.funding.debit({ kind: 'sponsor', account: req.account, appKey, credential, maxFee: maxFee(estimate), external: Boolean(ctx.paymaster) });
         submitted = true;
         await Promise.all([slot.commit(), accountSlot.commit()]);
-        ({ transaction_hash } = await ctx.paymaster.execute(req.account, execution));
-      } else {
-        ({ transaction_hash } = await withRelayerLock(ctx.relayer, () => ctx.relayer.execute(call, { resourceBounds: estimate.resourceBounds })));
-      }
+        await ctx.assertPaidAvailable?.();
+        if (ctx.paymaster && execution) return ctx.paymaster.execute(req.account, execution);
+        return ctx.relayer.execute(call, { resourceBounds: estimate.resourceBounds, tip: 0n });
+      };
+      ({ transaction_hash } = ctx.paymaster ? await send() : await withRelayerLock(ctx.relayer, send));
     } catch (e) {
       if (e instanceof RpcError) {
         decide('reverted');
@@ -132,7 +136,6 @@ export async function sponsorOutsideExecution(body: SponsorRequest, appKey: stri
       throw e;
     }
     submitted = true;
-    if (!ctx.paymaster) await Promise.all([slot.commit(), accountSlot.commit()]);
     decide('sponsored');
     if (!ctx.paymaster) metrics.relayerTransactions.inc({ kind: 'sponsor' });
     log('info', 'sponsored', { account: req.account, tx: transaction_hash, budget: budget.name });

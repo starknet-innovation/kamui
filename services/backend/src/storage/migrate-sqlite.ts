@@ -100,8 +100,8 @@ export async function migrateSqliteToPostgres(url: string, options: SqliteMigrat
     const counts = await sql.begin(async (tx) => {
       await tx.unsafe('CREATE TABLE IF NOT EXISTS sqlite_migration (id INTEGER PRIMARY KEY CHECK (id = 1))');
       // Excludes accidental target writes even by callers that did not use Kamui's writer lock.
-      await tx.unsafe('LOCK TABLE registry_sessions, registry_used_messages, recovery_jobs, recovery_meta, sqlite_migration IN ACCESS EXCLUSIVE MODE');
-      const [{ occupied }] = await tx`SELECT EXISTS(SELECT 1 FROM registry_sessions) OR EXISTS(SELECT 1 FROM registry_used_messages) OR EXISTS(SELECT 1 FROM recovery_jobs) OR EXISTS(SELECT 1 FROM sqlite_migration) OR EXISTS(SELECT 1 FROM recovery_meta) AS occupied`;
+      await tx.unsafe('LOCK TABLE registry_sessions, registry_used_messages, recovery_jobs, recovery_meta, funding_debits, sqlite_migration IN ACCESS EXCLUSIVE MODE');
+      const [{ occupied }] = await tx`SELECT EXISTS(SELECT 1 FROM registry_sessions) OR EXISTS(SELECT 1 FROM registry_used_messages) OR EXISTS(SELECT 1 FROM recovery_jobs) OR EXISTS(SELECT 1 FROM sqlite_migration) OR EXISTS(SELECT 1 FROM recovery_meta) OR EXISTS(SELECT 1 FROM funding_debits) AS occupied`;
       if (occupied) throw new Error('SQLITE_MIGRATION_TARGET_NOT_EMPTY');
       assertLock();
       for (const r of sessions) await tx`INSERT INTO registry_sessions (id, account, public_key, valid_until, created_at, session) VALUES (${r.id}, ${r.account}, ${r.public_key}, ${r.valid_until}, ${r.created_at}, ${r.session})`;

@@ -1,3 +1,5 @@
+import { proxyHeaders } from './proxy';
+import { readPrivateSecretFile } from '../../services/backend/src/secrets';
 // A small app that connects through the Kamui keychain. Development only.
 //
 //   bun run server.ts        http://localhost:5175
@@ -38,18 +40,11 @@ if (!build.success) {
 const script = await build.outputs[0]!.text();
 const page = await Bun.file(`${import.meta.dir}/index.html`).text();
 
-/**
- * Headers for a proxied /api request: the client's address appended to X-Forwarded-For, so the
- * backend can rate-limit per client and not per proxy, and the app key if the page sent one.
- */
-function proxyHeaders(request: Request, clientAddress: string | undefined): Record<string, string> {
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
-  const forwarded = [request.headers.get('x-forwarded-for'), clientAddress].filter(Boolean).join(', ');
-  if (forwarded) headers['x-forwarded-for'] = forwarded;
-  const appKey = request.headers.get('x-kamui-app-key');
-  if (appKey) headers['x-kamui-app-key'] = appKey;
-  return headers;
-}
+// Configure privately after app approval. Never forward a browser-supplied token.
+if (process.env.SPONSOR_SERVER_TOKEN && process.env.SPONSOR_SERVER_TOKEN_FILE) throw new Error('SPONSOR_TOKEN_CONFIGURATION_AMBIGUOUS');
+const sponsorToken = process.env.SPONSOR_SERVER_TOKEN_FILE
+  ? await readPrivateSecretFile(process.env.SPONSOR_SERVER_TOKEN_FILE)
+  : process.env.SPONSOR_SERVER_TOKEN;
 
 Bun.serve({
   port: PORT,
@@ -61,7 +56,7 @@ Bun.serve({
     if (url.pathname.startsWith('/api/')) {
       return fetch(`${API}${url.pathname.slice(4)}`, {
         method: request.method,
-        headers: proxyHeaders(request, server.requestIP(request)?.address),
+        headers: proxyHeaders(request, server.requestIP(request)?.address, sponsorToken),
         body: request.method === 'GET' ? undefined : await request.text(),
       });
     }

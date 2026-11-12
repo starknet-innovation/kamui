@@ -1,0 +1,33 @@
+{
+  admin off
+  # Default proxy error records can include complete headers/URI. Drop that logger.
+  log default {
+    exclude http.log.error
+  }
+  auto_https disable_redirects
+  servers {
+    timeouts {
+      read_header 10s
+    }
+  }
+}
+http://{$PEPPER_HOST} {
+  respond "HTTPS required" 400
+}
+https://{$PEPPER_HOST} {
+  request_body {
+    max_size 32KB
+  }
+  @allowed path /v1/pepper /health
+  handle @allowed {
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy pepper:8787 {
+      header_up X-Forwarded-For {http.request.remote.host}
+      header_up -X-Forwarded-Host
+      transport http {
+        response_header_timeout 15s
+      }
+    }
+  }
+  respond "not found" 404
+}

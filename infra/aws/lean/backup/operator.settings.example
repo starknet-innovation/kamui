@@ -1,0 +1,12 @@
+# Install root-owned /etc/kamui/backup/operator.settings, mode0600.
+# The two empty acknowledgements intentionally prevent unattended backups/expiration.
+KAMUI_BACKUP_REVIEWED=
+KAMUI_BACKUP_RETENTION_APPROVED=
+KAMUI_COMPOSE_FILE=/opt/kamui/lean/backend/compose.yml
+KAMUI_ENV_FILE=/etc/kamui/release.env
+KAMUI_BACKUP_LOG_DIR=/var/log/kamui-backup
+# Explicit maximum successful-backup age; 129600 seconds is a 36-hour proposal.
+# Empty value makes the hourly check refuse instead of assuming an accepted objective.
+KAMUI_BACKUP_MAX_AGE_SECONDS=
+CONFIG_DIRECTORY=/etc/kamui
+STATE_DIRECTORY=/var/lib/kamui

@@ -1,0 +1,27 @@
+# Install privately at /etc/kamui/backup/pgbackrest.conf (postgres-readable).
+# Operator must replace the bucket and verify its default encryption, public-access
+# protection, ownership, TLS-only access and exact role/prefix permissions first.
+# No AWS access keys or pepper key material belong here.
+[global]
+repo1-type=s3
+repo1-path=/kamui-sepolia
+repo1-s3-bucket=REPLACE_WITH_REVIEWED_PRIVATE_BUCKET
+repo1-s3-endpoint=s3.eu-west-1.amazonaws.com
+repo1-s3-region=eu-west-1
+repo1-s3-key-type=auto
+repo1-storage-verify-tls=y
+# Proposal only: operator must explicitly accept retention in the backup settings.
+repo1-retention-full-type=time
+repo1-retention-full=7
+# Preserve WAL required by retained full backups; do not aggressively expire archives.
+archive-check=y
+archive-async=n
+start-fast=y
+process-max=1
+log-level-console=warn
+log-level-file=off
+lock-path=/tmp/pgbackrest
+
+[kamui]
+pg1-path=/var/lib/postgresql/data
+pg1-user=postgres

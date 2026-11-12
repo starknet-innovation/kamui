@@ -9,6 +9,7 @@ services:
     env_file: .env.local
     environment:
       ROTATOR_URL: http://rotator:3001
+      HOST: 0.0.0.0
     # Kamui: 3000 only. The metrics port (9464) is deliberately not published.
     ports: ["3000:3000"]
     # Kamui: session registry and durable recovery metadata share this private data volume.

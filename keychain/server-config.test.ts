@@ -59,3 +59,48 @@ test('served callback stays pinned when Host and forwarding headers are spoofed'
     await child.exited;
   }
 }, 10_000);
+
+test('public proxy admits only reviewed API methods and exact paths', async () => {
+  const { apiProxyAllowed, publicHttpsUrl } = await import('./server-config');
+  expect(apiProxyAllowed('/relay', 'POST')).toBe(true);
+  expect(apiProxyAllowed('/recover/status', 'POST')).toBe(true);
+  expect(apiProxyAllowed('/health/api', 'GET')).toBe(true);
+  for (const path of ['/metrics', '/metrics/', '/recover', '/deploy', '/registry/sessions/../metrics', '/relay?next=x', '//relay']) {
+    expect(apiProxyAllowed(path, 'POST')).toBe(false);
+  }
+  expect(apiProxyAllowed('/relay', 'GET')).toBe(false);
+  expect(apiProxyAllowed('/relay', 'PUT')).toBe(false);
+  for (const value of [undefined, 'http://rpc.example', 'https://user:pass@rpc.example', 'https://rpc.example?api_key=example']) {
+    expect(() => publicHttpsUrl(value, 'PUBLIC_RPC_URL')).toThrow('PUBLIC_RPC_URL_INVALID');
+  }
+});
+
+test('proxy forwards a caller sponsor credential only to sponsor and strips upstream secret headers', async () => {
+  const seen: (string | null)[] = [];
+  const backend = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
+    seen.push(request.headers.get('x-kamui-sponsor-token'));
+    return Response.json({ ok: true }, { headers: { 'x-kamui-sponsor-token': 'must-not-reflect', 'set-cookie': 'must-not-forward' } });
+  } });
+  const reservation = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response() });
+  const port = reservation.port!; reservation.stop(true);
+  const child = Bun.spawn([process.execPath, 'server.ts'], { cwd: import.meta.dir,
+    env: { ...process.env, PORT: String(port), GOOGLE_CLIENT_ID:'fixture-google', KAMUI_ACCOUNT_CLASS_HASH:'0x1', API_URL:`http://127.0.0.1:${backend.port}` },
+    stdout:'ignore', stderr:'ignore' });
+  try {
+    let ready = false;
+    for (let i=0;i<100;i++) {
+      try { const r=await fetch(`http://127.0.0.1:${port}/live`); if(r.ok){ready=true;break;} } catch {}
+      await Bun.sleep(20);
+    }
+    if(!ready) throw Error('TEST_KEYCHAIN_UNAVAILABLE');
+    for (const path of ['/api/sponsor','/api/registry/sessions/list']) {
+      const response=await fetch(`http://127.0.0.1:${port}${path}`, { method:'POST', headers:{'x-kamui-sponsor-token':'fixture-server-token'},body:'{}' });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('x-kamui-sponsor-token')).toBeNull();
+      expect(response.headers.get('set-cookie')).toBeNull();
+      expect(await response.json()).toEqual({ok:true});
+    }
+    expect(seen).toEqual(['fixture-server-token',null]);
+    expect((await fetch(`http://127.0.0.1:${port}/api/metrics`)).status).toBe(404);
+  } finally { child.kill(); await child.exited; backend.stop(true); }
+},10_000);

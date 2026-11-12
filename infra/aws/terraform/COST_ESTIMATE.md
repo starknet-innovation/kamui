@@ -15,7 +15,7 @@ USD, 730 hours/month, Linux x86 On-Demand public rates. Backend `t3.small` (2 Gi
 | Usage/backup/logging/secrets/KMS allowance (assumed, not measured) | $20.00 |
 | **Total** | **$55.79** |
 
-The small-server model is **$69.73 with a 25% reserve**. Recommend a **$75/month planning target**, subject to the user's decision and measured sizing. This is not a hard cap. A 4 GiB `t3.medium` backend raises the total to **$72.43**, or **$90.54 with reserve**. Do not accept the smaller server without testing PostgreSQL plus all resident services under load.
+The small-server model is **$69.73 with a 25% reserve**. The earlier **$75/month planning target** applies only if the small backend passes sizing tests. Current container memory limits total about 1,760 MiB before the OS and backup spikes, so the implementation now recommends the priced **4 GiB backend and a $100/month planning target** until a full-stack test demonstrates the smaller host is sufficient. Neither target is an approved ceiling. This is not a hard cap. A 4 GiB `t3.medium` backend raises the total to **$72.43**, or **$90.54 with reserve**. Do not accept the smaller server without testing PostgreSQL plus all resident services under load.
 
 The **$20 allowance is an assumption**, covering modest billed egress, off-host backups, logs, monitoring, secrets and KMS usage/storage. It is not a separate itemized service quote or measured bill. Actual backup/WAL volume, asset egress, retention and telemetry may exceed it. The earlier model used 100 billed GB egress at $9/month; this leaves limited headroom within that allowance. Repeated browser proving may redownload large Wasm assets. No free quotas or credits are relied on.
 
