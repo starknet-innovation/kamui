@@ -161,6 +161,11 @@ function equalNumber(actual: unknown, expected: string): boolean {
   try { return BigInt(numberString(actual)) === BigInt(expected); } catch { return false; }
 }
 /** One accepted snapshot; no pending-state or continuing-custody guarantee. */
+export function canonicalClassHash(raw: any): string {
+  const abi = typeof raw?.abi === 'string' ? JSON.parse(raw.abi) : raw?.abi;
+  if (!Array.isArray(abi)) throw new Error('OPERATOR_CLASS_MISMATCH');
+  return hash.computeContractClassHash({ ...raw, abi });
+}
 export async function preflight(input: OperatorInput, rpc: ReadRpc): Promise<Observation> {
   const pinned = new KmsK1Signer({} as KmsPort, { ...input, maxFeeFri: BigInt(input.maxFeeFri), approve: async () => false });
   const expected = pinned.constructorCalldata();
@@ -198,7 +203,7 @@ export async function preflight(input: OperatorInput, rpc: ReadRpc): Promise<Obs
     if (!(error instanceof OperatorRpcError && error.code === 20)) throw error;
     const declared = await rpc.request('starknet_getClass', { block_id, class_hash: input.classHash });
     try {
-      if (!equalNumber(hash.computeContractClassHash(declared as any), input.classHash))
+      if (!equalNumber(canonicalClassHash(declared), input.classHash))
         throw new Error();
     } catch { throw new Error('OPERATOR_CLASS_MISMATCH'); }
     return { blockHash, chainId: String(chainId), account: input.accountAddress, classHash: input.classHash, nonce: '0' };

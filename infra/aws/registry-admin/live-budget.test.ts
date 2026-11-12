@@ -97,3 +97,18 @@ test('strict fixed filename and private file permissions enforced', async () => 
     await expect(reserveAttempt(path, input())).rejects.toThrow('LIVE_BUDGET_FILE_INVALID');
   });
 });
+
+test('explicit uncapped Sepolia authorization retains replay and receipt accounting', async () => {
+  await temporary(async path => {
+    await initializeBudget(path, true);
+    const large = { ...input(1), kind: 'declare' as const, maxFeeFri: String(8n * STRK) };
+    await reserveAttempt(path, large);
+    await reserveAttempt(path, { ...input(2), maxFeeFri: String(8n * STRK) });
+    expect(reservedTotal(await inspectBudget(path))).toBe(16n * STRK);
+    expect((await inspectBudget(path)).authorization).toBe('user-explicit-sepolia-strk-2026-11-12');
+    await expect(reserveAttempt(path, large)).rejects.toThrow('LIVE_BUDGET_REPLAY');
+    await reconcileAttempt(path, '0x1', 'confirmed-success', String(7n * STRK), '1');
+    expect(reservedTotal(await inspectBudget(path))).toBe(16n * STRK);
+    await expect(initializeBudget(path, true)).rejects.toThrow();
+  });
+});

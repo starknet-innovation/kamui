@@ -1,0 +1,32 @@
+{
+  "date": "2026-11-12",
+  "environment": "kamui-backend-test",
+  "hostingDeployed": false,
+  "iamRolesCreated": 3,
+  "kmsKey": {
+    "livePolicyMatchesReviewedPlan": true,
+    "multiRegion": false,
+    "origin": "AWS_KMS",
+    "publicKeyMatchesSavedMetadata": true,
+    "spec": "ECC_SECG_P256K1",
+    "state": "Enabled",
+    "usage": "SIGN_VERIFY"
+  },
+  "kmsSignCalls": 0,
+  "registryRolesChanged": false,
+  "roleProfilesCreatedAndAssumptionVerified": 3,
+  "starknetTransactions": 0,
+  "numberedSequenceRerunPassed": true,
+  "localKmsCreationRequestsRecorded": 1,
+  "awsIdentifiersIncluded": false,
+  "kmsSignInteroperabilityTested": false,
+  "starknetAdminAccountDeployed": false,
+  "readTimeoutFix": {
+    "setupTestsPassed": 39,
+    "maximumSafeReadAttempts": 3,
+    "maximumMutationAttempts": 1,
+    "fullSequenceRerunPassed": true,
+    "rerunRecordedOnlyReadCalls": true,
+    "localKmsCreationRequestsStillOne": true
+  }
+}

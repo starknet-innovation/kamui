@@ -1,0 +1,103 @@
+{
+  "schema": "kamui.kms-sepolia-acceptance.v1",
+  "date": "2026-11-12",
+  "chainId": "0x534e5f5345504f4c4941",
+  "classHash": "0x7164c4f64b1c7608b3e88806dc7a24083e728c892f6c7488900665d634ddf79",
+  "compiledClassHash": "0x1bf4f493f500bd6dab34c29fc9913403fa35a33a7a2258fbb507ff9755ffd75",
+  "account": "0x67141ab3d3b99425c5ecb32cabc9b718b36ec8a5f933fc79e9601d9e23bc09",
+  "sourceSha256": "f62311dc6d1da3e4cb6518a5521e0b2a9288aaa2e7738640d0c39618784045e5",
+  "casmSha256": "81954122f95b6b2a14b569040a71cee475d077de8985068e453d3326c13cc2bf",
+  "starknetVersion": "0.14.4",
+  "publicKey": "0x0459f595166df8ed53a2f7e1f49a93fd5467d4f928f00bdf3f82cda53b169235ff64a2cea8c39c6fba498d958e7badf9957df4e458b30b16de52b028abf285ceab",
+  "constructorCalldata": [
+    "0x67d4f928f00bdf3f82cda53b169235ff",
+    "0x59f595166df8ed53a2f7e1f49a93fd54",
+    "0x7df4e458b30b16de52b028abf285ceab",
+    "0x64a2cea8c39c6fba498d958e7badf995"
+  ],
+  "blockNumber": 18048333,
+  "blockHash": "0x65eaf51bdaa711ed814ba0d71dfa0ba102d284ce859bd6634407347e18a060f",
+  "queryEstimationValidated": {
+    "deploy": true,
+    "ping": true
+  },
+  "signatureChecks": {
+    "original": true,
+    "changedDigestRejected": true,
+    "differentKeyRejected": true
+  },
+  "nonce": "2",
+  "pingCountBefore": "12",
+  "pingCountAfter": "13",
+  "totalActualFeeFri": "6449947451955377354",
+  "fundingPrincipalFri": "2000000000000000000",
+  "adminBalanceFri": "1112649420201977350",
+  "relayerBalanceFri": "2846340302687494030320",
+  "balanceDeltasMatched": true,
+  "registryRolesTransferred": false,
+  "receipts": [
+    {
+      "kind": "declare",
+      "transactionHash": "0xa278ac29021ba97f3583854fb5f3d7039521df4c8b4d1a9a096af0014ab73",
+      "blockNumber": 18048233,
+      "blockHash": "0x5bcaca6f9bd17d45beadc184255aee4e603bd7e1d86d744d0ae0c4347249a93",
+      "execution": "SUCCEEDED",
+      "finality": "ACCEPTED_ON_L2",
+      "maximumFeeFri": "7297820280981400892",
+      "actualFeeFri": "5518200590644095168",
+      "principalFri": "0"
+    },
+    {
+      "kind": "fund",
+      "transactionHash": "0x2ea35bf84bf02a1d440a419395aad05b06763220f98b2c9dcb380c809a24969",
+      "blockNumber": 18048254,
+      "blockHash": "0x2ba794f92584184e0da8b4a237c63a928a257d572e0b8b672ef71df989b8fec",
+      "execution": "SUCCEEDED",
+      "finality": "ACCEPTED_ON_L2",
+      "maximumFeeFri": "58714082300078153",
+      "actualFeeFri": "44396281513259536",
+      "principalFri": "2000000000000000000"
+    },
+    {
+      "kind": "deploy",
+      "transactionHash": "0x20fdd07fc347ff761728f894a2a07356a5b8f6f2be3121f4ca4bbc970149306",
+      "blockNumber": 18048268,
+      "blockHash": "0x43db69fd71dd0381cbff62d9d817661f50ce2437fdd03df43c6d787a664abd4",
+      "execution": "SUCCEEDED",
+      "finality": "ACCEPTED_ON_L2",
+      "maximumFeeFri": "675981327542491989",
+      "actualFeeFri": "464672067817817606",
+      "principalFri": "0"
+    },
+    {
+      "kind": "ping",
+      "transactionHash": "0x21046afab78c7f2ee031fce58eb18bcb57f9f2358def5d74af4cf419a4a5072",
+      "blockNumber": 18048325,
+      "blockHash": "0x638dbd6a0328e791477c4a0536c6aae9a0c98e59789551882f40dbb75d299ff",
+      "execution": "SUCCEEDED",
+      "finality": "ACCEPTED_ON_L2",
+      "maximumFeeFri": "614890844615428674",
+      "actualFeeFri": "422678511980205044",
+      "principalFri": "0"
+    }
+  ],
+  "authorization": "User explicitly removed Sepolia STRK spending caps before the first paid submission; exact resource bounds and durable hash/nonce accounting retained.",
+  "kmsSigningCalls": 5,
+  "kmsSigningCallsBreakdown": {
+    "interoperabilityProbe": 1,
+    "queryEstimation": 2,
+    "deployAccount": 1,
+    "pingInvoke": 1
+  },
+  "localVerification": {
+    "typescriptTestsPassed": 86,
+    "pythonSetupTestsPassed": 39,
+    "typecheckPassed": true
+  },
+  "limits": [
+    "No registry role handoff",
+    "No hosted deployment",
+    "No custody or independent-recovery security approval",
+    "Wrong-key and changed-digest checks were read-only calls, not paid rejected transactions"
+  ]
+}

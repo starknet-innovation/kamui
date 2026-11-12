@@ -272,3 +272,9 @@ The user approved four paid attempts, 12 test STRK total and 5 per transaction. 
 Owners increased **4 → 5**, all previous owners retained, class unchanged. Recovery advanced session epoch **7 → 8**, invalidating the test session; revoke-all advanced it to **9**. Funding is finally **paused**, with all four debits/journal history, both device profiles and a private SQL backup retained. Ordinary legacy launch configuration and original SQLite files were not changed. No old owner removal, registry administrator handoff, AWS change or external AVNU-control validation occurred.
 
 [Run details](run-12-postgres-regression.md), [structured evidence](run-12-postgres-regression.json), [receipts](run-12-receipts.json), [final funding state](run-12-funding-final.json).
+
+## Run 13: native KMS k1 administrator
+
+12 November 2026. **Passed.** The real AWS KMS k1 key signed an interoperability challenge, validated deploy/Ping query estimates and the normal deployment/Ping transactions. Four paid transactions (declaration, 2 STRK funding, deployment and Ping) all succeeded on canonical Sepolia blocks. Actual fees totaled **6.449947451955377354 test STRK**; the new account retains **1.11264942020197735 STRK**. Counter **12 → 13**, administrator nonce **2**. Full key/class and balance deltas match; changed-digest and different-key signatures were rejected by read-only calls.
+
+The user explicitly removed Sepolia STRK caps before any paid submission. Durable hash/nonce reservations and receipt accounting remain active. Fixed RPC ABI-string class-hash normalization, covered by regressions; 86 TypeScript tests, 39 Python setup tests and typecheck pass. No registry authority handoff, user-account migration or hosting change. Custody/security and independent-recovery review remain open. [Run details](run-13-kms-admin.md), [public evidence](run-13-kms-admin.json).

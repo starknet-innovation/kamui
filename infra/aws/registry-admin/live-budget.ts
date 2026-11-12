@@ -18,8 +18,9 @@ export interface Attempt extends Reservation {
   actualFeeFri?: string; receiptBlock?: string;
 }
 export interface Budget {
-  schema: 'kamui.kms-live-budget.v1'; runId: typeof RUN_ID; chainId: '0x534e5f5345504f4c4941';
-  maxAttempts: 4; maxTotalFri: '12000000000000000000'; maxFeePerAttemptFri: '5000000000000000000';
+  schema: 'kamui.kms-live-budget.v1' | 'kamui.kms-live-budget.v2'; runId: typeof RUN_ID; chainId: '0x534e5f5345504f4c4941';
+  maxAttempts: 4 | null; maxTotalFri: '12000000000000000000' | null; maxFeePerAttemptFri: '5000000000000000000' | null;
+  authorization?: 'user-explicit-sepolia-strk-2026-11-12';
   attempts: Attempt[];
 }
 function uint(value: unknown): bigint {
@@ -32,16 +33,17 @@ function felt(value: unknown): string {
   if (n <= 0n || n >= FIELD) throw new Error('LIVE_BUDGET_INPUT_INVALID');
   return `0x${n.toString(16)}`;
 }
-export function reservation(input: Reservation): Reservation {
+export function reservation(input: Reservation, userAuthorizedSepolia = false): Reservation {
   if (!input || !['declare', 'fund', 'deploy', 'ping'].includes(input.kind)) throw new Error('LIVE_BUDGET_INPUT_INVALID');
   const maxFee = uint(input.maxFeeFri), principal = uint(input.principalFri), nonce = uint(input.nonce);
-  if (maxFee <= 0n || maxFee > 5n * STRK || nonce >= FIELD
+  if (maxFee <= 0n || (maxFee >= 1n << 256n || (!userAuthorizedSepolia && maxFee > 5n * STRK)) || nonce >= FIELD
     || (input.kind !== 'fund' && principal !== 0n) || (input.kind === 'fund' && principal === 0n))
     throw new Error('LIVE_BUDGET_INPUT_INVALID');
   return { kind: input.kind, sender: felt(input.sender), nonce: String(nonce), transactionHash: felt(input.transactionHash),
     maxFeeFri: String(maxFee), principalFri: String(principal) };
 }
-function empty(): Budget {
+function empty(userAuthorizedSepolia = false): Budget {
+  if (userAuthorizedSepolia) return { schema: 'kamui.kms-live-budget.v2', runId: RUN_ID, chainId: '0x534e5f5345504f4c4941', maxAttempts: null, maxTotalFri: null, maxFeePerAttemptFri: null, authorization: 'user-explicit-sepolia-strk-2026-11-12', attempts: [] };
   return { schema: 'kamui.kms-live-budget.v1', runId: RUN_ID, chainId: '0x534e5f5345504f4c4941',
     maxAttempts: 4, maxTotalFri: '12000000000000000000', maxFeePerAttemptFri: '5000000000000000000', attempts: [] };
 }
@@ -50,15 +52,15 @@ export function reservedTotal(state: Budget): bigint {
 }
 function parse(raw: unknown): Budget {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('LIVE_BUDGET_CORRUPT');
-  const value = raw as Budget, initial = empty();
+  const value = raw as Budget, initial = empty((raw as Budget).schema === 'kamui.kms-live-budget.v2');
   if (Object.keys(value).sort().join(',') !== Object.keys(initial).sort().join(',')
     || value.schema !== initial.schema || value.runId !== RUN_ID || value.chainId !== initial.chainId
-    || value.maxAttempts !== 4 || value.maxTotalFri !== initial.maxTotalFri
-    || value.maxFeePerAttemptFri !== initial.maxFeePerAttemptFri || !Array.isArray(value.attempts) || value.attempts.length > 4)
+    || value.maxAttempts !== initial.maxAttempts || value.maxTotalFri !== initial.maxTotalFri
+    || value.maxFeePerAttemptFri !== initial.maxFeePerAttemptFri || value.authorization !== initial.authorization || !Array.isArray(value.attempts) || (value.maxAttempts !== null && value.attempts.length > value.maxAttempts))
     throw new Error('LIVE_BUDGET_CORRUPT');
   const hashes = new Set(), nonces = new Set();
   for (const [index, attempt] of value.attempts.entries()) {
-    const checked = reservation(attempt);
+    const checked = reservation(attempt, value.schema === 'kamui.kms-live-budget.v2');
     if (Object.entries(checked).some(([key, val]) => (attempt as any)[key] !== val)
       || attempt.index !== index + 1 || !['reserved', 'confirmed-success', 'confirmed-revert'].includes(attempt.status))
       throw new Error('LIVE_BUDGET_CORRUPT');
@@ -73,7 +75,7 @@ function parse(raw: unknown): Budget {
     if (hashes.has(attempt.transactionHash) || nonces.has(nonce)) throw new Error('LIVE_BUDGET_CORRUPT');
     hashes.add(attempt.transactionHash); nonces.add(nonce);
   }
-  if (reservedTotal(value) > 12n * STRK) throw new Error('LIVE_BUDGET_CORRUPT');
+  if (value.maxTotalFri !== null && reservedTotal(value) > uint(value.maxTotalFri)) throw new Error('LIVE_BUDGET_CORRUPT');
   return value;
 }
 async function syncDirectory(directory: string) {
@@ -110,10 +112,10 @@ async function replace(path: string, state: Budget) {
   finally { await file.close(); }
   await rename(temp, path); await syncDirectory(dirname(path));
 }
-export async function initializeBudget(path: string): Promise<void> {
+export async function initializeBudget(path: string, userAuthorizedSepolia = false): Promise<void> {
   await withLock(path, async () => {
     const file = await open(path, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW, 0o600);
-    try { await file.writeFile(JSON.stringify(empty(), null, 2) + '\n'); await file.sync(); }
+    try { await file.writeFile(JSON.stringify(empty(userAuthorizedSepolia), null, 2) + '\n'); await file.sync(); }
     finally { await file.close(); }
     await syncDirectory(dirname(path));
   });
@@ -122,10 +124,10 @@ export async function inspectBudget(path: string): Promise<Budget> {
   return withLock(path, () => readBudget(path));
 }
 export async function reserveAttempt(path: string, input: Reservation): Promise<Attempt> {
-  const checked = reservation(input);
   return withLock(path, async () => {
     const state = await readBudget(path);
-    if (state.attempts.length >= 4 || reservedTotal(state) + uint(checked.maxFeeFri) + uint(checked.principalFri) > 12n * STRK)
+    const checked = reservation(input, state.schema === 'kamui.kms-live-budget.v2');
+    if ((state.maxAttempts !== null && state.attempts.length >= state.maxAttempts) || (state.maxTotalFri !== null && reservedTotal(state) + uint(checked.maxFeeFri) + uint(checked.principalFri) > uint(state.maxTotalFri)))
       throw new Error('LIVE_BUDGET_EXHAUSTED');
     if (state.attempts.some(a => a.transactionHash === checked.transactionHash || (a.sender === checked.sender && a.nonce === checked.nonce)))
       throw new Error('LIVE_BUDGET_REPLAY');
@@ -153,6 +155,7 @@ export async function main(args: string[]): Promise<number> {
     const [action, flag, path, ...rest] = args;
     if (flag !== '--journal' || !path) throw new Error('LIVE_BUDGET_ARGUMENTS_INVALID');
     if (action === 'init' && rest.length === 0) await initializeBudget(path);
+    else if (action === 'init' && rest.length === 1 && rest[0] === '--user-authorized-sepolia') await initializeBudget(path, true);
     else if (action === 'inspect' && rest.length === 0) {
       const state = await inspectBudget(path);
       process.stdout.write(JSON.stringify({ status: 'budget_observed', attemptsReserved: state.attempts.length,

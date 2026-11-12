@@ -1,6 +1,8 @@
+> Live acceptance completed on 12 November 2026: [run 13](../../../spikes/s1/results/run-13-kms-admin.md). No registry roles were transferred. The user explicitly removed Sepolia STRK caps before any paid submission; the current private run journal is v2. Default v1 caps below remain available for bounded runs.
+
 # KMS k1 / Sepolia live acceptance
 
-Prepared 12 November 2026. **Not run.** The user confirmed that the dedicated KMS key has not been created. AWS key setup is operator-run; see [key setup](KEY_SETUP.md). This plan does not change a key policy, grant contract roles or provision a host.
+Prepared 12 November 2026. **Not run.** The dedicated KMS key was subsequently created and its policy/public metadata verified during the explicitly authorized setup test; see [setup results](SETUP_VALIDATION-2026-11-12.json). This signing-and-Sepolia acceptance procedure remains unrun. AWS key setup is operator-run; see [key setup](KEY_SETUP.md). This plan does not change a key policy, grant contract roles or provision a host.
 
 The user approved a **new** live test budget: at most **4 paid attempts**, at most **12 test STRK total**, at most **5 STRK maximum signed fee per paid attempt**, with **no automatic retries**. This is separate from the already consumed run-12 allowance. A failed or uncertain send consumes an attempt and retains its full maximum fee reservation until reconciled; an API/process restart or changed directory does not reset that test allowance. Funding transfers, paid declarations and failed on-chain transactions count as paid attempts. Their fees count toward the total. Select and record the exact required funding principal after fee estimation and before transfer; conservatively reserve principal plus all fee maxima within 12 STRK. Do not treat the fee ceiling as permission to transfer an arbitrary balance. If the envelope cannot cover the work, stop for revised authorization.
 
@@ -45,7 +47,7 @@ The existing `services/backend/src/scripts/declare-account.ts` declares **KamuiA
 
 ## 3. Bounded paid acceptance, after key readiness
 
-`live-budget.ts` fixes run identity `kamui-kms-sepolia-2026-11-12-v1`, four attempts, 12 STRK total reserved principal/fees, and 5 STRK maximum fee each. Select **one permanent operator-owned mode `0700` directory outside Git**, keep the same path across every restart, and initialize its fixed filename once:
+`live-budget.ts` defaults to run identity `kamui-kms-sepolia-2026-11-12-v1`, four attempts, 12 STRK total reserved principal/fees, and 5 STRK maximum fee each. Select **one permanent operator-owned mode `0700` directory outside Git**, keep the same path across every restart, and initialize its fixed filename once:
 
 ```sh
 export KAMUI_KMS_LIVE_JOURNAL=/private/kamui/kms-sepolia-budget.json
@@ -97,4 +99,8 @@ After deployment, use read-only `starknet_call` on `is_valid_signature` with the
 
 Record whether query estimation with validation enabled actually succeeds: local Cairo tests do not prove sequencer validation limits. Retain KMS diagnostic result, artifact hashes, exact class/account/public key, accepted deploy/invoke receipts, negative-check results, nonce observations, actual fees, principal and reserved maxima. Reconcile every ambiguous submission and verify attempt/aggregate limits before declaring acceptance complete.
 
-Git evidence must omit KMS references, AWS account identifiers, credentials/session details, raw AWS errors and raw transaction signatures. Public Starknet addresses, hashes and receipt summaries can be separately sanitized. Current evidence is local fake-KMS/synthetic-key testing only; no real KMS call or paid transaction has been made by this preparation.
+The explicit `init --user-authorized-sepolia` option initializes an uncapped v2 journal only for the user's recorded Sepolia authorization. It does not migrate, overwrite or reset an existing journal. Exact-hash/sender-nonce replay checks, pre-send durable reservations and receipt accounting still apply. The ordinary v1 initializer and deployment/Ping submitter retain their original fee limits.
+
+`live-sepolia.ts` is the fixed 12 November one-run harness, not a general deployment tool. It uses the existing backend SecretSource internally for class declaration/funding and the separate KMS signer for native account estimates. Run it from `services/backend` with the repository Bun; commands are `preflight`, `init-budget`, `budget`, `estimate-declare`, `send-declare`, `receipt-declare`, `estimate-fund` (decimal `KAMUI_FUNDING_FRI`), `send-fund`, `receipt-fund`, `estimate-deploy`, `estimate-ping`, `verify`. Existing private outputs are exclusive and must be preserved. Native signing/submission still uses the operator/submit CLIs. Never rerun a send after reservation or uncertainty; reconcile the original hash. The completed run's directory and journal must not be reinitialized.
+
+Git evidence must omit KMS references, AWS account identifiers, credentials/session details, raw AWS errors and raw transaction signatures. Public Starknet addresses, hashes and receipt summaries can be separately sanitized. Current evidence includes live role/profile/key setup and public-metadata/policy reads, plus local fake-KMS/synthetic-key signing tests. Real `kms:Sign` calls, native deploy/invoke validation and four successful paid Sepolia transactions are now recorded in run 13. No registry authority was transferred.

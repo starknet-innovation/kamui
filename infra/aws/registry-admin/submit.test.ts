@@ -18,7 +18,7 @@ function fixture(deploy = false, maximumScale = 1n) {
   const publicKey = `0x${Buffer.from(secp256k1.getPublicKey(secret, false)).toString('hex')}`;
   const keyId = ['arn', 'aws', 'kms', 'eu-west-1', '0'.repeat(12), 'key/00000000-0000-0000-0000-000000000000'].join(':');
   const declared = { sierra_program: [], contract_class_version: '0.1.0', entry_points_by_type: { EXTERNAL: [], CONSTRUCTOR: [], L1_HANDLER: [] }, abi: '[]' };
-  const classHash = hash.computeContractClassHash(declared as any);
+  const classHash = hash.computeContractClassHash({ ...declared, abi: [] } as any);
   const signer = new KmsK1Signer({} as KmsPort, { keyId, publicKey, accountAddress: '0x123', classHash,
     maxFeeFri: 5n * STRK, approve: async () => false });
   const constructor = signer.constructorCalldata();

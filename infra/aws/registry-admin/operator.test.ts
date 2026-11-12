@@ -102,7 +102,7 @@ test('approval rejection and changed state during review prevent KMS access', as
 function deployment(f: ReturnType<typeof fixture>) {
   const declared = { sierra_program: [], contract_class_version: '0.1.0',
     entry_points_by_type: { EXTERNAL: [], CONSTRUCTOR: [], L1_HANDLER: [] }, abi: '[]' };
-  const classHash = hash.computeContractClassHash(declared as any);
+  const classHash = hash.computeContractClassHash({ ...declared, abi: [] } as any);
   const calldata = f.signer.constructorCalldata();
   const address = hash.calculateContractAddressFromHash('9', classHash, calldata, 0);
   const { walletAddress, cairoVersion, ...common } = f.input.transaction.details as any;
@@ -188,4 +188,13 @@ test('RPC bounds streaming responses without trusting Content-Length', async () 
   const rpc = new HttpReadRpc('https://rpc.invalid', (async () => new Response(stream)) as unknown as typeof fetch);
   await expect(rpc.request('starknet_chainId', {})).rejects.toThrow('OPERATOR_RPC_FAILED');
   expect(cancelled).toBe(true);
+});
+
+
+test('RPC string ABI hashes as the same Sierra class as artifact array ABI', async () => {
+  const { canonicalClassHash } = await import('./operator');
+  const raw = { contract_class_version: '0.1.0', sierra_program: ['0x1'],
+    entry_points_by_type: { EXTERNAL: [], L1_HANDLER: [], CONSTRUCTOR: [] }, abi: [] };
+  expect(canonicalClassHash({ ...raw, abi: JSON.stringify(raw.abi) })).toBe(canonicalClassHash(raw));
+  expect(() => canonicalClassHash({ ...raw, abi: '{}' })).toThrow('OPERATOR_CLASS_MISMATCH');
 });
