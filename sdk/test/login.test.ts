@@ -282,3 +282,101 @@ describe('against the pepper service', async () => {
     await expect(fetchPepper({ serviceUrl: 'http://pepper.test', idToken, attempt, device, fetch: viaService })).rejects.toThrow(/pepper service:/);
   });
 });
+
+describe('HTTP recovery jobs', () => {
+  const recoverRequest = (): RecoverRequest => ({
+    jwt: 'token', account: '0x1', newPubkey: '0x2', blinding: '0x3', pepper: '0x4',
+    signature: ['0x5', '0x6'], keyProof: ['0x7', '0x8'], override: false,
+  });
+
+  test('a lost submission response retries the same capability; polling recovers from a dropped connection and a gateway error', async () => {
+    const { httpRecoverBackend } = await import('../src/login');
+    const requests: { url: string; body: any }[] = [];
+    let submissions = 0;
+    let polls = 0;
+    const backend = httpRecoverBackend('https://api.test/', async (url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push({ url, body });
+      expect(init.signal).toBeDefined();
+      if (url.endsWith('/recover')) {
+        if (++submissions === 1) throw new Error('response lost after acceptance');
+        return Response.json({ jobId: body.jobId }, { status: 202 });
+      }
+      if (++polls === 1) return Response.json({ status: 'running' });
+      if (polls === 2) throw new Error('connection lost');
+      if (polls === 3) return Response.json({ error: 'gateway' }, { status: 502 });
+      return Response.json({ status: 'succeeded', result: { transaction_hash: '0xabc' } });
+    }, { pollIntervalMs: 0 });
+    expect(await backend.recover(recoverRequest())).toEqual({ transaction_hash: '0xabc' });
+    expect(submissions).toBe(2);
+    expect(polls).toBe(4);
+    expect(new Set(requests.map((r) => r.body.jobId)).size).toBe(1);
+    expect(requests[0]!.body.jobId).toMatch(/^0x[0-9a-f]{62}$/);
+    for (const req of requests.filter((r) => r.url.endsWith('/status'))) {
+      expect(Object.keys(req.body)).toEqual(['jobId']);
+      expect(req.url).not.toContain(req.body.jobId);
+    }
+  });
+
+  test('terminal failure and unknown job are surfaced without resubmitting', async () => {
+    const { httpRecoverBackend } = await import('../src/login');
+    for (const reply of [
+      Response.json({ status: 'failed', error: 'PROVER_FAILED', httpStatus: 502 }),
+      Response.json({ error: 'RECOVERY_JOB_NOT_FOUND' }, { status: 404 }),
+      Response.json({ status: 'succeeded', result: {} }),
+    ]) {
+      let submissions = 0;
+      const backend = httpRecoverBackend('https://api.test', async (url, init) => {
+        if (url.endsWith('/recover')) {
+          submissions++;
+          return Response.json({ jobId: JSON.parse(init.body).jobId }, { status: 202 });
+        }
+        return reply;
+      }, { pollIntervalMs: 0 });
+      await expect(backend.recover(recoverRequest())).rejects.toThrow('recover API:');
+      expect(submissions).toBe(1);
+    }
+  });
+
+  test('waiting is bounded and does not submit another recovery when the deadline expires', async () => {
+    const { httpRecoverBackend } = await import('../src/login');
+    let submissions = 0;
+    const backend = httpRecoverBackend('https://api.test', async (url, init) => {
+      if (url.endsWith('/recover')) {
+        submissions++;
+        return Response.json({ jobId: JSON.parse(init.body).jobId }, { status: 202 });
+      }
+      return Response.json({ status: 'running' });
+    }, { pollIntervalMs: 1, timeoutMs: 15 });
+    await expect(backend.recover(recoverRequest())).rejects.toThrow('polling timed out; recovery may still complete');
+    expect(submissions).toBe(1);
+  });
+
+  test('an unrecoverable submission is not retried and lost submissions have a bounded retry count', async () => {
+    const { httpRecoverBackend } = await import('../src/login');
+    for (const disconnected of [false, true]) {
+      let attempts = 0;
+      const backend = httpRecoverBackend('https://api.test', async () => {
+        attempts++;
+        if (disconnected) throw new Error('offline');
+        return Response.json({ error: 'BAD_SIGNATURE' }, { status: 400 });
+      }, { pollIntervalMs: 0 });
+      await expect(backend.recover(recoverRequest())).rejects.toThrow(disconnected ? 'submission unavailable' : 'BAD_SIGNATURE');
+      expect(attempts).toBe(disconnected ? 3 : 1);
+    }
+  });
+});
+
+test('HTTP recovery bounds each request even if a transport ignores the abort signal', async () => {
+  const { httpRecoverBackend } = await import('../src/login');
+  let attempts = 0;
+  const signals: AbortSignal[] = [];
+  const backend = httpRecoverBackend('https://api.test', async (_, init) => {
+    attempts++;
+    signals.push(init.signal!);
+    return new Promise<Response>(() => {});
+  }, { requestTimeoutMs: 5, pollIntervalMs: 0 });
+  await expect(backend.recover({} as RecoverRequest)).rejects.toThrow('submission unavailable');
+  expect(attempts).toBe(3);
+  expect(signals.every((s) => s.aborted)).toBe(true);
+});

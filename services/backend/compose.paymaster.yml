@@ -1,0 +1,20 @@
+# Optional AVNU service, run unmodified as a separate container. Operator supplies a reviewed
+# upstream profile (including its own signing configuration) and an image pinned by digest.
+# This file neither builds AVNU nor places its source in a Kamui image.
+# See PAYMASTER.md before starting it. No real image/profile is configured in the repository.
+services:
+  api:
+    environment:
+      PAYMASTER_URL: http://paymaster:12777
+      PAYMASTER_API_KEY: ${PAYMASTER_API_KEY:-}
+  paymaster:
+    image: ${PAYMASTER_IMAGE:?Set PAYMASTER_IMAGE to a reviewed avnulabs/paymaster@sha256 digest}
+    environment:
+      PAYMASTER_PROFILE: /profiles/default.json
+    volumes:
+      - type: bind
+        source: ${PAYMASTER_PROFILE_PATH:?Set PAYMASTER_PROFILE_PATH to the operator-created upstream profile}
+        target: /profiles/default.json
+        read_only: true
+    ports: ["127.0.0.1:12777:12777"]
+    restart: unless-stopped

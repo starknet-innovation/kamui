@@ -1,6 +1,7 @@
 // The backend API. The routes are in app.ts; this file reads the settings and serves them.
 //
-// POST /recover {jwt, account, newPubkey, blinding, pepper, signature: [r, s], keyProof?, override?} => { address, identity, transaction_hash }
+// POST /recover {jobId, jwt, account, newPubkey, blinding, pepper, signature: [r, s], keyProof?, override?} => 202 { jobId }
+// POST /recover/status {jobId} => running | succeeded (result) | failed (error, httpStatus)
 //   Deploys the account when missing, runs prove_jwt, relays recover. See recovery/recover.ts.
 //   With override: true the account was created under another aud; it must exist and recover only
 //   records a pending recovery that finalize_override_recovery completes after the delay.
@@ -31,6 +32,7 @@ import { pepperSettings } from '../recovery/pepper';
 import { type RecoverContext } from '../recovery/recover';
 import { RegistryStore } from '../registry/store';
 import { MemoryLedger, loadBudgets } from '../sponsor/budgets';
+import { paymasterFromEnvironment } from '../sponsor/paymaster';
 import { buildApp, metricsResponse, parseLimits } from './app';
 
 const number = (name: string, fallback: number) => {
@@ -88,7 +90,7 @@ async function rotatorHealth(): Promise<unknown> {
 const app = buildApp({
   chain,
   ctx,
-  sponsor: { ...ctx, budgets: loadBudgets(chain, { file: process.env.SPONSOR_BUDGETS_FILE, sponsoredPerHour: process.env.SPONSORED_PER_HOUR }), ledger },
+  sponsor: { ...ctx, budgets: loadBudgets(chain, { file: process.env.SPONSOR_BUDGETS_FILE, sponsoredPerHour: process.env.SPONSORED_PER_HOUR }), ledger, paymaster: paymasterFromEnvironment(chainId) },
   registry: { provider, classHash: ctx.classHash, chainId, store },
   limiter,
   limits: parseLimits(process.env.RATE_LIMITS),
@@ -106,8 +108,7 @@ const server = Bun.serve({
   port: number('PORT', 3000),
   // A relayed proof is up to 480,000 bytes, 640 KB as base64.
   maxRequestBodySize: 1_000_000,
-  // A backend proof takes a minute or more; 255 seconds is Bun's maximum. A client that needs
-  // longer than this should poll the chain for the recovery instead of holding the request.
+  // Recovery proofs run as jobs; this timeout no longer bounds their lifetime.
   idleTimeout: 255,
   fetch: (req, srv) => app.handle(req, srv.requestIP(req)?.address),
 });

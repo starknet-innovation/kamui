@@ -61,7 +61,8 @@ function app(over: Partial<AppDeps> = {}, limits: Partial<Record<RouteName, { pe
 
 /** A body that passes each route's field check and then fails early in its handler. */
 const BODIES: Record<string, unknown> = {
-  '/recover': { jwt: 'a.b.c', account: ACCOUNT, newPubkey: '0x1', blinding: '0x2', pepper: '0x3', signature: ['0x1', '0x2'] },
+  '/recover/status': { jobId: '0x' + 'a'.repeat(62) },
+  '/recover': { jobId: '0x' + 'a'.repeat(62), jwt: 'a.b.c', account: ACCOUNT, newPubkey: '0x1', blinding: '0x2', pepper: '0x3', signature: ['0x1', '0x2'] },
   '/relay': { account: ACCOUNT, newPubkey: '0x1', proof: 'AAAA', signature: ['0x1', '0x2'], proofFacts: [] },
   '/deploy': { aud: 'not-ours', identity: '0x1' },
   '/sponsor': { account: ACCOUNT, calldata: ['0x1'] },
@@ -84,7 +85,7 @@ describe('rate limits', () => {
   for (const [path, body] of Object.entries(BODIES)) {
     test(`${path}: a client over its limit is refused before any work, others are not`, async () => {
       const tight = { perClient: 2, global: 100 };
-      const { post, seen } = app({}, { recover: tight, relay: tight, deploy: tight, sponsor: tight, registry: tight });
+      const { post, seen } = app({}, { recover: tight, poll: tight, relay: tight, deploy: tight, sponsor: tight, registry: tight });
       await quietly(async () => {
         await post(path, body);
         await post(path, body);

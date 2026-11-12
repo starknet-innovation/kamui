@@ -62,6 +62,8 @@ await relayer.execute(sessionOutsideExecution({
 }));
 ```
 
+The HTTP `sponsor` helper still calls Kamui's `/sponsor` gateway. The backend may route it to its development relayer or an optional separate AVNU paymaster; no key or paymaster credential is added to the browser. AVNU mode is Sepolia-only and has not been tested live. Its `PAYMASTER_SUBMISSION_UNCERTAIN` error means a transaction may already have been sent: check the chain before requesting another signed call. Backend configuration and fee-control limitations are in `../services/backend/PAYMASTER.md`.
+
 A session that pays its own fees uses `createSessionAccount(...)` and then `execute` as with any starknet.js account. It needs `maxFeePerTx` above zero.
 
 ## Logging in
@@ -85,7 +87,8 @@ const login = await completeLogin({
 ```
 
 - A device that already owns the account costs two reads and no proof.
-- A new device, or a first login, costs a proof: the backend deploys the account if needed, proves the token and submits `recover`. Expect tens of seconds.
+- A new device, or a first login, costs a proof: the backend deploys the account if needed, proves the token and submits `recover`. Expect tens of seconds. `httpRecoverBackend` submits a job and polls its status every two seconds. Each HTTP request has a 15-second deadline, with a 20-minute overall polling deadline. Transient connection failures are retried; a lost submission uses the same random job ID, so it does not start another job. Optional third-argument polling settings are `pollIntervalMs`, `requestTimeoutMs` and `timeoutMs`.
+- Job IDs stay in memory and go only in POST bodies. Reloading the page does not resume polling, and an API restart loses jobs. A timeout or missing job may follow an on-chain success; check ownership before signing in again. The SDK never automatically resubmits once polling has started. Deploy this SDK with the job-based backend; it does not use the old synchronous recovery protocol.
 - **Adding a device revokes every session on the account.** Warn the user before a login on a new device.
 - If the account already has five owner keys, the oldest is replaced.
 - The id_token's signature is not checked on the client. The pepper service, the backend and the contract each check it.
@@ -113,7 +116,7 @@ const login = await completeLogin({
 ```sh
 bun install
 bun test test/unit.test.ts            # 19 tests, no network
-bun test test/login.test.ts           # 19 tests, no network; runs the pepper service in process
+bun test test/login.test.ts           # 24 tests, no network; runs the pepper service in process
 bun test test/keychain.test.ts        # 23 tests, no network
 bun test test/tokens.test.ts          # 9 tests, no network
 bun test test/registry.test.ts        # 21 tests, no network

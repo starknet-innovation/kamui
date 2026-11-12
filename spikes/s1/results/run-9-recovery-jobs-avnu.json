@@ -1,0 +1,104 @@
+{
+  "date": "2026-11-12",
+  "network": "SN_SEPOLIA",
+  "account": "0x133739e82cd76b5a6446848ae0cbbbb8cc4762fbb8e0eb5ebc417209423e0e9",
+  "classHash": "0x1e128dae2cb709cac9263afa1c6fdb33f7f1f5c2d969547d9739326d08399f6",
+  "recovery": {
+    "before": {
+      "ownerCount": 2,
+      "epoch": 2
+    },
+    "after": {
+      "ownerCount": 3,
+      "epoch": 3
+    },
+    "submissionResponsesDropped": 1,
+    "acceptedSubmissions": 2,
+    "sameJob": true,
+    "polls": 78,
+    "proofsObserved": 1
+  },
+  "receipts": [
+    {
+      "kind": "recovery",
+      "transaction_hash": "0x2f83dce71cc1d58e31f5f31edeb6bff80d9475cb757706d51aca3d62dc7c0cd",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18032470,
+      "actual_fee": {
+        "amount": "0x1a66a1377e557e40",
+        "unit": "FRI"
+      },
+      "sender_address": "0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e",
+      "paidByKamuiRelayer": true
+    },
+    {
+      "kind": "avnu_owner_session_approval",
+      "transaction_hash": "0x6f22bdab76924fdcdcfcc2d9f19634c91c30c4dceaa5ff39e0d34319c8ba82a",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18032872,
+      "actual_fee": {
+        "amount": "0x16c0b2daeded780",
+        "unit": "FRI"
+      },
+      "sender_address": "0x10650f211d129fb483093543df2dc6e9e33c39e8f1ab484f6244556e3993acd",
+      "paidByKamuiRelayer": false
+    },
+    {
+      "kind": "avnu_session_ping",
+      "transaction_hash": "0x74b0c4fcd26701b4d0adea465332beef18749244099ddfc68cecbc6d77648e5",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18032884,
+      "actual_fee": {
+        "amount": "0xe7b5829aab55c0",
+        "unit": "FRI"
+      },
+      "sender_address": "0xb55e6e912d3c9b91b4d4fdd1b7303cae5b9110d64d1dd98a058eb842a9d894",
+      "paidByKamuiRelayer": false
+    },
+    {
+      "kind": "avnu_session_ping_lost_response",
+      "transaction_hash": "0x5f48ed2e8f428e74a1eb44980aeebb39b86a3847fc87b5c03e17ada2d7beef6",
+      "execution_status": "SUCCEEDED",
+      "finality_status": "ACCEPTED_ON_L2",
+      "block_number": 18032930,
+      "actual_fee": {
+        "amount": "0xe7b5829aab55c0",
+        "unit": "FRI"
+      },
+      "sender_address": "0x573935416f69eecce5370c8791e2f46d4b6d98c2a0d8979b17c98d108e906ed",
+      "paidByKamuiRelayer": false
+    }
+  ],
+  "negativeChecks": {
+    "scope": {
+      "httpStatus": 400,
+      "error": "REVERTED: Kamui: invalid session"
+    },
+    "replay": {
+      "httpStatus": 400,
+      "error": "REVERTED: Kamui: duplicated nonce"
+    },
+    "budgetAfterLostReply": {
+      "httpStatus": 429,
+      "error": "ACCOUNT_BUDGET_SPENT"
+    }
+  },
+  "avnu": {
+    "endpoint": "https://sepolia.paymaster.avnu.fi",
+    "ownerSignatureElements": 2,
+    "sessionSignatureElements": 4,
+    "sponsorResponsesDropped": 1,
+    "counterBefore": 9,
+    "counterAfter": 11,
+    "wireFix": "Serialize Execute After / Execute Before as hexadecimal strings, preserving the SNIP-12 hash."
+  },
+  "limitations": [
+    "Ephemeral recovery jobs and budgets are lost on API restart.",
+    "The lost AVNU reply was dropped between client and gateway, after AVNU returned its hash; an upstream timeout before a hash was not injected.",
+    "External AVNU fees are not capped by the local preflight resource bounds.",
+    "No mainnet run, production hosting review, licence resolution or fee-ceiling claim."
+  ]
+}

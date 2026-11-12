@@ -131,6 +131,24 @@ test.describe('signing in', () => {
     expect(page.url()).toBe(`${KEYCHAIN}/`);
   });
 
+  test('sign-in polls a slow recovery and survives a dropped status connection', async ({ page, context }) => {
+    const world = await setup(context);
+    const polls: { jobId: string }[] = [];
+    await context.route(`${KEYCHAIN}/api/recover/status`, async (route) => {
+      polls.push(route.request().postDataJSON());
+      if (polls.length === 1) return route.fulfill({ json: { status: 'running' } });
+      if (polls.length === 2) return route.abort('connectionfailed');
+      return route.fulfill({ json: { status: 'succeeded', result: { transaction_hash: '0xaaa' } } });
+    });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(page.getByRole('heading', { name: 'Your account' })).toBeVisible({ timeout: 10_000 });
+    expect(world.recoverRequests).toHaveLength(1);
+    expect(polls).toHaveLength(3);
+    for (const poll of polls) expect(poll).toEqual({ jobId: world.recoverRequests[0].jobId });
+    expect(page.url()).not.toContain(world.recoverRequests[0].jobId);
+  });
+
   test('the device is remembered: a later visit needs no sign-in', async ({ page, context }) => {
     const world = await setup(context);
     await signIn(page);

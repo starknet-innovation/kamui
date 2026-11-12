@@ -209,3 +209,30 @@ Found and fixed during the run:
 Seen and not explained: midway through, the keychain page in the pane showed "Sign in" and its storage read empty, while the window the user was looking at was still signed in. The next connection needed no sign-in. Probably a stale tab of the hidden pane; not investigated further.
 
 Not exercised live: Apple, `Revoke all sessions`, removing a device, the registry's replay refusal (covered by the backend's tests), and Safari.
+
+## Run 9: recovery jobs and AVNU sponsorship
+
+2026-11-12. Local services against Sepolia, the account and class from run 8. The managed AVNU endpoint (`https://sepolia.paymaster.avnu.fi`), with the API key configured locally by the user; no self-hosted AVNU container. Public receipts and outcomes: [run-9-recovery-jobs-avnu.json](run-9-recovery-jobs-avnu.json).
+
+| Step | Result | Actual fee (STRK) |
+|---|---|---:|
+| Google login on a new device, using a recovery job | The API returned 202. A temporary proxy closed the first submission connection after acceptance, without returning its answer. The SDK retried with the same ID; both submissions joined one job. 78 polls ended in success, with one proof and one recovery transaction (`0x2f83dce7…c0cd`). Owners and session epoch both moved from 2 to 3. | 1.902385152325418560 |
+| Owner approves the Ping demo's scoped session, through AVNU | Confirmed (`0x6f22bdab…a82a`), session recorded in the registry, app connected. Two-element owner signature accepted. | 0.102469182357952384 |
+| Session ping, through AVNU | Confirmed (`0x74b0c4fc…48e5`), counter 9 → 10. Four-element session signature and its reserved nonce accepted. | 0.065220292165457344 |
+| Call outside the session scope | `400 REVERTED: Kamui: invalid session` at local fee estimation. Nothing submitted to AVNU. | 0 |
+| Replay the confirmed ping's public signed payload | `400 REVERTED: Kamui: duplicated nonce` at local estimation. Nothing submitted to AVNU. | 0 |
+| AVNU ping whose successful gateway response is dropped | Confirmed (`0x5f48ed2e…eef6`), counter 10 → 11, although the client received no hash. The hash was recovered from the gateway's transaction log and checked on chain. | 0.065220292165457344 |
+| Another ping under a temporary one-transaction budget | `429 ACCOUNT_BUDGET_SPENT`. Losing the previous response did not release its budget. No additional transaction. | 0 |
+
+All four receipts show `SUCCEEDED` and `ACCEPTED_ON_L2` when checked. Each of the three AVNU transactions has a fee-paying sender different from Kamui's relayer. AVNU paid about 0.233 test STRK in total; Kamui's relayer paid for recovery only.
+
+Found and fixed during the run:
+
+- **AVNU time bounds.** starknet.js emits `Execute After` and `Execute Before` as JSON numbers; AVNU's felt decoder expects hexadecimal strings. Initial owner approvals returned `PAYMASTER_SUBMISSION_UNCERTAIN` and no session event appeared. Normalizing those fields to hex strings fixed the live approval without changing its numeric values or SNIP-12 message hash. The existing owner/session hash checks still pass, with a new assertion for the wire representation.
+- **Diagnostics.** Rejected paymaster responses now log only their HTTP status and numeric JSON-RPC code, never upstream text or payloads.
+
+The recovery fault proxy dropped the accepted **submission** response, not an in-progress proof. The AVNU fault proxy dropped the successful **gateway-to-client** response, after AVNU had returned a hash; an AVNU-to-gateway timeout before a hash was not injected. The client did not automatically retry that sponsored call. It displayed `no transaction hash in the answer`; callers must reconcile a lost response before sending another transaction.
+
+After the run, the fault proxy was stopped, the temporary one-transaction budget removed, and the normal api, keychain and demo servers restarted. AVNU remains enabled through the user's gitignored local settings. The account has three owner keys and the test session remains live until its displayed expiry; the target counter is 11.
+
+Not established: recovery jobs surviving an API restart (they do not), a first deployment through the job protocol, a proof longer than 255 seconds, production availability, an enforceable external paymaster fee ceiling, or mainnet support. Local preflight bounds do not constrain AVNU's own relayer fees. Exact-version licensing and production spending controls still need the appropriate reviews.

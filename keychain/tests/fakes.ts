@@ -263,7 +263,11 @@ export async function installFakes(context: BrowserContext, world: World) {
     world.deployed = true;
     world.owners.push(request.newPubkey);
     ownersChanged(world);
-    return json(route, { address: request.account, transaction_hash: '0xaaa' });
+    return json(route, { jobId: request.jobId }, 202);
+  });
+
+  await context.route(`${KEYCHAIN}/api/recover/status`, async (route) => {
+    return json(route, { status: 'succeeded', result: { transaction_hash: '0xaaa' } });
   });
 
   await context.route(`${KEYCHAIN}/api/sponsor`, async (route) => {

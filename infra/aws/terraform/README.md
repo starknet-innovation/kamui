@@ -244,7 +244,7 @@ Pepper account first, because the backend needs the pepper service's URL.
 - **api:** `curl -s https://<api host>/health/api` returns `{"ok":true,"chain":"SN_SEPOLIA",...,"pepper_service":true}`.
 - **prover:** `https://<api host>/health/prover` returns `{"ok":true}`. It answers from the api, which pings the prover inside the VPC.
 - **rotator:** `https://<api host>/health/rotator` returns `ok: true` once each issuer has synced.
-- **End to end:** one login through the demo app against these URLs. A first login took about 60 s on a laptop; the load balancer's idle timeout is set to 600 s so that it does not cut the request.
+- **End to end:** one login through the demo app against these URLs. A first login took about 60 s on a laptop. Recovery now uses short job-submission and status requests; the template's 600 s idle timeout is unchanged.
 - `https://<api host>/metrics` must return 404 from the load balancer.
 
 ### Roll back
@@ -313,7 +313,7 @@ For the engineers who own them. None was changed.
 - **Configuration baked into the image.** `deployments.env` (registry address, class hash, executor address) is copied into the api and rotator images. A change of address is a new image, and one image cannot serve two chains. Environment variables win over the file, so `api_extra_environment` can override.
 - **`RPC_API_KEY`** is in `.env.example` but nothing reads it.
 - **SQLite on a shared volume** needs single-writer and no WAL, see above.
-- **A request that lasts a minute.** `/recover` holds the HTTP request open through deployment, proof and recovery. Every proxy on the path needs a long idle timeout, and a deployment of the api or prover during a login fails that login. A job the client polls would be easier to host.
+- **Recovery jobs.** `/recover` now returns a job ID and the client polls `/recover/status`, so a proof can outlive an HTTP connection. Jobs remain in process: replacing the api loses their status, and replacing the prover can interrupt a proof. A durable queue and reconciliation with on-chain transactions are still needed before relying on recovery across deployments.
 - **Relayer nonce.** One relayer key in one process is assumed. A second api task would need nonce coordination as well as a shared queue and registry.
 
 ## Not for production as is

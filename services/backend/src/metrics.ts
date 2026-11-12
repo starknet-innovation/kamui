@@ -87,6 +87,8 @@ export const metrics = {
   requests: new Counter('kamui_http_requests_total', 'Requests by route and outcome.'),
   /** scope: client, global. */
   rateLimited: new Counter('kamui_rate_limited_total', 'Requests refused by a rate limit, by route and scope.'),
+  /** result: accepted, succeeded, failed, refused (job store full). No IDs or accounts. */
+  recoveryJobs: new Counter('kamui_recovery_jobs_total', 'Recovery jobs by result.'),
   /** result: started, succeeded, failed, refused (queue full or waited too long). */
   proofs: new Counter('kamui_proofs_total', 'Backend proofs by result.'),
   proofSeconds: new Histogram('kamui_proof_duration_seconds', 'Time the prover took for one proof.', [5, 15, 30, 60, 120, 300, 600]),

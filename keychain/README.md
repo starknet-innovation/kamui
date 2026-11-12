@@ -43,6 +43,8 @@ With Google, or with Apple when the server has an Apple client id (`APPLE_CLIENT
 
 During the trip to the issuer the file is kept in the vault, encrypted like the device key, not in web storage. The tab only remembers that this sign-in uses a file. The file is taken out of the vault as soon as the user is back, before anything is checked, and is also removed by the next sign-in that starts and by "forget this device". If it is gone when the user comes back (another tab started a sign-in meanwhile), the sign-in stops and asks to start again.
 
+The SDK submits recovery as a job and polls its status, so a proof can outlive an HTTP connection. The job ID stays in memory and polling retries transient connection failures. Reloading the page does not resume polling; an API restart loses the job. A timed-out sign-in may still complete on chain.
+
 ## Sessions
 
 The account page lists the sessions that are live on the account, each with a "Revoke" button, and has "Revoke all sessions".
@@ -85,8 +87,8 @@ bun run server.ts      # http://localhost:5173
 ## Tested
 
 - **The protocol,** its refusals and the app-side helpers: 23 tests in `../sdk/test/keychain.test.ts`.
-- **The pages and key storage, in three browsers:** 63 tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 189 runs in all. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
-  - sign-in with Google and with Apple, a remembered device, a stale sign-in page, a key removed elsewhere, an error from the issuer, and no Apple button without an Apple client id;
+- **The pages and key storage, in three browsers:** 64 tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 192 runs in all. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
+  - sign-in with Google and with Apple, polling a slow recovery through a dropped connection, a remembered device, a stale sign-in page, a key removed elsewhere, an error from the issuer, and no Apple button without an Apple client id;
   - sign-in with a recovery file: the pepper service never contacted, the file a device downloads signing another device in, how the file is stored during the trip, and files refused for another user, network, class, application or issuer, or for not being a recovery file;
   - how the key is stored, and forgetting the device;
   - approving and denying a session or a single transaction, the requests the keychain refuses, how token calls and amounts are described for known, unverified and unidentified tokens, an app name containing markup;
@@ -105,7 +107,7 @@ The browser tests found three things, all fixed: a refused request stayed in the
 
 ### Browsers
 
-All 63 tests pass in Chrome, Firefox and WebKit with no change to the keychain. The points that could have differed did not: a `CryptoKey` that cannot be exported is stored in and read back from IndexedDB in all three, the app's origin arrives in `document.referrer` in all three with default settings, and the recovery file downloads in all three. The one change was in the fakes: WebKit cannot be handed a 302 as a faked answer, so the fake issuers answer with a page that navigates.
+All 64 tests pass in Chrome, Firefox and WebKit with no change to the keychain. The points that could have differed did not: a `CryptoKey` that cannot be exported is stored in and read back from IndexedDB in all three, the app's origin arrives in `document.referrer` in all three with default settings, and the recovery file downloads in all three. The one change was in the fakes: WebKit cannot be handed a 302 as a faked answer, so the fake issuers answer with a page that navigates.
 
 What this does not show:
 

@@ -1,28 +1,32 @@
 // Kamui: POST /sponsor. The relayer pays for an `execute_from_outside_v2` call on a Kamui
 // account: an owner approving a session or changing owners, or a session making a call.
 //
-// This is the paymaster stand-in (plan, Phase 2 step 3), with per-app budgets: see
+// The default development relayer can be replaced by a separately running AVNU service,
+// with per-app budgets: see
 // ../sponsor/budgets.ts for what a budget and an app key are.
 //
 // What makes it safe to expose: the relayer only ever sends this one entry point, to contracts
 // of the Kamui account class. The account checks the owner or session signature itself. The
 // fee is estimated first, so a call the account would refuse fails here at no cost, and a call
-// that would cost more than the budget's ceiling is not sent.
+// above the budget's ceiling is not sent. With AVNU this is preflight only; AVNU's own
+// relayer bounds are external to this process (PAYMASTER.md).
 //
 // Order of work (audit finding #4): the cheap attempt limits run in the api's route wrapper
 // before this is called; then the request is parsed, the class is read, a slot is reserved in
 // the budget, the fee is estimated, and the transaction is sent. The slot is committed only
-// when the transaction was submitted; every other outcome gives it back.
+// when the transaction was submitted on the local path; every other local outcome releases it.
+// For AVNU it is committed before sending, because even a failed answer may hide a submission.
 import { RpcError } from 'starknet';
 import { HttpError } from '../../http';
 import { log } from '../../log';
 import { metrics } from '../../metrics';
+import type { SponsoredPaymaster } from '../sponsor/paymaster';
 import { budgetFor, type Budgets, type SponsorLedger } from '../sponsor/budgets';
 import { type RecoverContext } from './recover';
 
 export type SponsorRequest = { account: string; calldata: string[] };
 export type SponsorResult = { transaction_hash: string };
-export type SponsorContext = Pick<RecoverContext, 'provider' | 'relayer' | 'classHash'> & { budgets: Budgets; ledger: SponsorLedger };
+export type SponsorContext = Pick<RecoverContext, 'provider' | 'relayer' | 'classHash'> & { budgets: Budgets; ledger: SponsorLedger; paymaster?: SponsoredPaymaster };
 
 const HEX = /^0x[0-9a-fA-F]{1,64}$/;
 /** Generous for a multicall, small enough to bound what one request can cost. */
@@ -54,6 +58,7 @@ export function maxFee(estimate: { overall_fee: bigint | string | number; resour
 
 export async function sponsorOutsideExecution(body: SponsorRequest, appKey: string | null, ctx: SponsorContext): Promise<SponsorResult> {
   const req = parseSponsorRequest(body);
+  const execution = ctx.paymaster?.prepare(req.calldata);
   const budget = budgetFor(ctx.budgets, appKey);
   if (!budget) {
     metrics.sponsor.inc({ budget: 'unknown', decision: 'unknown_app' });
@@ -107,8 +112,17 @@ export async function sponsorOutsideExecution(body: SponsorRequest, appKey: stri
     }
     let transaction_hash: string;
     try {
-      // The estimate's bounds are passed on, so the relayer cannot pay more than what was just checked.
-      ({ transaction_hash } = await ctx.relayer.execute(call, { resourceBounds: estimate.resourceBounds }));
+      // The local path passes the estimate's bounds into the signed transaction. The AVNU
+      // path cannot carry those bounds through SNIP-29; see PAYMASTER.md.
+      if (ctx.paymaster && execution) {
+        // External submission is not atomic with our ledger. Debit conservatively before
+        // sending: a timeout or invalid answer may hide a submitted, paid transaction.
+        submitted = true;
+        await Promise.all([slot.commit(), accountSlot.commit()]);
+        ({ transaction_hash } = await ctx.paymaster.execute(req.account, execution));
+      } else {
+        ({ transaction_hash } = await ctx.relayer.execute(call, { resourceBounds: estimate.resourceBounds }));
+      }
     } catch (e) {
       if (e instanceof RpcError) {
         decide('reverted');
@@ -117,9 +131,9 @@ export async function sponsorOutsideExecution(body: SponsorRequest, appKey: stri
       throw e;
     }
     submitted = true;
-    await Promise.all([slot.commit(), accountSlot.commit()]);
+    if (!ctx.paymaster) await Promise.all([slot.commit(), accountSlot.commit()]);
     decide('sponsored');
-    metrics.relayerTransactions.inc({ kind: 'sponsor' });
+    if (!ctx.paymaster) metrics.relayerTransactions.inc({ kind: 'sponsor' });
     log('info', 'sponsored', { account: req.account, tx: transaction_hash, budget: budget.name });
     return { transaction_hash };
   } catch (e) {

@@ -90,12 +90,19 @@ export function precheckRecover(req: RecoverRequest, ctx: Pick<RecoverContext, '
 // Kamui: one recovery per account at a time, so two requests cannot both deploy or both queue a proof.
 const recovering = new Set<string>();
 
-export async function recoverAccount(req: RecoverRequest, ctx: RecoverContext): Promise<RecoverResult> {
+/** Authenticate before a job occupies retained storage; paid work runs only when invoked. */
+export async function prepareRecovery(req: RecoverRequest, ctx: RecoverContext): Promise<() => Promise<RecoverResult>> {
   const token = precheckRecover(req, ctx);
-  // Kamui: cached keys; see JwksCache for what one request can cost.
   const jwk = await verifyJwt(token, await ctx.jwks.keys(token.iss, token.kid));
-  // Kamui: the pepper service is asked further down, and only when an account would be deployed.
   assertPepperShape(req.pepper, ctx.pepper);
+  return () => runRecovery(req, ctx, token, jwk);
+}
+
+export async function recoverAccount(req: RecoverRequest, ctx: RecoverContext): Promise<RecoverResult> {
+  return (await prepareRecovery(req, ctx))();
+}
+
+async function runRecovery(req: RecoverRequest, ctx: RecoverContext, token: Jwt, jwk: Jwk): Promise<RecoverResult> {
   // Kamui: refuse now, before a deployment, if the proof could not even be queued.
   if (ctx.proofs.full) {
     metrics.proofs.inc({ result: 'refused' });

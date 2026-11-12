@@ -130,7 +130,7 @@ export function keyProof(attempt: LoginAttempt, device: KeyPair): KeyProof {
 
 export type Pepper = { pepper: string; keyVersion: number };
 
-type Fetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<Response>;
+type Fetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<Response>;
 
 /** Asks the pepper service for this user's pepper. Never falls back to pepper 0. */
 export async function fetchPepper(args: {
@@ -189,19 +189,92 @@ export interface RecoverBackend {
   recover(request: RecoverRequest): Promise<{ transaction_hash: string }>;
 }
 
-/** The recover API over HTTP: `POST {apiUrl}/recover`. */
-export function httpRecoverBackend(apiUrl: string, send: Fetch = (url, init) => fetch(url, init)): RecoverBackend {
+export type RecoveryPollingOptions = {
+  pollIntervalMs?: number;
+  timeoutMs?: number;
+  requestTimeoutMs?: number;
+};
+
+/** Submit once, then poll. Lost submissions are retried with the same random job capability. */
+export function httpRecoverBackend(
+  apiUrl: string,
+  send: Fetch = (url, init) => fetch(url, init),
+  options: RecoveryPollingOptions = {},
+): RecoverBackend {
+  const base = apiUrl.replace(/\/$/, '');
+  const interval = options.pollIntervalMs ?? 2000;
+  const timeout = options.timeoutMs ?? 20 * 60_000;
+  const requestTimeout = options.requestTimeoutMs ?? 15_000;
+  if (interval < 0 || timeout <= 0 || requestTimeout <= 0 || ![interval, timeout, requestTimeout].every(Number.isFinite)) {
+    throw new Error('recover API: invalid polling options');
+  }
   return {
     async recover(request) {
-      const response = await send(`${apiUrl.replace(/\/$/, '')}/recover`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(request),
-      });
-      const body = (await response.json().catch(() => ({}))) as { transaction_hash?: unknown; error?: unknown };
-      if (!response.ok) throw new Error(`recover API: ${typeof body.error === 'string' ? body.error : response.status}`);
-      if (typeof body.transaction_hash !== 'string') throw new Error('recover API: no transaction hash in the answer');
-      return { transaction_hash: body.transaction_hash };
+      const jobId = randomFelt();
+      const deadline = Date.now() + timeout;
+      const remaining = () => {
+        const ms = deadline - Date.now();
+        if (ms <= 0) throw new Error('recover API: polling timed out; recovery may still complete');
+        return ms;
+      };
+      const pause = async (ms = interval) => {
+        await new Promise((resolve) => setTimeout(resolve, Math.min(ms, remaining())));
+      };
+      const post = async (path: string, body: unknown) => {
+        const controller = new AbortController();
+        const ms = Math.max(1, Math.min(requestTimeout, remaining()));
+        let timer: ReturnType<typeof setTimeout>;
+        const timedOut = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(new Error('recover API: request timed out'));
+          }, ms);
+        });
+        try {
+          // Bound reading the body too, even if an injected transport ignores the signal.
+          return await Promise.race([timedOut, (async () => {
+            const response = await send(`${base}${path}`, {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(body), signal: controller.signal,
+            });
+            return { response, answer: await response.json() };
+          })()]);
+        } finally {
+          clearTimeout(timer!);
+        }
+      };
+      const retryable = (status: number) => [429, 502, 503, 504].includes(status);
+      const fail = (answer: any, status: number): never => {
+        throw new Error(`recover API: ${typeof answer?.error === 'string' ? answer.error : status}`);
+      };
+      for (let attempt = 0; ; attempt++) {
+        let reply;
+        try { reply = await post('/recover', { ...request, jobId }); }
+        catch {
+          if (attempt >= 2) throw new Error('recover API: submission unavailable; recovery may still complete');
+          await pause(); continue;
+        }
+        const { response, answer } = reply;
+        if (response.status === 202 && answer?.jobId === jobId) break;
+        if (!retryable(response.status) || attempt >= 2) fail(answer, response.status);
+        await pause(response.status === 429 ? 60_000 : interval);
+      }
+      for (;;) {
+        let reply;
+        try { reply = await post('/recover/status', { jobId }); }
+        catch { await pause(); continue; }
+        const { response, answer } = reply;
+        if (!response.ok) {
+          if (!retryable(response.status)) fail(answer, response.status);
+          await pause(response.status === 429 ? 60_000 : interval); continue;
+        }
+        if (answer?.status === 'failed') fail(answer, answer.httpStatus);
+        if (answer?.status === 'succeeded' && typeof answer.result?.transaction_hash === 'string') {
+          return { transaction_hash: answer.result.transaction_hash };
+        }
+        if (answer?.status !== 'running') throw new Error('recover API: malformed job status');
+        await pause();
+      }
     },
   };
 }

@@ -187,3 +187,54 @@ describe('recover', () => {
     expect(metrics.outboundFailures.get({ target: 'prover' })).toBe(1);
   });
 });
+
+describe('recovery jobs over HTTP', () => {
+  test('a slow proof survives an aborted submission connection; retries do not deploy, prove or relay twice', async () => {
+    const { buildApp } = await import('../api/app');
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    let proofs = 0;
+    const { ctx, seen } = context({ prove: async () => {
+      proofs++;
+      await gate;
+      return { proof: Buffer.from('proof').toString('base64'), proof_facts: ['0x1'] };
+    } });
+    const app = buildApp({ ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA' } as any);
+    const req = { ...request(await token()), jobId: '0x' + 'a'.repeat(62) };
+    const controller = new AbortController();
+    const post = (path: string, body: unknown) => app.handle(new Request(`http://api.test${path}`, {
+      method: 'POST', body: JSON.stringify(body), signal: controller.signal,
+    }), '203.0.113.1');
+    const accepted = await post('/recover', req);
+    expect(accepted.status).toBe(202);
+    expect(accepted.headers.get('cache-control')).toBe('no-store');
+    expect(await accepted.json()).toEqual({ jobId: req.jobId });
+    controller.abort();
+    const poll = () => app.handle(new Request('http://api.test/recover/status', { method: 'POST', body: JSON.stringify({ jobId: req.jobId }) }), '203.0.113.1');
+    expect(await (await poll()).json()).toEqual({ status: 'running' });
+    // A new connection sends the exact same submission.
+    expect((await app.handle(new Request('http://api.test/recover', { method: 'POST', body: JSON.stringify(req) }))).status).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(proofs).toBe(1);
+    finish();
+    let state: any;
+    for (let i = 0; i < 100; i++) {
+      state = await (await poll()).json();
+      if (state.status !== 'running') break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(state).toMatchObject({ status: 'succeeded', result: { address: req.account, transaction_hash: '0xfeed' } });
+    expect(seen.sent).toHaveLength(1);
+  });
+
+  test('SDK polls the real HTTP handler and receives a sanitized terminal failure', async () => {
+    const { buildApp } = await import('../api/app');
+    const { httpRecoverBackend } = await import('../../../../../sdk/src/login');
+    const { ctx, seen } = context({ prove: async () => { throw new Error('upstream JWT secret'); } });
+    const app = buildApp({ ctx, limiter: ctx.limiter, chain: 'SN_SEPOLIA' } as any);
+    const req = request(await token());
+    const backend = httpRecoverBackend('http://api.test', (url, init) => app.handle(new Request(url, init)), { pollIntervalMs: 1 });
+    await expect(backend.recover(req as any)).rejects.toThrow('recover API: INTERNAL');
+    expect(seen.sent).toHaveLength(0);
+  });
+});

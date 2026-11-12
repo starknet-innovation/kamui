@@ -14,15 +14,16 @@ import { metrics, renderMetrics } from '../../metrics';
 import { clientAddress } from '../../net';
 import { ProverError } from '../prover/prove';
 import { deployAccount, type DeployRequest } from '../recovery/deploy';
-import { recoverAccount, type RecoverContext, type RecoverRequest } from '../recovery/recover';
+import { prepareRecovery, type RecoverContext, type RecoverRequest } from '../recovery/recover';
 import { relayProof, type RelayRequest } from '../recovery/relay';
 import { sponsorOutsideExecution, type SponsorContext, type SponsorRequest } from '../recovery/sponsor';
 import { listSessions, putSession, removeSession, type RegistryContext } from '../registry/registry';
+import { RecoveryJobs } from '../recovery/jobs';
 import { APP_KEY_HEADER } from '../sponsor/budgets';
 
 /** Attempts per minute: one client, and everyone together. */
 export type RouteLimit = { perClient: number; global: number };
-export type RouteName = 'recover' | 'relay' | 'deploy' | 'sponsor' | 'registry';
+export type RouteName = 'recover' | 'poll' | 'relay' | 'deploy' | 'sponsor' | 'registry';
 
 /**
  * Defaults. They bound attempts, not successes: budgets and hourly caps sit behind them.
@@ -30,6 +31,7 @@ export type RouteName = 'recover' | 'relay' | 'deploy' | 'sponsor' | 'registry';
  */
 export const DEFAULT_LIMITS: Record<RouteName, RouteLimit> = {
   recover: { perClient: 6, global: 60 },
+  poll: { perClient: 120, global: 6000 },
   relay: { perClient: 10, global: 120 },
   deploy: { perClient: 6, global: 60 },
   sponsor: { perClient: 30, global: 600 },
@@ -49,6 +51,7 @@ export function parseLimits(setting: string | undefined): Record<RouteName, Rout
 
 export type AppDeps = {
   chain: string;
+  recoveryJobs?: RecoveryJobs;
   ctx: RecoverContext;
   sponsor: SponsorContext;
   registry: RegistryContext;
@@ -65,7 +68,7 @@ export type AppDeps = {
 };
 
 type Handler = (body: any, client: string, req: Request) => Promise<unknown>;
-type Route = { limit: RouteName; fields: string[]; handler: Handler };
+type Route = { limit: RouteName; fields: string[]; handler: Handler; status?: number };
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers });
 
@@ -88,11 +91,23 @@ const outcome = (status: number) => (status < 400 ? 'ok' : status === 429 ? 'rat
 
 export function buildApp(deps: AppDeps) {
   const { ctx } = deps;
+  const jobs = deps.recoveryJobs ?? new RecoveryJobs();
   const limits = deps.limits ?? DEFAULT_LIMITS;
   const hops = deps.trustedProxyHops ?? 0;
 
   const posts: Record<string, Route> = {
-    '/recover': { limit: 'recover', fields: ['jwt', 'account', 'newPubkey', 'blinding', 'pepper'], handler: (b: RecoverRequest) => recoverAccount(b, ctx) },
+    '/recover': { limit: 'recover', fields: ['jobId', 'jwt', 'account', 'newPubkey', 'blinding', 'pepper'], status: 202, handler: async (b: RecoverRequest & { jobId: string }) => {
+      const work = await prepareRecovery(b, ctx);
+      jobs.submit(b.jobId, b, work, (e) => {
+        const described = describeError(e);
+        if (e instanceof RpcError) metrics.outboundFailures.inc({ target: 'rpc' });
+        log(described.status >= 500 ? 'error' : 'info', 'request_failed', { route: '/recover', status: described.status, error: errorCode(e) });
+        // Only a code is retained; never store arbitrary upstream text in a job.
+        return { ...described, error: errorCode(new Error(described.error)) };
+      });
+      return { jobId: b.jobId };
+    } },
+    '/recover/status': { limit: 'poll', fields: ['jobId'], handler: async (b) => jobs.status(b.jobId) },
     '/deploy': { limit: 'deploy', fields: ['aud', 'identity'], handler: (b: DeployRequest, client) => deployAccount(b, client, ctx) },
     '/relay': { limit: 'relay', fields: ['account', 'newPubkey', 'proof'], handler: (b: RelayRequest, client) => relayProof(b, client, ctx) },
     '/sponsor': { limit: 'sponsor', fields: ['account'], handler: (b: SponsorRequest, _client, req) => sponsorOutsideExecution(b, req.headers.get(APP_KEY_HEADER), deps.sponsor) },
@@ -137,7 +152,7 @@ export function buildApp(deps: AppDeps) {
       return json({ error: 'BAD_REQUEST', detail: `body must be {${route.fields.join(', ')}}` }, 400);
     }
     try {
-      return json(await route.handler(body, client, req));
+      return json(await route.handler(body, client, req), route.status ?? 200);
     } catch (e) {
       const { status, error } = describeError(e);
       if (e instanceof RpcError) metrics.outboundFailures.inc({ target: 'rpc' });
@@ -161,6 +176,7 @@ export function buildApp(deps: AppDeps) {
         log('error', 'request_failed', { route: path, status: 500, error: errorCode(e) });
         response = json({ error: 'INTERNAL' }, 500);
       }
+      if (path === '/recover' || path === '/recover/status') response.headers.set('cache-control', 'no-store');
       if (path !== '/metrics' && path !== '/live') metrics.requests.inc({ route: path, outcome: outcome(response.status) });
       return response;
     },
