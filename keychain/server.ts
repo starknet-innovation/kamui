@@ -4,8 +4,9 @@
 //
 // It bundles src/main.ts for the browser, serves the page with a strict content security
 // policy, hands it public settings, and proxies /api to the backend (which sends no CORS
-// headers). Settings come from the backend's local files:
-//   services/backend/.env.local       RPC_URL, AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID
+// headers), passing on the client's address and the page's app key if it sent one. Settings come from the backend's local files:
+//   services/backend/.env.local       RPC_URL, AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID,
+//                                     AUTHORIZED_APPLE_RECOVERY_CLIENT_ID (optional)
 //   services/backend/deployments.env  KAMUI_ACCOUNT_CLASS_HASH
 const ROOT = `${import.meta.dir}/..`;
 
@@ -32,6 +33,8 @@ const API = process.env.API_URL ?? 'http://localhost:3000';
 // tests point the keychain at their own fakes.
 const config = {
   googleClientId: need(process.env.GOOGLE_CLIENT_ID ?? secrets.AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID, 'AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID'),
+  // Optional. Without it the page does not offer "Continue with Apple".
+  appleClientId: process.env.APPLE_CLIENT_ID ?? secrets.AUTHORIZED_APPLE_RECOVERY_CLIENT_ID ?? '',
   rpcUrl: need(process.env.RPC_URL ?? secrets.RPC_URL, 'RPC_URL'),
   classHash: need(process.env.KAMUI_ACCOUNT_CLASS_HASH ?? deployments.KAMUI_ACCOUNT_CLASS_HASH, 'KAMUI_ACCOUNT_CLASS_HASH'),
   pepperUrl: process.env.PEPPER_URL ?? 'http://localhost:8787',
@@ -69,10 +72,23 @@ const security = {
 };
 const respond = (body: string, type: string) => new Response(body, { headers: { 'content-type': type, ...security } });
 
+/**
+ * Headers for a proxied /api request: the client's address appended to X-Forwarded-For, so the
+ * backend can rate-limit per client and not per proxy, and the app key if the page sent one.
+ */
+function proxyHeaders(request: Request, clientAddress: string | undefined): Record<string, string> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const forwarded = [request.headers.get('x-forwarded-for'), clientAddress].filter(Boolean).join(', ');
+  if (forwarded) headers['x-forwarded-for'] = forwarded;
+  const appKey = request.headers.get('x-kamui-app-key');
+  if (appKey) headers['x-kamui-app-key'] = appKey;
+  return headers;
+}
+
 Bun.serve({
   port: PORT,
   idleTimeout: 255, // a proof takes tens of seconds
-  async fetch(request) {
+  async fetch(request, server) {
     const url = new URL(request.url);
     if (url.pathname === '/main.js') return respond(script, 'text/javascript');
     if (url.pathname === '/style.css') return respond(style, 'text/css');
@@ -80,7 +96,7 @@ Bun.serve({
     if (url.pathname.startsWith('/api/')) {
       return fetch(`${API}${url.pathname.slice(4)}`, {
         method: request.method,
-        headers: { 'content-type': 'application/json' },
+        headers: proxyHeaders(request, server.requestIP(request)?.address),
         body: request.method === 'GET' ? undefined : await request.text(),
       });
     }

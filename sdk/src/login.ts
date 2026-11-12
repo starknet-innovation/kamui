@@ -155,9 +155,13 @@ export async function fetchPepper(args: {
   return { pepper: body.pepper, keyVersion: body.key_version };
 }
 
-/** Takes the pepper from a recovery file, after checking the file belongs to this login. */
-export function pepperFromFile(file: PepperFile, claims: LoginClaims, chainId: string): Pepper {
-  if (!pepperFileMatchesLogin(file, claims, chainId)) {
+/**
+ * Takes the pepper from a recovery file, after checking the file belongs to this login. Pass
+ * `classHash` (the account class in use) to also refuse a file made for another class: such a
+ * file is consistent with itself, so only the caller can tell.
+ */
+export function pepperFromFile(file: PepperFile, claims: LoginClaims, chainId: string, classHash?: string): Pepper {
+  if (!pepperFileMatchesLogin(file, claims, chainId) || (classHash !== undefined && !sameFelt(file.classHash, classHash))) {
     throw new Error('login: this recovery file is for another user, application, class or network');
   }
   return { pepper: file.pepper, keyVersion: file.keyVersion };

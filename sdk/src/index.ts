@@ -6,6 +6,7 @@ export * from './outside';
 export * from './owners';
 export * from './pepper';
 export * from './reader';
+export * from './registry';
 export * from './sessionAccount';
 export * from './sessions';
 export * from './tokens';

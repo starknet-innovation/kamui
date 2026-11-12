@@ -13,6 +13,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 | `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `sessionProblems`, `executeProblems`, `describeCall`. |
 | `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |
+| `registry` | The session registry's client: `registryMessageHash`, `registryContentHash`, `signRegistryRequest`, `registryClient` (`put`, `list`, `remove`, with an injectable `fetch`) and `parseRegistryList`. The registry lets the keychain list an account's sessions; it is not an authority on them. |
 | `reader` | `KamuiReader`: owners, anchor, session epoch, session data and scope, spending policies, nonces. |
 | `owners` | `signNewOwner`, `addOwnerCall`, `removeOwnerCall`. |
 | `pepper` | `exportPepper`, `parsePepperFile`, `pepperFileMatchesLogin`: a recovery file holding the user's pepper. |
@@ -103,8 +104,9 @@ const login = await completeLogin({
 - **Sponsored session nonces** are a reserved range of `maxCalls` values; any other nonce is refused. `nextSessionNonce` finds the next free one by asking the account, one call per used nonce, so keep the returned offset for long sessions.
 - **`maxCalls` is counted per path**: a session may send up to `maxCalls` sponsored and up to `maxCalls` self-paid transactions. On the self-paid path the range also shrinks when other keys send transactions.
 - **The address depends on the class hash.** Kamui accounts are not upgradeable, so a new class means new addresses. Keep every class hash you have deployed with.
+- **The session registry is untrusted input.** `registryClient().list()` drops records that are not shaped as the protocol says and caps the list at 50, but what a record claims (the site, the calls, the limits) is only a claim. Check each session with `reader.session(key).exists`, read what it may do from the account, and show `origin` and `appName` as text.
 - **`NO_PEPPER` is for testnets only.** Mainnet accounts need the pepper service.
-- **Offer the pepper export.** The pepper service's key has no backup, so a user's exported pepper is their protection against its loss. The file reveals the user's account address to whoever holds it and gives no access to the account. Before using a file for a login, check it with `pepperFileMatchesLogin`. Passphrase protection of the file is not implemented yet.
+- **Offer the pepper export.** The pepper service's key has no backup, so a user's exported pepper is their protection against its loss. The file reveals the user's account address to whoever holds it and gives no access to the account. Before using a file for a login, check it with `pepperFileMatchesLogin`, or take the pepper with `pepperFromFile`, which does. A file made for another account class is consistent with itself, so also pass `pepperFromFile` the class hash in use, or compare `file.classHash` yourself. Passphrase protection of the file is not implemented yet.
 
 ## Tests
 
@@ -114,6 +116,7 @@ bun test test/unit.test.ts            # 19 tests, no network
 bun test test/login.test.ts           # 19 tests, no network; runs the pepper service in process
 bun test test/keychain.test.ts        # 23 tests, no network
 bun test test/tokens.test.ts          # 9 tests, no network
+bun test test/registry.test.ts        # 21 tests, no network
 
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0
@@ -131,4 +134,5 @@ Bun 1.2 or later. The devnet tests deploy `DevAccount` (the production owner, se
 - Browser proving (the backend proves; plan D9).
 - A wallet-standard connector. Apps connect with the redirect helpers in `keychain`; see `../keychain/README.md` and `../apps/demo-dapp`.
 - Override recovery calls.
+- The registry client against a running registry server. Its tests check the message hash against the protocol's formula, and the backend's tests check requests signed by this client code, but the two were not run over HTTP together.
 - Publishing as a built package.

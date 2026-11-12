@@ -15,3 +15,7 @@ code { font: 13px/1.5 ui-monospace, monospace; word-break: break-all; }
 .error { background: #fdecec; border: 1px solid #e59a9a; padding: 10px 12px; border-radius: 6px; margin: 12px 0; }
 #status { color: #5c5c66; min-height: 1.5em; }
 ul { padding-left: 20px; }
+.session { border-top: 2px solid #1b1b1f; margin: 16px 0; padding-top: 4px; }
+.session .origin { margin: 8px 0 0; word-break: break-all; }
+label { display: block; font-weight: 600; font-size: 14px; margin: 12px 0 4px; }
+input[type="file"] { font: inherit; max-width: 100%; }

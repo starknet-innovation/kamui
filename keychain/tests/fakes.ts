@@ -1,10 +1,10 @@
 // Fakes for everything outside the keychain, installed on a browser context with network
-// interception: a chain with one account, the backend's /recover and /sponsor, the pepper
-// service, and the issuer's sign-in page. The keychain's own server, page, storage and content
+// interception: a chain with one account, the backend's /recover and /sponsor, the session
+// registry, the pepper service, and the Google and Apple sign-in pages. The keychain's own server, page, storage and content
 // security policy are the real ones.
 import type { BrowserContext, Route } from '@playwright/test';
-import { hash } from 'starknet';
-import { accountAddressFromLogin } from '../../sdk/src';
+import { ec, hash } from 'starknet';
+import { accountAddressFromLogin, registryMessageHash, type RegistryAction } from '../../sdk/src';
 
 export const KEYCHAIN = 'http://localhost:5183';
 export const RPC = 'http://localhost:5184';
@@ -14,12 +14,24 @@ export const CHAIN_ID = '0x534e5f5345504f4c4941';
 export const PEPPER = '0x1234';
 export const CLAIMS = { iss: 'https://accounts.google.com', aud: 'test-client', sub: 'user-1' };
 export const ACCOUNT = accountAddressFromLogin(CLASS_HASH, CLAIMS, PEPPER);
+/** The same person signing in with Apple is another user, with another account. */
+export const APPLE_CLAIMS = { iss: 'https://appleid.apple.com', aud: 'test-apple-client', sub: 'apple-user-1' };
+export const APPLE_ACCOUNT = accountAddressFromLogin(CLASS_HASH, APPLE_CLAIMS, PEPPER);
 
 const selector = (name: string) => BigInt(hash.getSelectorFromName(name));
 const hex = (value: bigint | number) => `0x${BigInt(value).toString(16)}`;
 const same = (a: string, b: string) => BigInt(a) === BigInt(b);
 
-export type FakeSession = { validUntil: bigint; maxCalls: bigint; maxFee: bigint; entries: bigint };
+export type FakePolicy = { maxPerCall: bigint; maxPerWindow: bigint; windowSeconds: bigint };
+export type FakeSession = {
+  validUntil: bigint;
+  maxCalls: bigint;
+  maxFee: bigint;
+  /** What the session may call: contract and selector. */
+  scope: { to: bigint; selector: bigint }[];
+  /** Spending policies by token address. */
+  policies: Map<bigint, FakePolicy>;
+};
 
 export type World = {
   deployed: boolean;
@@ -34,12 +46,26 @@ export type World = {
   sponsorRequests: { account: string; calls: { to: string; selector: bigint; data: string[] }[] }[];
   pepperRequests: any[];
   issuerVisits: number;
+  /** The query of each visit to Apple's sign-in page. */
+  appleVisits: Record<string, string>[];
   /** Make the next /sponsor fail with this error. */
   sponsorError?: string;
+  /** Apple answers with this error instead of a token. */
+  appleError?: string;
+  /** The pepper service answers 503. */
+  pepperDown?: boolean;
+  /** The session registry's records, by session key (hex without leading zeros). */
+  registry: Map<string, any>;
+  /** Every request the registry got, accepted or not. */
+  registryRequests: { action: RegistryAction; body: any }[];
+  /** The registry has no room for another record: a new one is answered 409 REGISTRY_FULL. */
+  registryFull?: boolean;
+  /** The registry answers 503. */
+  registryDown?: boolean;
 };
 
 export function newWorld(): World {
-  return { deployed: false, owners: [], anchor: 0n, epoch: 0, sessions: new Map(), tokens: new Map(), recoverRequests: [], sponsorRequests: [], pepperRequests: [], issuerVisits: 0 };
+  return { deployed: false, owners: [], anchor: 0n, epoch: 0, sessions: new Map(), tokens: new Map(), recoverRequests: [], sponsorRequests: [], pepperRequests: [], issuerVisits: 0, appleVisits: [], registry: new Map(), registryRequests: [] };
 }
 
 function ownersChanged(world: World) {
@@ -49,14 +75,18 @@ function ownersChanged(world: World) {
 }
 
 /** An unsigned id_token. The client side never checks the signature. */
-function token(nonce: string): string {
+function token(nonce: string, claims: { iss: string; aud: string; sub: string } = CLAIMS): string {
   const b64 = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const now = Math.floor(Date.now() / 1000);
-  return `${b64({ alg: 'RS256', kid: 'test' })}.${b64({ ...CLAIMS, nonce, iat: now - 5, exp: now + 3600 })}.c2ln`;
+  return `${b64({ alg: 'RS256', kid: 'test' })}.${b64({ ...claims, nonce, iat: now - 5, exp: now + 3600 })}.c2ln`;
 }
 
+/** The fake chain has one account's state, reachable at the Google and the Apple address. */
+const isAccount = (contract: string) => same(contract, ACCOUNT) || same(contract, APPLE_ACCOUNT);
+const u256 = (value: bigint) => [hex(value & ((1n << 128n) - 1n)), hex(value >> 128n)];
+
 function contractCall(world: World, contract: string, entry: bigint, calldata: string[]): string[] {
-  if (!same(contract, ACCOUNT)) {
+  if (!isAccount(contract)) {
     const token = world.tokens.get(BigInt(contract));
     if (token && entry === selector('symbol')) return [`0x${Buffer.from(token.symbol).toString('hex')}`];
     if (token && entry === selector('decimals')) return [hex(token.decimals)];
@@ -73,7 +103,17 @@ function contractCall(world: World, contract: string, entry: bigint, calldata: s
       return [hex(world.epoch)];
     case selector('get_session_data'): {
       const session = world.sessions.get(hex(BigInt(calldata[0]!)));
-      return session ? [hex(session.validUntil), hex(session.maxCalls), hex(session.maxFee), hex(session.entries)] : ['0x0', '0x0', '0x0', '0x0'];
+      return session ? [hex(session.validUntil), hex(session.maxCalls), hex(session.maxFee), hex(session.scope.length)] : ['0x0', '0x0', '0x0', '0x0'];
+    }
+    case selector('is_session_call_allowed'): {
+      const session = world.sessions.get(hex(BigInt(calldata[0]!)));
+      const allowed = session?.scope.some((entry) => entry.to === BigInt(calldata[1]!) && entry.selector === BigInt(calldata[2]!));
+      return [allowed ? '0x1' : '0x0'];
+    }
+    case selector('get_spending_policy'): {
+      const policy = world.sessions.get(hex(BigInt(calldata[0]!)))?.policies.get(BigInt(calldata[1]!));
+      if (!policy) return ['0x0', '0x0', '0x0', '0x0', '0x0', '0x0', '0x0', '0x0'];
+      return [...u256(policy.maxPerCall), ...u256(policy.maxPerWindow), hex(policy.windowSeconds), '0x0', '0x0', '0x0'];
     }
     default:
       throw new Error(`unexpected entry point ${hex(entry)}`);
@@ -130,12 +170,27 @@ function outsideCalls(calldata: string[]) {
 function applySponsored(world: World, calls: ReturnType<typeof outsideCalls>) {
   for (const call of calls) {
     if (call.selector === selector('add_or_update_scoped_session_key')) {
+      const scope = [];
+      for (let i = 0; i < Number(BigInt(call.data[4]!)); i++) scope.push({ to: BigInt(call.data[5 + 2 * i]!), selector: BigInt(call.data[6 + 2 * i]!) });
       world.sessions.set(hex(BigInt(call.data[0]!)), {
         validUntil: BigInt(call.data[1]!),
         maxCalls: BigInt(call.data[2]!),
         maxFee: BigInt(call.data[3]!),
-        entries: BigInt(call.data[4]!),
+        scope,
+        policies: new Map(),
       });
+    } else if (call.selector === selector('set_spending_policy')) {
+      const [low, high, windowLow, windowHigh] = call.data.slice(2, 6).map((felt) => BigInt(felt));
+      world.sessions.get(hex(BigInt(call.data[0]!)))?.policies.set(BigInt(call.data[1]!), {
+        maxPerCall: (high! << 128n) + low!,
+        maxPerWindow: (windowHigh! << 128n) + windowLow!,
+        windowSeconds: BigInt(call.data[6]!),
+      });
+    } else if (call.selector === selector('revoke_session_key')) {
+      world.sessions.delete(hex(BigInt(call.data[0]!)));
+    } else if (call.selector === selector('revoke_all_sessions')) {
+      world.epoch += 1;
+      world.sessions.clear();
     } else if (call.selector === selector('remove_owner')) {
       world.owners = world.owners.filter((o) => !same(o, call.data[0]!));
       ownersChanged(world);
@@ -146,6 +201,39 @@ function applySponsored(world: World, calls: ReturnType<typeof outsideCalls>) {
 const cors = { 'access-control-allow-origin': KEYCHAIN, 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST, OPTIONS' };
 const json = (route: Route, body: unknown, status = 200, headers: Record<string, string> = {}) =>
   route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(body) });
+
+/**
+ * The registry's check of a request, as the protocol describes it: a fresh timestamp, and
+ * exactly two signature elements that are an owner key's signature over the request's hash.
+ * The real server asks the account's `is_valid_signature`; here the owners are at hand.
+ */
+function registryRefusal(world: World, action: RegistryAction, body: any, subject: string | undefined): string | null {
+  if (typeof body?.nonce !== 'string' || !/^0x[0-9a-f]+$/i.test(body.nonce)) return 'no nonce';
+  if (!isAccount(String(body?.account))) return 'unknown account';
+  if (!Number.isInteger(body.timestamp) || Math.abs(Date.now() / 1000 - body.timestamp) > 300) return 'stale timestamp';
+  if (!Array.isArray(body.signature) || body.signature.length !== 2) return 'bad signature';
+  if (action !== 'list' && typeof subject !== 'string') return 'no session key';
+  const digest = BigInt(registryMessageHash({ chainId: CHAIN_ID, account: body.account, action, timestamp: body.timestamp, nonce: body.nonce, subject, session: action === 'put' ? body.session : undefined })).toString(16).padStart(64, '0');
+  const signature = new ec.starkCurve.Signature(BigInt(body.signature[0]), BigInt(body.signature[1]));
+  // An owner key is the x coordinate of a point; either of the two points with that x will do.
+  const signed = world.owners.some((owner) =>
+    ['02', '03'].some((prefix) => {
+      try {
+        return ec.starkCurve.verify(signature, digest, prefix + BigInt(owner).toString(16).padStart(64, '0'));
+      } catch {
+        return false;
+      }
+    }),
+  );
+  return signed ? null : 'bad signature';
+}
+
+/**
+ * The issuer's page sending the user back. A page that navigates, not a 302: WebKit cannot be
+ * given a redirect as a faked answer.
+ */
+const sendBack = (route: Route, to: string) =>
+  route.fulfill({ status: 200, contentType: 'text/html', body: `<!doctype html><title>issuer</title><script>location.replace(${JSON.stringify(to)})</script>` });
 
 /** Replaces the outside world for every page of `context`. */
 export async function installFakes(context: BrowserContext, world: World) {
@@ -165,6 +253,7 @@ export async function installFakes(context: BrowserContext, world: World) {
   await context.route(`${PEPPER_SERVICE}/**`, async (route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
     world.pepperRequests.push(route.request().postDataJSON());
+    if (world.pepperDown) return json(route, { error: 'unavailable' }, 503, cors);
     return json(route, { pepper: PEPPER, key_version: 1 }, 200, cors);
   });
 
@@ -190,11 +279,50 @@ export async function installFakes(context: BrowserContext, world: World) {
     return json(route, { transaction_hash: '0xbbb' });
   });
 
+  const registry = (path: string, action: RegistryAction, handle: (body: any) => unknown, subjectOf: (body: any) => string | undefined) =>
+    context.route(`${KEYCHAIN}/api/registry/sessions${path}`, async (route) => {
+      const body = route.request().postDataJSON();
+      world.registryRequests.push({ action, body });
+      if (world.registryDown) return json(route, { error: 'unavailable' }, 503);
+      const refusal = registryRefusal(world, action, body, subjectOf(body));
+      if (refusal) return json(route, { error: refusal }, 401);
+      return json(route, handle(body));
+    });
+  await context.route(`${KEYCHAIN}/api/registry/sessions`, async (route) => {
+    const body = route.request().postDataJSON();
+    world.registryRequests.push({ action: 'put', body });
+    if (world.registryDown) return json(route, { error: 'unavailable' }, 503);
+    const refusal = registryRefusal(world, 'put', body, body.session?.publicKey);
+    if (refusal) return json(route, { error: refusal }, 401);
+    // The backend's choices where the spec is silent: no expired sessions, at most 50 records
+    // for an account, and keys answered as lower-case hex without leading zeros.
+    if (body.session.validUntil <= Date.now() / 1000) return json(route, { error: 'SESSION_EXPIRED' }, 400);
+    const key = hex(BigInt(body.session.publicKey));
+    if (world.registryFull && !world.registry.has(key)) return json(route, { error: 'REGISTRY_FULL' }, 409);
+    world.registry.set(key, { ...body.session, publicKey: key, createdAt: Math.floor(Date.now() / 1000) });
+    return json(route, { ok: true });
+  });
+  await registry('/list', 'list', () => ({ sessions: [...world.registry.values()].reverse() }), () => undefined);
+  await registry('/remove', 'remove', (body) => {
+    world.registry.delete(hex(BigInt(body.publicKey)));
+    return { ok: true };
+  }, (body) => body.publicKey);
+
+  // Apple answers in the fragment when asked with response_mode=fragment, and sends a code
+  // along with the token.
+  await context.route('https://appleid.apple.com/**', async (route) => {
+    const url = new URL(route.request().url());
+    world.appleVisits.push(Object.fromEntries(url.searchParams));
+    if (world.appleError) return sendBack(route, `${url.searchParams.get('redirect_uri')}#error=${world.appleError}&state=${url.searchParams.get('state')}`);
+    const back = `${url.searchParams.get('redirect_uri')}#code=fake-code&id_token=${token(url.searchParams.get('nonce')!, APPLE_CLAIMS)}&state=${url.searchParams.get('state')}`;
+    return sendBack(route, back);
+  });
+
   await context.route('https://accounts.google.com/**', async (route) => {
     world.issuerVisits += 1;
     const url = new URL(route.request().url());
     const back = `${url.searchParams.get('redirect_uri')}#id_token=${token(url.searchParams.get('nonce')!)}&state=${url.searchParams.get('state')}`;
-    return route.fulfill({ status: 302, headers: { location: back } });
+    return sendBack(route, back);
   });
 }
 

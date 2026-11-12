@@ -1,7 +1,14 @@
-// Browser tests for the keychain. They run the real keychain server and page in Chrome, and
-// replace everything outside it (the chain, the backend, the pepper service and the issuer)
-// with fakes at the network level. See tests/fakes.ts.
-import { defineConfig } from '@playwright/test';
+// Browser tests for the keychain. They run the real keychain server and page in Chrome, Firefox
+// and WebKit, and replace everything outside it (the chain, the backend, the session registry,
+// the pepper service and the issuers) with fakes at the network level. See tests/fakes.ts.
+//
+//   playwright test                     all three browsers
+//   playwright test --project=chrome    one of them
+//
+// Chrome is the installed one. Firefox and WebKit are Playwright's own builds:
+//   playwright install firefox webkit
+// WebKit is the engine Safari is built on, not Safari itself.
+import { defineConfig, devices } from '@playwright/test';
 
 const BUN = process.env.BUN ?? 'bun';
 
@@ -13,10 +20,14 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: 'http://localhost:5183',
-    // The installed Chrome, so nothing has to be downloaded.
-    channel: 'chrome',
     headless: true,
   },
+  projects: [
+    // The installed Chrome, so nothing has to be downloaded for it.
+    { name: 'chrome', use: { ...devices['Desktop Chrome'], channel: 'chrome' } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+  ],
   webServer: {
     command: `${BUN} run server.ts`,
     url: 'http://localhost:5183/config.json',
@@ -24,6 +35,7 @@ export default defineConfig({
     env: {
       PORT: '5183',
       GOOGLE_CLIENT_ID: 'test-client',
+      APPLE_CLIENT_ID: 'test-apple-client',
       RPC_URL: 'http://localhost:5184',
       PEPPER_URL: 'http://localhost:5185',
       POLL_MS: '100',

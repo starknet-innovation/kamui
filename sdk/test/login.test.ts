@@ -228,6 +228,10 @@ describe('pepper from a recovery file', () => {
   test('is refused for another user or network', () => {
     expect(() => pepperFromFile(file, { ...claims, sub: 'someone-else' }, SEPOLIA)).toThrow(/another user/);
     expect(() => pepperFromFile(file, claims, MAINNET)).toThrow(/another user/);
+    // A file made for another class is consistent with itself; it is refused when the caller
+    // says which class is in use.
+    expect(pepperFromFile(file, claims, SEPOLIA, file.classHash)).toEqual({ pepper: '0x1234', keyVersion: 3 });
+    expect(() => pepperFromFile(file, claims, SEPOLIA, '0x999')).toThrow(/another user/);
   });
 });
 

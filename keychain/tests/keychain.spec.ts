@@ -2,8 +2,19 @@
 // the keychain (tests/fakes.ts).
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { beginConnect, beginExecute, finishConnect, finishExecute, parsePepperFile, pepperFileMatchesLogin, type ConnectOptions, type KeyValueStore } from '../../sdk/src';
-import { ACCOUNT, CHAIN_ID, CLAIMS, CLASS_HASH, KEYCHAIN, PEPPER, installApp, installFakes, newWorld, selectorOf, type World } from './fakes';
+import {
+  beginConnect,
+  beginExecute,
+  exportPepper,
+  finishConnect,
+  finishExecute,
+  parsePepperFile,
+  pepperFileMatchesLogin,
+  serializePepperFile,
+  type ConnectOptions,
+  type KeyValueStore,
+} from '../../sdk/src';
+import { ACCOUNT, APPLE_ACCOUNT, APPLE_CLAIMS, CHAIN_ID, CLAIMS, CLASS_HASH, KEYCHAIN, PEPPER, installApp, installFakes, newWorld, selectorOf, type World } from './fakes';
 
 const APP = 'http://localhost:5199';
 const OTHER_SITE = 'http://localhost:5198';
@@ -64,6 +75,26 @@ async function answerAt(page: Page, store: KeyValueStore) {
   } catch (error) {
     return { ok: false as const, error: (error as Error).message };
   }
+}
+
+/** The keys of what the keychain has stored on this device. */
+async function vaultKeys(page: Page): Promise<string[]> {
+  return page.evaluate(async () => {
+    const db: IDBDatabase = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('kamui-keychain');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      return await new Promise<string[]>((resolve, reject) => {
+        const request = db.transaction('vault').objectStore('vault').getAllKeys();
+        request.onsuccess = () => resolve(request.result.map(String));
+        request.onerror = () => reject(request.error);
+      });
+    } finally {
+      db.close();
+    }
+  });
 }
 
 test.describe('signing in', () => {
@@ -546,6 +577,8 @@ test.describe('the account page', () => {
     await page.getByRole('button', { name: 'Remove' }).click();
     await expect(page.getByRole('heading', { name: 'Devices (2 of 5)' })).toBeVisible();
     expect(world.sponsorRequests).toHaveLength(0);
+    // The page is still usable.
+    await expect(page.getByRole('button', { name: 'Remove' })).toBeEnabled();
   });
 
   test('the recovery file downloads, belongs to this login, and holds no user id', async ({ page, context }) => {
@@ -559,6 +592,616 @@ test.describe('the account page', () => {
     expect(BigInt(file.pepper)).toBe(BigInt(PEPPER));
     expect(pepperFileMatchesLogin(file, CLAIMS, CHAIN_ID)).toBe(true);
     expect(text).not.toContain(CLAIMS.sub);
+    // The page is still usable after the download.
+    await expect(page.getByRole('button', { name: 'Forget this device' })).toBeEnabled();
+  });
+});
+
+test.describe('sessions', () => {
+  const SESSION_KEY = '0x5f513650a95ebc650404cfb1da39de4eba808aab4273f0c9a0d6d3bb09d3966';
+  const felt = (value: string) => `0x${BigInt(value).toString(16)}`;
+  const later = () => Math.floor(Date.now() / 1000) + 3600;
+
+  /** Puts a session on the fake account, as if it had been approved earlier. */
+  function sessionOnChain(world: World, publicKey: string, scope = [{ to: GAME, entrypoint: 'move' }], validUntil = later()) {
+    world.sessions.set(felt(publicKey), {
+      validUntil: BigInt(validUntil),
+      maxCalls: 20n,
+      maxFee: 0n,
+      scope: scope.map((call) => ({ to: BigInt(call.to), selector: selectorOf(call.entrypoint) })),
+      policies: new Map(),
+    });
+  }
+
+  /** Puts a record in the fake registry, whatever it says. */
+  function recorded(world: World, publicKey: string, over: Record<string, unknown> = {}) {
+    world.registry.set(felt(publicKey), {
+      publicKey,
+      origin: APP,
+      appName: 'Example Game',
+      validUntil: later(),
+      maxCalls: 20,
+      maxFeePerTx: '0x0',
+      calls: [{ to: GAME, entrypoint: 'move' }],
+      limits: [],
+      createdAt: Math.floor(Date.now() / 1000) - 60,
+      ...over,
+    });
+  }
+
+  const requestsOf = (world: World, action: string) => world.registryRequests.filter((request) => request.action === action);
+
+  /** Connects from APP and comes back to the keychain's account page. */
+  async function connectAndReturn(page: Page, options: Partial<ConnectOptions> = {}) {
+    const store = await requestFrom(page, APP, options);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    const answer = await answerAt(page, store);
+    if (!answer.ok) throw new Error(answer.error);
+    await page.goto(`${KEYCHAIN}/`);
+    return answer.connection.session.publicKey;
+  }
+
+  test('an approved session is recorded, and listed with what the account says it may do', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
+    await expect(page.getByText('No site has a session on your account.')).toBeVisible();
+
+    const publicKey = await connectAndReturn(page, {
+      calls: [{ to: GAME, entrypoint: 'move' }, { to: TOKEN, entrypoint: 'transfer' }],
+      limits: [{ token: TOKEN, maxPerCall: 10n ** 18n, maxPerWindow: 15n * 10n ** 17n, windowSeconds: 3600 }],
+    });
+
+    // The registry got one record, signed by the device key (the fake checks the signature),
+    // naming the site the session was approved for.
+    const puts = requestsOf(world, 'put');
+    expect(puts).toHaveLength(1);
+    expect(BigInt(puts[0]!.body.account)).toBe(BigInt(ACCOUNT));
+    expect(puts[0]!.body.signature).toHaveLength(2);
+    expect(puts[0]!.body.session).toMatchObject({
+      publicKey,
+      origin: APP,
+      appName: 'Example Game',
+      maxCalls: 20,
+      maxFeePerTx: '0x0',
+      calls: [{ to: GAME, entrypoint: 'move' }, { to: TOKEN, entrypoint: 'transfer' }],
+      limits: [{ token: TOKEN, maxPerCall: '0xde0b6b3a7640000', maxPerWindow: '0x14d1120d7b160000', windowSeconds: 3600 }],
+    });
+    expect(world.registry.size).toBe(1);
+
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    const session = page.locator('.session');
+    await expect(session).toHaveCount(1);
+    await expect(session.locator('.origin')).toHaveText(APP);
+    await expect(session.getByText('It called itself "Example Game".')).toBeVisible();
+    await expect(session.getByRole('cell', { name: 'move', exact: true })).toBeVisible();
+    await expect(session.getByRole('cell', { name: 'transfer', exact: true })).toBeVisible();
+    await expect(session.getByText('at most 20 sponsored')).toBeVisible();
+    await expect(session.getByText('none: every transaction must be sponsored')).toBeVisible();
+    await expect(session.getByRole('cell', { name: '1 STRK', exact: true })).toBeVisible();
+    await expect(session.getByText('1.5 STRK every 60 min')).toBeVisible();
+    await expect(session.getByRole('button', { name: 'Revoke' })).toBeVisible();
+    // Nothing waits on this device once the registry has the record.
+    expect(await vaultKeys(page)).not.toContain('unrecorded-sessions');
+  });
+
+  test('revoking a session sends exactly that revocation and removes its record', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const first = await connectAndReturn(page);
+    const second = await connectAndReturn(page, { appName: 'Second' });
+    await expect(page.getByRole('heading', { name: 'Sessions (2)' })).toBeVisible();
+    world.sponsorRequests.length = 0;
+
+    await page.locator('.session').filter({ hasText: 'It called itself "Second".' }).getByRole('button', { name: 'Revoke' }).click();
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    await expect(page.getByText('It called itself "Example Game".')).toBeVisible();
+
+    // One sponsored transaction, with one call: the account revoking that session key.
+    expect(world.sponsorRequests).toHaveLength(1);
+    expect(BigInt(world.sponsorRequests[0]!.account)).toBe(BigInt(ACCOUNT));
+    expect(world.sponsorRequests[0]!.calls).toHaveLength(1);
+    const [call] = world.sponsorRequests[0]!.calls;
+    expect(BigInt(call!.to)).toBe(BigInt(ACCOUNT));
+    expect(call!.selector).toBe(selectorOf('revoke_session_key'));
+    expect(call!.data.map(BigInt)).toEqual([BigInt(second)]);
+
+    // The other session is untouched, on chain and in the registry.
+    expect([...world.sessions.keys()]).toEqual([felt(first)]);
+    expect([...world.registry.keys()]).toEqual([felt(first)]);
+    const removes = requestsOf(world, 'remove');
+    expect(removes).toHaveLength(1);
+    expect(BigInt(removes[0]!.body.publicKey)).toBe(BigInt(second));
+  });
+
+  test('if the relayer refuses a revocation, the session stays listed and recorded', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    await connectAndReturn(page);
+    world.sponsorError = 'SPONSOR_CAP';
+    await page.getByRole('button', { name: 'Revoke', exact: true }).click();
+    await expect(page.getByText('sponsor: SPONSOR_CAP')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Revoke', exact: true })).toBeEnabled();
+    expect(world.sessions.size).toBe(1);
+    expect(world.registry.size).toBe(1);
+  });
+
+  test('a registry that is down does not keep the user from the app, and the session is not lost', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    world.registryDown = true;
+    // The approval still succeeds and the user is back at the app.
+    await connectAndReturn(page);
+    expect(world.sessions.size).toBe(1);
+    expect(world.registry.size).toBe(0);
+
+    // The account page says the list could not be loaded, and shows the session from this
+    // device's own storage.
+    await expect(page.getByText('Kamui could not load its list of your sessions')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    await expect(page.locator('.session .origin')).toHaveText(APP);
+    expect(await vaultKeys(page)).toContain('unrecorded-sessions');
+
+    // Once the registry answers again, the next visit records the session.
+    world.registryDown = false;
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    await expect(page.getByText('Kamui could not load its list of your sessions')).toHaveCount(0);
+    await expect.poll(() => world.registry.size).toBe(1);
+    await expect.poll(() => vaultKeys(page)).not.toContain('unrecorded-sessions');
+    expect([...world.registry.values()][0]).toMatchObject({ origin: APP, appName: 'Example Game' });
+  });
+
+  test('a full registry does not keep the user from the app, and the page says the list is full', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    world.registryFull = true;
+    await connectAndReturn(page);
+    expect(world.registry.size).toBe(0);
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    await expect(page.locator('.session .origin')).toHaveText(APP);
+    await expect(page.getByText("Kamui's list of your sessions is full.")).toBeVisible();
+    await expect(page.getByText('Kamui could not load its list of your sessions')).toHaveCount(0);
+
+    // With room again, the next visit records it and the notice is gone.
+    world.registryFull = false;
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    await expect.poll(() => world.registry.size).toBe(1);
+    await expect(page.getByText("Kamui's list of your sessions is full.")).toHaveCount(0);
+  });
+
+  test('records are matched to the account by value, whatever the formatting of their keys', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    sessionOnChain(world, SESSION_KEY);
+    // Upper case and leading zeros where the account answers lower case and none.
+    recorded(world, SESSION_KEY, { publicKey: `0x0${SESSION_KEY.slice(2).toUpperCase()}`, calls: [{ to: `0x0${GAME.slice(2).toUpperCase()}`, entrypoint: 'move' }] });
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    await expect(page.locator('.session').getByRole('cell', { name: 'move', exact: true })).toBeVisible();
+    world.sponsorRequests.length = 0;
+    await page.getByRole('button', { name: 'Revoke', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
+    expect(world.sponsorRequests[0]!.calls[0]!.data.map(BigInt)).toEqual([BigInt(SESSION_KEY)]);
+    expect(world.registry.size).toBe(0);
+  });
+
+  test('a session approved while the registry was down can be revoked while it is still down', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    world.registryDown = true;
+    await connectAndReturn(page);
+    await page.getByRole('button', { name: 'Revoke', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
+    expect(world.sessions.size).toBe(0);
+    expect(await vaultKeys(page)).not.toContain('unrecorded-sessions');
+  });
+
+  test('"Revoke all sessions" works when the registry is down', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    sessionOnChain(world, SESSION_KEY);
+    recorded(world, SESSION_KEY);
+    world.registryDown = true;
+    await page.goto('/');
+    // The registry cannot say which sessions exist, so none is listed.
+    await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
+    await expect(page.getByText('Kamui could not load its list of your sessions')).toBeVisible();
+
+    const questions: string[] = [];
+    page.on('dialog', (dialog) => {
+      questions.push(dialog.message());
+      void dialog.accept();
+    });
+    await page.getByRole('button', { name: 'Revoke all sessions' }).click();
+    await expect.poll(() => world.sponsorRequests.length).toBe(1);
+    await expect(page.getByRole('button', { name: 'Revoke all sessions' })).toBeEnabled();
+    expect(questions).toEqual(['Revoke every session on your account? Each site will have to ask you again.']);
+
+    // One call to the account, with no arguments.
+    expect(world.sponsorRequests[0]!.calls).toHaveLength(1);
+    const [call] = world.sponsorRequests[0]!.calls;
+    expect(BigInt(call!.to)).toBe(BigInt(ACCOUNT));
+    expect(call!.selector).toBe(selectorOf('revoke_all_sessions'));
+    expect(call!.data).toEqual([]);
+    expect(world.sessions.size).toBe(0);
+  });
+
+  test('"Revoke all sessions" works with an empty registry, and removes the records of what it ended', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    // A session the registry never heard of.
+    sessionOnChain(world, SESSION_KEY);
+    await connectAndReturn(page);
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    world.sponsorRequests.length = 0;
+
+    page.on('dialog', (dialog) => void dialog.accept());
+    await page.getByRole('button', { name: 'Revoke all sessions' }).click();
+    await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
+    expect(world.sponsorRequests).toHaveLength(1);
+    expect(world.sponsorRequests[0]!.calls.map((call) => call.selector)).toEqual([selectorOf('revoke_all_sessions')]);
+    expect(world.sessions.size).toBe(0);
+    await expect.poll(() => world.registry.size).toBe(0);
+  });
+
+  test('declining the confirmation revokes nothing and leaves the page usable', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    await connectAndReturn(page);
+    world.sponsorRequests.length = 0;
+    page.on('dialog', (dialog) => void dialog.dismiss());
+    await page.getByRole('button', { name: 'Revoke all sessions' }).click();
+    await expect(page.getByRole('button', { name: 'Revoke all sessions' })).toBeEnabled();
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    expect(world.sponsorRequests).toHaveLength(0);
+    expect(world.sessions.size).toBe(1);
+  });
+
+  test('a recorded session that does not exist on the account is not shown, and its record is removed', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const expired = '0x777';
+    sessionOnChain(world, SESSION_KEY);
+    sessionOnChain(world, expired, undefined, Math.floor(Date.now() / 1000) - 10);
+    recorded(world, SESSION_KEY);
+    recorded(world, '0x666', { origin: 'https://never-approved.example', appName: 'Ghost' });
+    recorded(world, expired, { origin: 'https://expired.example', appName: 'Expired' });
+    await page.goto('/');
+
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    await expect(page.locator('.session .origin')).toHaveText(APP);
+    await expect(page.getByText('never-approved.example')).toHaveCount(0);
+    await expect(page.getByText('expired.example')).toHaveCount(0);
+
+    await expect.poll(() => [...world.registry.keys()]).toEqual([felt(SESSION_KEY)]);
+    expect(requestsOf(world, 'remove').map((request) => BigInt(request.body.publicKey)).sort()).toEqual([0x666n, 0x777n]);
+    // Looking at the list sends nothing to the chain.
+    expect(world.sponsorRequests).toHaveLength(0);
+  });
+
+  test('markup in a recorded origin or app name is shown as text', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    sessionOnChain(world, SESSION_KEY);
+    recorded(world, SESSION_KEY, {
+      origin: '<img src=x onerror="window.pwned=1"><script>window.pwned=2</script>',
+      appName: '<img src=x onerror="window.pwned=3"><b>Game</b>',
+    });
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    await expect(page.locator('.session .origin')).toHaveText('<img src=x onerror="window.pwned=1"><script>window.pwned=2</script>');
+    await expect(page.getByText('It called itself "<img src=x onerror="window.pwned=3"><b>Game</b>".')).toBeVisible();
+    expect(await page.locator('#view img, #view b, #view script').count()).toBe(0);
+    expect(await page.evaluate(() => (window as any).pwned)).toBeUndefined();
+  });
+
+  test('records the registry cannot have been given honestly are dropped', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    sessionOnChain(world, SESSION_KEY);
+    sessionOnChain(world, '0x888');
+    recorded(world, SESSION_KEY);
+    recorded(world, '0x888', { calls: [{ to: GAME, entrypoint: '<img src=x onerror="window.pwned=1">' }] });
+    world.registry.set('junk', 'not a session');
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    expect(await page.locator('#view img').count()).toBe(0);
+  });
+
+  test('what a session may do is read from the account, not from its record', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    // On chain: two permissions, a limit of 5 STRK per call, valid for an hour.
+    sessionOnChain(world, SESSION_KEY, [{ to: GAME, entrypoint: 'move' }, { to: TOKEN, entrypoint: 'transfer' }]);
+    world.sessions.get(felt(SESSION_KEY))!.policies.set(BigInt(TOKEN), { maxPerCall: 5n * 10n ** 18n, maxPerWindow: 50n * 10n ** 18n, windowSeconds: 7200n });
+    // The record claims one harmless call, another call the account does not allow, a smaller
+    // limit and other counts.
+    recorded(world, SESSION_KEY, {
+      maxCalls: 1,
+      calls: [{ to: GAME, entrypoint: 'move' }, { to: GAME, entrypoint: 'end_turn' }],
+      limits: [{ token: TOKEN, maxPerCall: '0x1', maxPerWindow: '0x1', windowSeconds: 60 }],
+    });
+    await page.goto('/');
+    const session = page.locator('.session');
+    await expect(session.getByRole('cell', { name: 'move', exact: true })).toBeVisible();
+    await expect(session.getByRole('cell', { name: 'end_turn', exact: true })).toHaveCount(0);
+    await expect(session.getByText('Your account holds 2 permissions for this session, and Kamui knows 1 of them.')).toBeVisible();
+    await expect(session.getByText('at most 20 sponsored')).toBeVisible();
+    await expect(session.getByRole('cell', { name: '5 STRK', exact: true })).toBeVisible();
+    await expect(session.getByText('50 STRK every 120 min')).toBeVisible();
+  });
+
+  test('a session that may spend a token with no limit is flagged', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    sessionOnChain(world, SESSION_KEY, [{ to: TOKEN, entrypoint: 'transfer' }]);
+    recorded(world, SESSION_KEY, { calls: [{ to: TOKEN, entrypoint: 'transfer' }], limits: [{ token: TOKEN, maxPerCall: '0x1', maxPerWindow: '0x1', windowSeconds: 60 }] });
+    await page.goto('/');
+    await expect(page.locator('.session').getByText('This session can spend any amount of this token: STRK')).toBeVisible();
+  });
+
+  test('removing a device ends every session, and their records are removed', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    await connectAndReturn(page);
+    world.owners.unshift('0x5f513650a95ebc650404cfb1da39de4eba808aab4273f0c9a0d6d3bb09d3966');
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Sessions (1)' })).toBeVisible();
+    page.on('dialog', (dialog) => void dialog.accept());
+    await page.getByRole('button', { name: 'Remove' }).click();
+    await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
+    await expect.poll(() => world.registry.size).toBe(0);
+  });
+});
+
+test.describe('signing in with a recovery file', () => {
+  const fileFor = (over: Partial<Parameters<typeof exportPepper>[0]> = {}) =>
+    serializePepperFile(exportPepper({ chainId: CHAIN_ID, classHash: CLASS_HASH, claims: CLAIMS, pepper: PEPPER, keyVersion: 1, ...over }));
+
+  async function choose(page: Page, text: string | Buffer) {
+    await page.locator('#recovery-file').setInputFiles({ name: 'kamui-recovery.json', mimeType: 'application/json', buffer: Buffer.isBuffer(text) ? text : Buffer.from(text) });
+  }
+
+  test('the file\'s pepper is used and the pepper service is never contacted', async ({ page, context }) => {
+    const world = await setup(context);
+    // The service the file stands in for is gone.
+    world.pepperDown = true;
+    await page.goto('/');
+    await choose(page, fileFor());
+    await expect(page.locator('#recovery-file-note')).toContainText("Kamui's lookup service will not be asked");
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(page.getByRole('heading', { name: 'Your account' })).toBeVisible();
+    await expect(page.getByText(ACCOUNT)).toBeVisible();
+
+    expect(world.pepperRequests).toHaveLength(0);
+    expect(world.recoverRequests).toHaveLength(1);
+    expect(world.recoverRequests[0]).toMatchObject({ account: ACCOUNT, pepper: PEPPER, override: false });
+    // The file is not kept anywhere once the sign-in is over.
+    expect(await vaultKeys(page)).not.toContain('pending-pepper-file');
+    expect(await page.evaluate(() => Object.keys(sessionStorage))).toEqual([]);
+    expect(await page.evaluate(() => Object.keys(localStorage))).toEqual([]);
+  });
+
+  test('the file a signed-in device downloads signs a new device in', async ({ page, context, browser }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download recovery file' }).click()]);
+    const text = await readFile((await download.path())!, 'utf8');
+
+    const other = await browser.newContext();
+    await installFakes(other, world);
+    const second = await other.newPage();
+    world.pepperRequests.length = 0;
+    await second.goto(`${KEYCHAIN}/`);
+    await choose(second, text);
+    await second.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(second.getByRole('heading', { name: 'Devices (2 of 5)' })).toBeVisible();
+    expect(world.pepperRequests).toHaveLength(0);
+    await other.close();
+  });
+
+  test('while the user is at the issuer, the file is stored encrypted and not in web storage', async ({ page, context }) => {
+    await setup(context);
+    await page.goto('/');
+    await choose(page, fileFor());
+    await expect(page.locator('#recovery-file-note')).toContainText('Recovery file for the account');
+    // Hold the user at the issuer.
+    await context.route('https://accounts.google.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>issuer</title><p>issuer</p>' }));
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await page.waitForURL('https://accounts.google.com/**');
+    await page.goto(`${KEYCHAIN}/nothing-here`);
+    const stored = await page.evaluate(async () => {
+      const db: IDBDatabase = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('kamui-keychain');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const sealed: any = await new Promise((resolve, reject) => {
+        const request = db.transaction('vault').objectStore('vault').get('pending-pepper-file');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      return { fields: Object.keys(sealed).sort(), text: new TextDecoder().decode(new Uint8Array(sealed.data)), session: JSON.stringify({ ...sessionStorage }), local: Object.keys(localStorage) };
+    });
+    expect(stored.fields).toEqual(['data', 'iv']);
+    expect(stored.text).not.toContain('pepper');
+    expect(stored.text).not.toContain(ACCOUNT.slice(2, 20));
+    // The tab keeps the sign-in attempt, not the file.
+    expect(stored.session).not.toContain('pepper');
+    expect(stored.session).not.toContain(ACCOUNT.slice(2));
+    expect(stored.local).toEqual([]);
+  });
+
+  test('a file for another user is refused after the sign-in, and nothing is sent', async ({ page, context }) => {
+    const world = await setup(context);
+    await page.goto('/');
+    await choose(page, fileFor({ claims: { ...CLAIMS, sub: 'someone-else' } }));
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(page.getByText('This recovery file does not belong to the account you signed in with. Nothing was changed.')).toBeVisible();
+    // No fallback to the pepper service, and no device added.
+    expect(world.pepperRequests).toHaveLength(0);
+    expect(world.recoverRequests).toHaveLength(0);
+    expect(world.owners).toEqual([]);
+    expect(await vaultKeys(page)).not.toContain('pending-pepper-file');
+    expect(await vaultKeys(page)).not.toContain('device');
+    expect(page.url()).toBe(`${KEYCHAIN}/`);
+
+    // Starting again without a file works as usual.
+    await page.getByRole('button', { name: 'Start again' }).click();
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(page.getByRole('heading', { name: 'Your account' })).toBeVisible();
+    expect(world.pepperRequests).toHaveLength(1);
+  });
+
+  test('a file for another network or another account class is refused when it is chosen', async ({ page, context }) => {
+    const world = await setup(context);
+    await page.goto('/');
+    await choose(page, fileFor({ chainId: '0x534e5f4d41494e' }));
+    await expect(page.locator('#recovery-file-note')).toHaveText('This recovery file is for another network and cannot be used here.');
+    expect(await page.locator('#recovery-file').evaluate((input: HTMLInputElement) => input.files!.length)).toBe(0);
+
+    await choose(page, fileFor({ classHash: '0x999' }));
+    await expect(page.locator('#recovery-file-note')).toHaveText('This recovery file is for another version of the Kamui account and cannot be used here.');
+    expect(await page.locator('#recovery-file').evaluate((input: HTMLInputElement) => input.files!.length)).toBe(0);
+
+    // A refused file is not used: the sign-in that follows asks the pepper service.
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(page.getByRole('heading', { name: 'Your account' })).toBeVisible();
+    expect(world.pepperRequests).toHaveLength(1);
+  });
+
+  test('a file for another application or another issuer is refused before leaving for the issuer', async ({ page, context }) => {
+    const world = await setup(context);
+    await page.goto('/');
+    await choose(page, fileFor({ claims: { ...CLAIMS, aud: 'another-app' } }));
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(page.getByText('This recovery file was made for another application and cannot be used here.')).toBeVisible();
+
+    await choose(page, fileFor());
+    await page.getByRole('button', { name: 'Continue with Apple' }).click();
+    await expect(page.getByText('This recovery file is for a sign-in with Google, not with Apple.')).toBeVisible();
+
+    expect(world.issuerVisits).toBe(0);
+    expect(world.appleVisits).toHaveLength(0);
+    expect(await vaultKeys(page)).not.toContain('pending-pepper-file');
+    await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeEnabled();
+  });
+
+  test('a file that is not a recovery file is refused when it is chosen', async ({ page, context }) => {
+    const world = await setup(context);
+    await page.goto('/');
+    const note = page.locator('#recovery-file-note');
+
+    await choose(page, 'not json at all <img src=x onerror="window.pwned=1">');
+    await expect(note).toHaveText('This is not a Kamui recovery file (not valid JSON).');
+    await choose(page, JSON.stringify({ kind: 'something-else', pepper: PEPPER }));
+    await expect(note).toHaveText('This is not a Kamui recovery file (not a Kamui pepper file).');
+    await choose(page, fileFor().replace(/"pepper": "0x[0-9a-f]+"/, '"pepper": "0x0"'));
+    await expect(note).toHaveText('This is not a Kamui recovery file (pepper out of range).');
+    await choose(page, fileFor().replace(/"account": "0x[0-9a-f]+"/, '"account": "<img src=x onerror=window.pwned=1>"'));
+    await expect(note).toHaveText('This is not a Kamui recovery file (bad account).');
+    await choose(page, Buffer.alloc(20_000, 0x20));
+    await expect(note).toHaveText('This is not a Kamui recovery file: it is too large.');
+    expect(await page.locator('#recovery-file').evaluate((input: HTMLInputElement) => input.files!.length)).toBe(0);
+    expect(await page.evaluate(() => (window as any).pwned)).toBeUndefined();
+
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(page.getByRole('heading', { name: 'Your account' })).toBeVisible();
+    expect(world.pepperRequests).toHaveLength(1);
+  });
+
+  test('a file whose account does not match its own pepper is refused after the sign-in', async ({ page, context }) => {
+    const world = await setup(context);
+    await page.goto('/');
+    // Edited by hand: someone else's pepper under this user's account address.
+    await choose(page, fileFor().replace(/"pepper": "0x[0-9a-f]+"/, '"pepper": "0x9999"'));
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(page.getByText('This recovery file does not belong to the account you signed in with.')).toBeVisible();
+    expect(world.recoverRequests).toHaveLength(0);
+  });
+});
+
+test.describe('signing in with Apple', () => {
+  test('a new device signs in with Apple and lands on its account', async ({ page, context }) => {
+    const world = await setup(context);
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Continue with Apple' }).click();
+    await expect(page.getByRole('heading', { name: 'Your account' })).toBeVisible();
+    await expect(page.getByText(APPLE_ACCOUNT)).toBeVisible();
+
+    // What Apple was asked: the token in the fragment, no scope, and the nonce that binds the
+    // device key.
+    expect(world.appleVisits).toHaveLength(1);
+    expect(world.issuerVisits).toBe(0);
+    const [asked] = world.appleVisits;
+    expect(asked).toMatchObject({ client_id: 'test-apple-client', redirect_uri: `${KEYCHAIN}/callback`, response_type: 'code id_token', response_mode: 'fragment' });
+    expect(asked!.scope).toBeUndefined();
+    expect(asked!.nonce).toMatch(/^0x[0-9a-f]+$/);
+    expect(asked!.state).toMatch(/^0x[0-9a-f]+$/);
+
+    expect(world.pepperRequests).toHaveLength(1);
+    expect(world.recoverRequests).toHaveLength(1);
+    expect(world.recoverRequests[0]).toMatchObject({ account: APPLE_ACCOUNT, pepper: PEPPER });
+    expect(world.recoverRequests[0].newPubkey).toBe(world.pepperRequests[0].public_key);
+    // The token and the code are gone from the address bar.
+    expect(page.url()).toBe(`${KEYCHAIN}/`);
+  });
+
+  test('the recovery file of an Apple account holds Apple as its issuer, and signs in with Apple', async ({ page, context }) => {
+    const world = await setup(context);
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Continue with Apple' }).click();
+    await expect(page.getByRole('heading', { name: 'Your account' })).toBeVisible();
+    const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download recovery file' }).click()]);
+    const text = await readFile((await download.path())!, 'utf8');
+    const file = parsePepperFile(text);
+    expect(file.account).toBe(APPLE_ACCOUNT);
+    expect(pepperFileMatchesLogin(file, APPLE_CLAIMS, CHAIN_ID)).toBe(true);
+    expect(text).not.toContain(APPLE_CLAIMS.sub);
+
+    page.on('dialog', (dialog) => void dialog.accept());
+    await page.getByRole('button', { name: 'Forget this device' }).click();
+    world.pepperRequests.length = 0;
+    await page.locator('#recovery-file').setInputFiles({ name: 'kamui-recovery.json', mimeType: 'application/json', buffer: Buffer.from(text) });
+    await expect(page.locator('#recovery-file-note')).toContainText('Recovery file for the account');
+    await page.getByRole('button', { name: 'Continue with Apple' }).click();
+    await expect(page.getByRole('heading', { name: 'Devices (2 of 5)' })).toBeVisible();
+    expect(world.pepperRequests).toHaveLength(0);
+  });
+
+  test('a connection request survives a sign-in with Apple', async ({ page, context }) => {
+    const world = await setup(context);
+    const store = await requestFrom(page, APP);
+    await page.getByRole('button', { name: 'Continue with Apple' }).click();
+    await expect(page.getByRole('heading', { name: 'Connection request' })).toBeVisible();
+    await page.getByRole('button', { name: 'Approve' }).click();
+    const answer = await answerAt(page, store);
+    expect(answer.ok && answer.connection.account).toBe(APPLE_ACCOUNT);
+    expect(world.sponsorRequests).toHaveLength(1);
+  });
+
+  test('an error from Apple is shown and adds no device', async ({ page, context }) => {
+    const world = await setup(context);
+    world.appleError = 'user_cancelled_authorize';
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Continue with Apple' }).click();
+    await expect(page.getByText('login: apple answered user_cancelled_authorize')).toBeVisible();
+    expect(world.recoverRequests).toHaveLength(0);
+    expect(page.url()).toBe(`${KEYCHAIN}/`);
+  });
+
+  test('the Apple button is not offered when the server has no Apple client id', async ({ page, context }) => {
+    await setup(context);
+    await context.route(`${KEYCHAIN}/config.json`, async (route) => {
+      const response = await route.fetch();
+      const config = await response.json();
+      await route.fulfill({ response, json: { ...config, appleClientId: '' } });
+    });
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Continue with Apple' })).toHaveCount(0);
   });
 });
 
@@ -592,7 +1235,8 @@ test.describe('page security', () => {
     const origins = new Set<string>();
     page.on('request', (request) => origins.add(new URL(request.url()).origin));
     await signIn(page);
-    // Its own origin, the chain, the pepper service and the issuer's sign-in page. No CDN.
+    // Its own origin (which includes the session registry, behind /api), the chain, the pepper
+    // service and the issuer's sign-in page. No CDN.
     expect([...origins].sort()).toEqual(['http://localhost:5183', 'http://localhost:5184', 'http://localhost:5185', 'https://accounts.google.com'].sort());
   });
 });

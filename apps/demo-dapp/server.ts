@@ -38,17 +38,30 @@ if (!build.success) {
 const script = await build.outputs[0]!.text();
 const page = await Bun.file(`${import.meta.dir}/index.html`).text();
 
+/**
+ * Headers for a proxied /api request: the client's address appended to X-Forwarded-For, so the
+ * backend can rate-limit per client and not per proxy, and the app key if the page sent one.
+ */
+function proxyHeaders(request: Request, clientAddress: string | undefined): Record<string, string> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const forwarded = [request.headers.get('x-forwarded-for'), clientAddress].filter(Boolean).join(', ');
+  if (forwarded) headers['x-forwarded-for'] = forwarded;
+  const appKey = request.headers.get('x-kamui-app-key');
+  if (appKey) headers['x-kamui-app-key'] = appKey;
+  return headers;
+}
+
 Bun.serve({
   port: PORT,
   idleTimeout: 120,
-  async fetch(request) {
+  async fetch(request, server) {
     const url = new URL(request.url);
     if (url.pathname === '/main.js') return new Response(script, { headers: { 'content-type': 'text/javascript' } });
     if (url.pathname === '/config.json') return Response.json(config);
     if (url.pathname.startsWith('/api/')) {
       return fetch(`${API}${url.pathname.slice(4)}`, {
         method: request.method,
-        headers: { 'content-type': 'application/json' },
+        headers: proxyHeaders(request, server.requestIP(request)?.address),
         body: request.method === 'GET' ? undefined : await request.text(),
       });
     }

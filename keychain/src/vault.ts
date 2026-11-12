@@ -7,8 +7,10 @@
 // ask the browser to decrypt, which is why the keychain needs a strict content security policy
 // and no third-party scripts.
 //
-// The account record (address, pepper, recovery file) is sealed the same way.
-import type { KeyPair, PepperFile } from '../../sdk/src';
+// The account record (address, pepper, recovery file) is sealed the same way, and so are the two
+// things that wait here for a short time: a recovery file chosen for a sign-in, while the user
+// is at the issuer, and sessions the registry has not recorded yet.
+import type { KeyPair, PepperFile, RegistrySession } from '../../sdk/src';
 
 const DATABASE = 'kamui-keychain';
 const STORE = 'vault';
@@ -94,9 +96,40 @@ export async function loadLogin(): Promise<{ device: KeyPair; account: AccountRe
   return device && account ? { device, account } : null;
 }
 
+/**
+ * A recovery file chosen on the sign-in screen, kept while the user is at the issuer. Passing
+ * null removes it. It names the user's account, so it does not stay longer than the sign-in.
+ */
+export async function savePendingPepperFile(file: PepperFile | null): Promise<void> {
+  if (file) await put('pending-pepper-file', await seal(file));
+  else await remove('pending-pepper-file');
+}
+
+/** Reads the chosen recovery file and removes it: it is used for one sign-in only. */
+export async function takePendingPepperFile(): Promise<PepperFile | null> {
+  const file = await unseal<PepperFile>(await get<Sealed>('pending-pepper-file'));
+  await remove('pending-pepper-file');
+  return file;
+}
+
+/**
+ * Sessions approved on this device that the registry has not recorded yet, because it could
+ * not be reached. They are shown from here and sent again on the next visit.
+ */
+export async function loadUnrecordedSessions(): Promise<RegistrySession[]> {
+  return (await unseal<RegistrySession[]>(await get<Sealed>('unrecorded-sessions'))) ?? [];
+}
+
+export async function saveUnrecordedSessions(sessions: RegistrySession[]): Promise<void> {
+  if (sessions.length) await put('unrecorded-sessions', await seal(sessions));
+  else await remove('unrecorded-sessions');
+}
+
 /** Forgets this device's key and account. The key stays an owner on chain until it is removed. */
 export async function forget(): Promise<void> {
   await remove('device');
   await remove('account');
   await remove('pending-device');
+  await remove('pending-pepper-file');
+  await remove('unrecorded-sessions');
 }
