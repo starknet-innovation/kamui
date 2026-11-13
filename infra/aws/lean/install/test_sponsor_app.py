@@ -62,6 +62,10 @@ class ReloadHost(FakeHost):
     """The reboot fake host plus the oneshot runtime fetch."""
     fetch_fails = False
 
+    def __init__(self, root, *args, **kwargs):
+        super().__init__(root, *args, **kwargs)
+        (Path(root)/'var/lib/kamui-install').mkdir(parents=True, mode=0o700, exist_ok=True)
+
     def run(self, args):
         if args == ['systemctl', 'start', host_program.SECRETS]:
             self.calls.append(('start', host_program.SECRETS)); return (1 if self.fetch_fails else 0), '', ''
@@ -90,7 +94,7 @@ class ReloadTest(unittest.TestCase):
         self.assertEqual((fake.gate()['state'], fake.gate()['generation']), ('ready', generation))
 
     def test_a_closed_gate_or_unfinished_recovery_changes_nothing(self):
-        fake = FakeHost(self.base/'blocked', now=BTIME+60)
+        fake = ReloadHost(self.base/'blocked', now=BTIME+60)
         with self.assertRaises(host_program.Refused) as caught: host_program.reload_runtime(fake.host)
         self.assertEqual(caught.exception.code, 'RESTORE_GATE_NOT_READY_RUN_14_REOPEN')
         fake = open_backend(self.base/'jobs'); fake.jobs = (1, 0, 0)
@@ -114,6 +118,15 @@ class ReloadTest(unittest.TestCase):
         self.assertEqual(caught.exception.detail['recoveryJobs']['unfinished'], 1)
         self.assertEqual(fake.gate()['state'], 'blocked')
         self.assertNotIn(('start', STACK), fake.calls)
+
+    def test_reload_never_runs_alongside_an_upgrade_step(self):
+        import fcntl, os
+        fake = open_backend(self.base/'step')
+        other = os.open(fake.root/'var/lib/kamui-install/.upgrade-step.lock', os.O_CREAT | os.O_WRONLY, 0o600); self.addCleanup(os.close, other)
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with self.assertRaises(host_program.Refused) as caught: host_program.reload_runtime(fake.host)
+        self.assertEqual(caught.exception.code, 'UPGRADE_STEP_BUSY')
+        self.assertFalse(any(c[0] in {'stop', 'start'} for c in fake.calls))
 
     def test_an_unreadable_recount_also_blocks_writes(self):
         for failure in ['psql', 'prepare', 'stop', 'fetch']:

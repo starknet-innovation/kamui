@@ -30,7 +30,8 @@ RESULT = 'KAMUI_REOPEN_RESULT '
 REF = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$')
 ARGUMENT = re.compile(r'^[A-Za-z0-9._/-]{1,120}$')
 CODE = re.compile(r'^[A-Z0-9_]{3,60}$')
-STATUSES = {'inspected', 'refused', 'fenced', 'already_fenced', 'reopened', 'already_open', 'enabled', 'runtime_reloaded'}
+STATUSES = {'inspected', 'refused', 'fenced', 'already_fenced', 'reopened', 'already_open', 'enabled',
+            'upgrade_prepared', 'upgrade_finished', 'awaiting_reopen', 'runtime_reloaded'}
 CONFIRMATION = 'REOPEN'
 MAX_WAITS = 6
 # Shown before confirmation. These are what the acknowledgement records on the operator's behalf.
@@ -47,7 +48,7 @@ def host_command(action, *args):
     """A fixed shell body: the reviewed host program on stdin, validated arguments on argv."""
     program = HOST_PROGRAM.read_text()
     if DELIMITER in program: raise ValueError('REOPEN_HOST_PROGRAM_INVALID')
-    if action not in {'inspect', 'fence', 'reopen', 'enable-boot', 'reload-runtime'} or not all(isinstance(a, str) and ARGUMENT.fullmatch(a) for a in args):
+    if action not in {'inspect', 'fence', 'reopen', 'enable-boot', 'upgrade-prepare', 'upgrade-finish', 'reload-runtime'} or not all(isinstance(a, str) and ARGUMENT.fullmatch(a) for a in args):
         raise ValueError('REOPEN_HOST_ARGUMENT_INVALID')
     q = shlex.quote
     lines = ['set -eu', 'umask 077', '[ "$(id -u)" = 0 ]', 'cd /',
