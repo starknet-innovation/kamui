@@ -99,7 +99,10 @@ def instance(root, role, values, aws):
     if not isinstance(enis, list) or len(enis) != 1:
         raise ValueError('ADDRESS_SINGLE_INTERFACE_REQUIRED')
     eni = enis[0]
-    if eni.get('SubnetId') != values['subnet_id'] or eni.get('Attachment', {}).get('DeviceIndex') != 0 or eni.get('Attachment', {}).get('InstanceId') != identifier:
+    # DescribeInstances embeds the ENI under the already verified instance; its
+    # InstanceNetworkInterfaceAttachment has no InstanceId field (unlike the
+    # attachment returned by DescribeNetworkInterfaces).
+    if eni.get('SubnetId') != values['subnet_id'] or eni.get('Attachment', {}).get('DeviceIndex') != 0 or eni.get('Attachment', {}).get('Status') != 'attached':
         raise ValueError('ADDRESS_PRIMARY_INTERFACE_REQUIRED')
     if len(eni.get('Groups', [])) != 1 or eni['Groups'][0].get('GroupId') != values['security_group_id']:
         raise ValueError('ADDRESS_INTERFACE_GROUP_MISMATCH')

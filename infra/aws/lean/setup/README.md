@@ -78,3 +78,7 @@ python3 -B -m unittest discover -s infra/aws/lean/setup -p 'test_*.py'
 Tests use fake AWS transports and synthetic resource data. They do not create AWS resources, validate the operator's effective permissions or constitute deployed acceptance. The templates, policies and exact account-aware creation plan remain for operator/security review before execution.
 
 Local result for this change: **32 setup tests**, the existing **30 readiness tests** and **12 host/provision tests** passed. Both templates pass **cfn-lint 1.60.1**; the IAM template documents one narrow W1030 suppression for its unused backend pepper-key branch. `cfn-guard` is unavailable, so no cfn-guard compliance result is claimed. Account-aware `validate-template` is part of the user-run prepare phase and has not been run against AWS by this change. No AWS operations were executed during implementation.
+
+## Continue with installation
+
+After `06`, use the [next numbered installation scripts](../install/README.md): `07-build-release.sh`, `08-prepare-runtime.sh`, `09-install-hosts.sh`, `10-verify-installation.sh`. They add immutable ECR/artifact delivery, prepare runtime files locally and install/verify the public package and images through SSM. Commit/review the source before `07`; a dirty source tree is refused. Runtime secrets are not uploaded, and application/database startup remains gated separately.

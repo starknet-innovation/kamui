@@ -30,7 +30,7 @@ class FakeAws:
                 'State': {'Name': 'running'}, 'Tags': [{'Key': k, 'Value': v} for k,v in {'Project':'kamui','Network':'sepolia','Role':role}.items()],
                 'SecurityGroups': [{'GroupId': values['security_group_id']}],
                 'NetworkInterfaces': [{'NetworkInterfaceId': eni, 'PrivateIpAddress': '10.68.0.'+str(index+10), 'SubnetId': values['subnet_id'],
-                    'Attachment': {'DeviceIndex': 0, 'InstanceId': instance_id}, 'Groups': [{'GroupId': values['security_group_id']}]}]}
+                    'Attachment': {'DeviceIndex': 0, 'Status': 'attached'}, 'Groups': [{'GroupId': values['security_group_id']}]}]}
 
     def request(self, profile, service, operation, inputs):
         self.calls.append((profile, service, operation, copy.deepcopy(inputs)))
@@ -119,6 +119,22 @@ class AddressesTests(unittest.TestCase):
             with self.assertRaises(ValueError): addresses.assign(root, config, aws)
             self.assertEqual(aws.mutations(), [])
             if failure == 'account': self.assertEqual([c[2] for c in aws.calls], ['get-caller-identity']*2)
+
+    def test_describe_instances_attachment_without_instance_id_is_supported(self):
+        root, config, aws = self.fixture()
+        attachment = aws.instances['backend']['NetworkInterfaces'][0]['Attachment']
+        self.assertNotIn('InstanceId', attachment)
+        target = addresses.instance(root, 'backend', config['backend'], aws)
+        self.assertEqual(target['InstanceId'], aws.instances['backend']['InstanceId'])
+        self.assertEqual(aws.mutations(), [])
+
+    def test_nonprimary_or_not_attached_interface_blocks_both_address_allocations(self):
+        for field, value in [('DeviceIndex', 1), ('Status', 'attaching'), ('Status', 'detached')]:
+            root, config, aws = self.fixture()
+            aws.instances['pepper']['NetworkInterfaces'][0]['Attachment'][field] = value
+            with self.assertRaisesRegex(ValueError, 'ADDRESS_PRIMARY_INTERFACE_REQUIRED'):
+                addresses.assign(root, config, aws)
+            self.assertEqual(aws.mutations(), [])
 
     def test_allocation_uncertainty_never_allocates_again_and_can_reconcile_one_tag_match(self):
         for when in ['before','after']:

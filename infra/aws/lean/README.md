@@ -6,6 +6,8 @@ The user selected open Sepolia access at `sepolia.kamui.page` and `pepper-sepoli
 
 For operator resource creation, use the [ordered setup scripts](setup/README.md): `00` creates/verifies network, IAM and backup prerequisites in the existing accounts; separate `05`/`06` steps launch hosts and assign stable IPs. They retain private identifiers and uncertain intents and do not create keys, change registry roles or start the wallet.
 
+The [numbered installation workflow](install/README.md) continues with scripts `07`–`10`: immutable ECR release, local private runtime preparation, public package/image installation through SSM and read-only verification. It neither delivers signing keys nor starts the wallet/database.
+
 ## Layout and boundaries
 
 - `backend/compose.yml`: PostgreSQL 16 plus pgBackRest image, unprivileged application database role, API and keychain on private service networks; no published API, metrics, database or rotator ports. Each signer file is mounted only into its consumer. The database and restore gate persist under `/var/lib/kamui`.

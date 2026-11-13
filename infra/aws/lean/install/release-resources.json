@@ -1,0 +1,568 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Kamui Sepolia release repositories and additive host pull permissions; no registry authority or signing credentials.",
+  "Metadata": {
+    "AWSToolsMetrics": {
+      "AWSAgentToolkit": "aws-cloudformation@3"
+    }
+  },
+  "Parameters": {
+    "HostRole": {
+      "Type": "String",
+      "AllowedValues": [
+        "backend",
+        "pepper"
+      ]
+    },
+    "HostRoleName": {
+      "Type": "String",
+      "AllowedPattern": "[A-Za-z0-9+=,.@_-]{1,64}"
+    },
+    "BackendAccount": {
+      "Type": "String",
+      "AllowedPattern": "[0-9]{12}"
+    },
+    "PepperRoleArn": {
+      "Type": "String",
+      "AllowedPattern": "arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+"
+    },
+    "ReleaseBucketArn": {
+      "Type": "String",
+      "Default": "arn:aws:s3:::kamui-unused-backend-placeholder",
+      "AllowedPattern": "^arn:aws:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+      "Description": "Backend artifact bucket ARN for pepper; backend uses an unused syntactically valid placeholder."
+    }
+  },
+  "Conditions": {
+    "Backend": {
+      "Fn::Equals": [
+        {
+          "Ref": "HostRole"
+        },
+        "backend"
+      ]
+    }
+  },
+  "Resources": {
+    "KeychainRepository": {
+      "Type": "AWS::ECR::Repository",
+      "Condition": "Backend",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Keep immutable reviewed release artifacts available for rollback.",
+          "must": [
+            "No lifecycle deletion or mutable release tags.",
+            "No write permission for hosts."
+          ]
+        }
+      },
+      "Properties": {
+        "RepositoryName": "kamui-sepolia/keychain",
+        "ImageTagMutability": "IMMUTABLE",
+        "EncryptionConfiguration": {
+          "EncryptionType": "AES256"
+        },
+        "ImageScanningConfiguration": {
+          "ScanOnPush": true
+        },
+        "EmptyOnDelete": false
+      }
+    },
+    "BackendRepository": {
+      "Type": "AWS::ECR::Repository",
+      "Condition": "Backend",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Keep immutable reviewed release artifacts available for rollback.",
+          "must": [
+            "No lifecycle deletion or mutable release tags.",
+            "No write permission for hosts."
+          ]
+        }
+      },
+      "Properties": {
+        "RepositoryName": "kamui-sepolia/backend",
+        "ImageTagMutability": "IMMUTABLE",
+        "EncryptionConfiguration": {
+          "EncryptionType": "AES256"
+        },
+        "ImageScanningConfiguration": {
+          "ScanOnPush": true
+        },
+        "EmptyOnDelete": false
+      }
+    },
+    "PepperRepository": {
+      "Type": "AWS::ECR::Repository",
+      "Condition": "Backend",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Keep immutable reviewed release artifacts available for rollback.",
+          "must": [
+            "No lifecycle deletion or mutable release tags.",
+            "No write permission for hosts."
+          ]
+        }
+      },
+      "Properties": {
+        "RepositoryName": "kamui-sepolia/pepper",
+        "ImageTagMutability": "IMMUTABLE",
+        "EncryptionConfiguration": {
+          "EncryptionType": "AES256"
+        },
+        "ImageScanningConfiguration": {
+          "ScanOnPush": true
+        },
+        "EmptyOnDelete": false,
+        "RepositoryPolicyText": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "PepperRoleArn"
+                }
+              },
+              "Action": [
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:BatchCheckLayerAvailability"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "PostgresRepository": {
+      "Type": "AWS::ECR::Repository",
+      "Condition": "Backend",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Keep immutable reviewed release artifacts available for rollback.",
+          "must": [
+            "No lifecycle deletion or mutable release tags.",
+            "No write permission for hosts."
+          ]
+        }
+      },
+      "Properties": {
+        "RepositoryName": "kamui-sepolia/postgres",
+        "ImageTagMutability": "IMMUTABLE",
+        "EncryptionConfiguration": {
+          "EncryptionType": "AES256"
+        },
+        "ImageScanningConfiguration": {
+          "ScanOnPush": true
+        },
+        "EmptyOnDelete": false
+      }
+    },
+    "CaddyRepository": {
+      "Type": "AWS::ECR::Repository",
+      "Condition": "Backend",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Keep immutable reviewed release artifacts available for rollback.",
+          "must": [
+            "No lifecycle deletion or mutable release tags.",
+            "No write permission for hosts."
+          ]
+        }
+      },
+      "Properties": {
+        "RepositoryName": "kamui-sepolia/caddy",
+        "ImageTagMutability": "IMMUTABLE",
+        "EncryptionConfiguration": {
+          "EncryptionType": "AES256"
+        },
+        "ImageScanningConfiguration": {
+          "ScanOnPush": true
+        },
+        "EmptyOnDelete": false,
+        "RepositoryPolicyText": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "PepperRoleArn"
+                }
+              },
+              "Action": [
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:BatchCheckLayerAvailability"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "HostImagePullPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Permit only release pulls on existing host role; core role stack unchanged.",
+          "must": [
+            "No push, role-assumption, KMS or IAM permission grants."
+          ]
+        }
+      },
+      "Properties": {
+        "PolicyName": {
+          "Fn::Sub": "${AWS::StackName}-pull"
+        },
+        "Roles": [
+          {
+            "Ref": "HostRoleName"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": "ecr:GetAuthorizationToken",
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:BatchCheckLayerAvailability"
+              ],
+              "Resource": {
+                "Fn::If": [
+                  "Backend",
+                  [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ecr:eu-west-1:${BackendAccount}:repository/kamui-sepolia/keychain"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ecr:eu-west-1:${BackendAccount}:repository/kamui-sepolia/backend"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ecr:eu-west-1:${BackendAccount}:repository/kamui-sepolia/pepper"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ecr:eu-west-1:${BackendAccount}:repository/kamui-sepolia/postgres"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ecr:eu-west-1:${BackendAccount}:repository/kamui-sepolia/caddy"
+                    }
+                  ],
+                  [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ecr:eu-west-1:${BackendAccount}:repository/kamui-sepolia/pepper"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ecr:eu-west-1:${BackendAccount}:repository/kamui-sepolia/caddy"
+                    }
+                  ]
+                ]
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": "s3:GetObject",
+              "Resource": {
+                "Fn::If": [
+                  "Backend",
+                  {
+                    "Fn::Sub": "${ReleaseBucket.Arn}/installation/*"
+                  },
+                  {
+                    "Fn::Sub": "${ReleaseBucketArn}/installation/*"
+                  }
+                ]
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": "s3:GetBucketLocation",
+              "Resource": {
+                "Fn::If": [
+                  "Backend",
+                  {
+                    "Fn::GetAtt": [
+                      "ReleaseBucket",
+                      "Arn"
+                    ]
+                  },
+                  {
+                    "Ref": "ReleaseBucketArn"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ReleaseBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Condition": "Backend",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Deliver checksum-bound public installation artifacts over private S3.",
+          "must": [
+            "Never upload runtime secrets, database state or private inputs.",
+            "Retain versioned code artifacts for rollback; no lifecycle deletion."
+          ]
+        }
+      },
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        }
+      }
+    },
+    "ReleaseBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Condition": "Backend",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Permit exact pepper role to read only public installation artifacts over TLS.",
+          "must": [
+            "No public grants, uploads or runtime secret objects."
+          ]
+        }
+      },
+      "Properties": {
+        "Bucket": {
+          "Ref": "ReleaseBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ReleaseBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${ReleaseBucket.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "PepperRoleArn"
+                }
+              },
+              "Action": [
+                "s3:GetObject"
+              ],
+              "Resource": {
+                "Fn::Sub": "${ReleaseBucket.Arn}/installation/*"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "PepperRoleArn"
+                }
+              },
+              "Action": "s3:GetBucketLocation",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "ReleaseBucket",
+                  "Arn"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "KeychainRepositoryUri": {
+      "Condition": "Backend",
+      "Value": {
+        "Fn::GetAtt": [
+          "KeychainRepository",
+          "RepositoryUri"
+        ]
+      }
+    },
+    "BackendRepositoryUri": {
+      "Condition": "Backend",
+      "Value": {
+        "Fn::GetAtt": [
+          "BackendRepository",
+          "RepositoryUri"
+        ]
+      }
+    },
+    "PepperRepositoryUri": {
+      "Condition": "Backend",
+      "Value": {
+        "Fn::GetAtt": [
+          "PepperRepository",
+          "RepositoryUri"
+        ]
+      }
+    },
+    "PostgresRepositoryUri": {
+      "Condition": "Backend",
+      "Value": {
+        "Fn::GetAtt": [
+          "PostgresRepository",
+          "RepositoryUri"
+        ]
+      }
+    },
+    "CaddyRepositoryUri": {
+      "Condition": "Backend",
+      "Value": {
+        "Fn::GetAtt": [
+          "CaddyRepository",
+          "RepositoryUri"
+        ]
+      }
+    },
+    "ReleaseRegistry": {
+      "Value": {
+        "Fn::Sub": "${BackendAccount}.dkr.ecr.eu-west-1.amazonaws.com"
+      }
+    },
+    "ReleaseBucketName": {
+      "Condition": "Backend",
+      "Value": {
+        "Ref": "ReleaseBucket"
+      }
+    },
+    "ReleaseBucketArn": {
+      "Condition": "Backend",
+      "Value": {
+        "Fn::GetAtt": [
+          "ReleaseBucket",
+          "Arn"
+        ]
+      }
+    }
+  },
+  "Rules": {
+    "PepperArtifactBucketRequired": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "HostRole"
+          },
+          "pepper"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Equals": [
+                  {
+                    "Ref": "ReleaseBucketArn"
+                  },
+                  "arn:aws:s3:::kamui-unused-backend-placeholder"
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "Pepper needs backend public-code artifact bucket reference."
+        }
+      ]
+    },
+    "IrelandOnly": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "AWS::Region"
+              },
+              "eu-west-1"
+            ]
+          },
+          "AssertDescription": "This reviewed Sepolia package is fixed to Ireland."
+        }
+      ]
+    },
+    "BackendAccountMatches": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "HostRole"
+          },
+          "backend"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "BackendAccount"
+              },
+              {
+                "Ref": "AWS::AccountId"
+              }
+            ]
+          },
+          "AssertDescription": "The backend registry must use this stack account."
+        }
+      ]
+    }
+  }
+}

@@ -54,6 +54,8 @@ Before public launch, specifically review container access to host role credenti
 
 ## 3. Publish a reviewed immutable release
 
+The [numbered installation workflow](../install/README.md) now automates release publication and public host installation with `07-build-release.sh` through `10-verify-installation.sh`. It uses additive release-only ECR/S3/IAM stacks and SSM rather than manual copy/registry selection. Keep the same private setup state and commit/review the source first. It prepares private runtime files locally but does not deliver them, start PostgreSQL/Kamui, acknowledge gates or enable funding. The manual commands below remain reference procedures; do not mix them with an uncertain numbered operation.
+
 Use the image-build commands in [lean/README.md](../README.md#images-and-local-preparation) on a workstation/CI. Review/pin base images and architecture, vulnerability results and license notices before publishing through the existing approved registry process. No image publication command is guessed here because the organization's registry destination/access procedure is not selected.
 
 Prepare private `release.env` from [release.env.example](../release.env.example), using only immutable `@sha256:` image references. Keep the approved source revision, manifest and prior release together. Do not build or pull mutable `main` on a host. Registry handoff/control review and these build steps can progress while AWS inputs are reviewed; API startup must wait for role separation.
