@@ -204,7 +204,9 @@ class DecisionsTests(unittest.TestCase):
             ({'version': 1, 'alerts': {'watcherWebhookUrl': 'http://hooks.example.invalid/x'}}, 'RUNTIME_WEBHOOK_INVALID'),
             ({'version': 1, 'alerts': {'watcherWebhookUrl': 'https://user:pass@hooks.example.invalid/x'}}, 'RUNTIME_WEBHOOK_INVALID'),
             ({'version': 1, 'alerts': {'watcherWebhookUrl': 'https://hooks.example.invalid/$(touch x)'}}, 'RUNTIME_WEBHOOK_INVALID'),
-            ({'version': 1, 'funding': {}}, 'RUNTIME_DECISIONS_INVALID'),
+            ({'version': 1, 'funding': {'unknown': 1}}, 'RUNTIME_DECISIONS_INVALID'),
+            ({'version': 1, 'funding': {'deploysPerHour': -1}}, 'RUNTIME_DEPLOYS_PER_HOUR_INVALID'),
+            ({'version': 1, 'funding': {'policy': {'global': {}}}}, 'RUNTIME_FUNDING_POLICY_INVALID'),
             ({'version': 2}, 'RUNTIME_DECISIONS_INVALID'),
         ]
         for value, error in cases:
@@ -218,3 +220,45 @@ class DecisionsTests(unittest.TestCase):
         root, _ = self.fixture()
         self.decide(root, {'version': 1}); (root/'installation'/runtime.DECISIONS).chmod(0o644)
         with self.assertRaisesRegex(ValueError, 'RUNTIME_PRIVATE_SOURCE_PERMISSIONS_REQUIRED'): runtime.prepare(root, metadata())
+
+
+def open_policy(fee='20000000000000000000', apps=None, external=False):
+    limit = lambda tx, account: {'periodSeconds': 3600, 'txPerPeriod': tx, 'perAccountPerPeriod': account,
+                                 'maxFeePerTx': fee, 'maxFeePerPeriod': '1000000000000000000000', 'perAccountMaxFeePerPeriod': '200000000000000000000'}
+    return {'global': limit(1000, 100), 'operations': {'sponsor': limit(1000, 100), 'deployment': limit(500, 10),
+            'recovery': limit(500, 20), 'wallet': limit(1000, 100)}, 'apps': apps or {}, 'allowExternalPaymaster': external}
+
+
+class FundingDecisionsTests(DecisionsTests):
+    def test_funding_decision_opens_deploys_and_replaces_only_the_policy_and_backend_env(self):
+        root, backend = self.fixture(); before = self.snapshot(backend)
+        self.decide(root, {'version': 1, 'funding': {'deploysPerHour': 500, 'policy': open_policy()}})
+        runtime.prepare(root, metadata())
+        after = self.snapshot(backend)
+        self.assertEqual({p for p in after if after[p] != before[p]}, {'funding-policy.json', 'backend.public.env'})
+        self.assertEqual(json.loads(after['funding-policy.json']), open_policy())
+        self.assertIn(b'DEPLOYS_PER_HOUR=500\n', after['backend.public.env'])
+        for name in ['secrets/POSTGRES_PASSWORD', 'secrets/APP_DATABASE_PASSWORD', 'secrets/DATABASE_URL']:
+            self.assertEqual(after[name], before[name])
+        self.assertEqual(runtime.validate(root)['status'], 'private_runtime_prepared')
+
+    def test_without_a_funding_decision_the_zero_policy_and_zero_deploys_stay(self):
+        root, backend = self.fixture()
+        policy = json.loads((backend/'funding-policy.json').read_text())
+        self.assertEqual(policy['global']['txPerPeriod'], 0)
+        self.assertIn('DEPLOYS_PER_HOUR=0\n', (backend/'backend.public.env').read_text())
+
+    def test_apps_external_paymasters_and_inconsistent_caps_are_refused(self):
+        cases = [
+            (open_policy(apps={'app-key-0123456789ab': {}}), 'RUNTIME_FUNDING_APPS_REQUIRE_REVIEW'),
+            (open_policy(external=True), 'RUNTIME_EXTERNAL_PAYMASTER_REQUIRES_REVIEW'),
+            (open_policy(fee='2000000000000000000000'), 'RUNTIME_FUNDING_POLICY_INVALID'),
+            (open_policy(fee='0x10'), 'RUNTIME_FUNDING_POLICY_INVALID'),
+        ]
+        for policy, error in cases:
+            with self.subTest(error=error):
+                root, backend = self.fixture(); before = self.snapshot(backend)
+                self.decide(root, {'version': 1, 'funding': {'deploysPerHour': 10, 'policy': policy}})
+                with self.assertRaisesRegex(ValueError, error): runtime.prepare(root, metadata())
+                self.assertEqual(self.snapshot(backend), before)
+

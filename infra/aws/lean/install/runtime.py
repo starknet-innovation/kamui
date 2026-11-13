@@ -77,7 +77,11 @@ def write(path, value):
 # Derived from reviewed inputs rather than generated, so they may be regenerated when an input
 # changes (an operator decision, an RPC endpoint). Generated passwords and the database URLs built
 # from them stay write-once: replacing one would silently lock the running database out.
-DERIVED = {'backend.public.env', 'keychain.public.env', 'watcher.public.env', 'backup/operator.settings', 'backup/pgbackrest.conf'}
+DERIVED = {'backend.public.env', 'keychain.public.env', 'watcher.public.env', 'backup/operator.settings', 'backup/pgbackrest.conf',
+           'funding-policy.json'}
+FRI_MAX = 2**256 - 1
+FUNDING_LIMIT_KEYS = {'periodSeconds', 'txPerPeriod', 'perAccountPerPeriod', 'maxFeePerTx', 'maxFeePerPeriod', 'perAccountMaxFeePerPeriod'}
+FUNDING_OPERATIONS = {'sponsor', 'deployment', 'recovery', 'wallet'}
 DECISIONS = 'runtime-decisions.json'
 WEBHOOK = re.compile(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%!*'()+,;=:@/-]*)?(?:\?[A-Za-z0-9._~%!*'()+,;=:@/?&-]*)?")
 
@@ -115,7 +119,7 @@ def load_decisions(root):
 
 
 def validate_decisions(value):
-    if not isinstance(value, dict) or value.get('version') != 1 or set(value) - {'version', 'backup', 'alerts'}:
+    if not isinstance(value, dict) or value.get('version') != 1 or set(value) - {'version', 'backup', 'alerts', 'funding'}:
         raise ValueError('RUNTIME_DECISIONS_INVALID')
     backup, alerts = value.get('backup', {}), value.get('alerts', {})
     if not isinstance(backup, dict) or set(backup) - {'reviewed', 'retentionApproved', 'retentionFullDays', 'maxSuccessfulBackupAgeSeconds'}:
@@ -132,6 +136,35 @@ def validate_decisions(value):
     url = alerts.get('watcherWebhookUrl', '')
     if not isinstance(url, str) or (url and (len(url) > 2048 or not WEBHOOK.fullmatch(url))):
         raise ValueError('RUNTIME_WEBHOOK_INVALID')
+    funding = value.get('funding', {})
+    if not isinstance(funding, dict) or set(funding) - {'deploysPerHour', 'policy'}: raise ValueError('RUNTIME_DECISIONS_INVALID')
+    deploys = funding.get('deploysPerHour', 0)
+    if type(deploys) is not int or not 0 <= deploys <= 1000: raise ValueError('RUNTIME_DEPLOYS_PER_HOUR_INVALID')
+    if 'policy' in funding: validate_funding_policy(funding['policy'])
+
+
+def validate_funding_policy(policy):
+    """The same shape and bounds the API enforces on load (services/backend funding.ts), checked here
+    so a bad policy stops at 08 instead of stopping the API at start."""
+    def limit(v):
+        if not isinstance(v, dict) or set(v) != FUNDING_LIMIT_KEYS: raise ValueError('RUNTIME_FUNDING_POLICY_INVALID')
+        if type(v['periodSeconds']) is not int or not 1 <= v['periodSeconds'] <= 31536000: raise ValueError('RUNTIME_FUNDING_POLICY_INVALID')
+        for key in ['txPerPeriod', 'perAccountPerPeriod']:
+            if type(v[key]) is not int or not 0 <= v[key] <= 1000000: raise ValueError('RUNTIME_FUNDING_POLICY_INVALID')
+        for key in ['maxFeePerTx', 'maxFeePerPeriod', 'perAccountMaxFeePerPeriod']:
+            if not isinstance(v[key], str) or not re.fullmatch(r'[0-9]{1,78}', v[key]) or int(v[key]) > FRI_MAX:
+                raise ValueError('RUNTIME_FUNDING_POLICY_INVALID')
+        if int(v['maxFeePerTx']) > int(v['maxFeePerPeriod']) or int(v['perAccountMaxFeePerPeriod']) > int(v['maxFeePerPeriod']):
+            raise ValueError('RUNTIME_FUNDING_POLICY_INVALID')
+    if not isinstance(policy, dict) or set(policy) != {'global', 'operations', 'apps', 'allowExternalPaymaster'}:
+        raise ValueError('RUNTIME_FUNDING_POLICY_INVALID')
+    limit(policy['global'])
+    if not isinstance(policy['operations'], dict) or set(policy['operations']) != FUNDING_OPERATIONS: raise ValueError('RUNTIME_FUNDING_POLICY_INVALID')
+    for operation in policy['operations'].values(): limit(operation)
+    # Sponsored apps carry bearer-credential hashes and external paymasters are not bounded by our
+    # signed fees; both need their own review before they can be granted through this file.
+    if policy['apps'] != {}: raise ValueError('RUNTIME_FUNDING_APPS_REQUIRE_REVIEW')
+    if policy['allowExternalPaymaster'] is not False: raise ValueError('RUNTIME_EXTERNAL_PAYMASTER_REQUIRES_REVIEW')
 
 
 def operator_settings(decisions):
@@ -248,7 +281,9 @@ def prepare(root, metadata=None, source_paths=None):
     update(backend/'backend.public.env', env_bytes({'CHAIN_ID': 'SN_SEPOLIA', 'RPC_URL': RPC, 'RPC_FALLBACK_URL': RPC_FALLBACK,
         'KAMUI_ACCOUNT_CLASS_HASH': CLASS, 'AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID': data['googleClientId'],
         'RELAYER_ADDRESS': data['relayerAddress'], 'PEPPER_SERVICE_URL': PEPPER,
-        'DEPLOYS_PER_HOUR': '0', 'SPONSORED_PER_HOUR': '0'}), history, 'backend-backend.public.env')
+        # SPONSORED_PER_HOUR is unused once a funding policy file is mounted; the policy governs sponsorship.
+        'DEPLOYS_PER_HOUR': str(decisions.get('funding', {}).get('deploysPerHour', 0)), 'SPONSORED_PER_HOUR': '0'}),
+        history, 'backend-backend.public.env')
     update(backend/'keychain.public.env', env_bytes({'GOOGLE_CLIENT_ID': data['googleClientId'],
         'KAMUI_ACCOUNT_CLASS_HASH': CLASS, 'PROVER_EXECUTOR_ADDRESS': EXECUTOR, 'JWK_REGISTRY_ADDRESS': REGISTRY, 'PUBLIC_RPC_URL': RPC,
         'PUBLIC_RPC_FALLBACK_URL': RPC_FALLBACK}), history, 'backend-keychain.public.env')
@@ -259,11 +294,15 @@ def prepare(root, metadata=None, source_paths=None):
     write(pepper/'pepper.private.env', env_bytes({'KMS_KEY_ID': data['pepperKeyArn'], 'PEPPER_KEY_CHECK': data['pepperKeyCheck'],
         'GOOGLE_AUDIENCES': data['googleClientId'], 'RATE_IP_BURST': '30', 'RATE_IP_PER_MINUTE': '30',
         'RATE_SUBJECT_BURST': '10', 'RATE_SUBJECT_PER_HOUR': '10'}))
-    policy = json.loads((REPO/'services/backend/funding-policy.example.json').read_text())
-    if policy.get('apps') or policy.get('allowExternalPaymaster') is not False: raise ValueError('RUNTIME_ZERO_POLICY_REQUIRED')
-    for limits in [policy.get('global', {})] + list(policy.get('operations', {}).values()):
-        if any(value not in (0, '0') for key,value in limits.items() if key != 'periodSeconds'): raise ValueError('RUNTIME_ZERO_POLICY_REQUIRED')
-    write(backend/'funding-policy.json', json_bytes(policy))
+    if 'policy' in decisions.get('funding', {}):
+        policy = decisions['funding']['policy']
+    else:
+        # No funding decision: the reviewed zero policy, which disables every paid operation.
+        policy = json.loads((REPO/'services/backend/funding-policy.example.json').read_text())
+        if policy.get('apps') or policy.get('allowExternalPaymaster') is not False: raise ValueError('RUNTIME_ZERO_POLICY_REQUIRED')
+        for limits in [policy.get('global', {})] + list(policy.get('operations', {}).values()):
+            if any(value not in (0, '0') for key,value in limits.items() if key != 'periodSeconds'): raise ValueError('RUNTIME_ZERO_POLICY_REQUIRED')
+    update(backend/'funding-policy.json', json_bytes(policy), history, 'backend-funding-policy.json')
     update(backup/'pgbackrest.conf', pgbackrest_conf(data, decisions), history, 'backend-backup-pgbackrest.conf')
     # Acknowledgements stay empty unless the operator recorded them in the decisions file; nothing
     # here ever turns backup jobs on by itself.
