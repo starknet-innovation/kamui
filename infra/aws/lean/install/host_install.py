@@ -364,8 +364,10 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
                     if stage.exists(): shutil.rmtree(stage)
             link = paths.root/'opt/kamui/lean'
             if previous is not None:
-                # Keep evidence of what was replaced before changing anything visible.
-                install_file(records/(role+'-superseded-'+previous['archiveSha256'][:16]+'.json'),
+                # Keep evidence of what was replaced before changing anything visible. Name it by
+                # the manifest hash: the archive hash is unchanged when only images differ, so it
+                # would collide with an earlier record and refuse the replacement.
+                install_file(records/(role+'-superseded-'+previous['manifestSha256'][:16]+'.json'),
                              (json.dumps(previous, sort_keys=True)+'\n').encode(), 0o600)
                 if link.resolve() != (destination/'lean').resolve():
                     swap = link.parent/('.lean-replace-'+uuid.uuid4().hex)

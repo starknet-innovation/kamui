@@ -121,11 +121,36 @@ class HostInstallTest(unittest.TestCase):
         self.assertIn(b'2'*64, (root/'etc/kamui/release.env').read_bytes())
         self.assertIn(b'next release unit', (root/'etc/systemd/system/kamui@.service').read_bytes())
         self.assertEqual(json.loads((root/'var/lib/kamui-install/backend.json').read_text())['archiveSha256'], next_manifest['archiveSha256'])
-        self.assertEqual((root/'var/lib/kamui-install'/('backend-superseded-'+manifest['archiveSha256'][:16]+'.json')).read_bytes(), old_receipt)
+        stem = json.loads(old_receipt)['manifestSha256'][:16]
+        self.assertEqual((root/'var/lib/kamui-install'/('backend-superseded-'+stem+'.json')).read_bytes(), old_receipt)
         self.assertFalse(any(c[:2] in [['systemctl', 'enable'], ['docker', 'run']] for c in commands.calls))
         self.assertEqual(host.install(**following, replace_unstarted=True)['status'], 'already_installed_verified')
         read_options = {k: v for k, v in following.items() if k not in {'compose_binary', 'compose_sha256'}}
         self.assertEqual(host.check(**read_options)['status'], 'public_host_install_verified')
+
+    def images_only_release(self, options, manifest, digit):
+        """A release whose package files are identical and only image digests differ."""
+        following = copy.deepcopy(manifest)
+        following['releaseImages'] = {key: 'example.invalid/kamui/'+key.lower()+'@sha256:'+digit*64 for key in host.IMAGE_KEYS}
+        source = options['manifest_path'].parent/(digit+'.json')
+        source.write_text(json.dumps(following))
+        return {**options, 'manifest_path': source, 'expected_manifest': host.sha(source.read_bytes())}, following
+
+    def test_successive_image_only_replacements_each_keep_their_own_evidence(self):
+        root, manifest, options, _, _ = self.fixture()
+        host.install(**options)
+        receipts = [(root/'var/lib/kamui-install/backend.json').read_bytes()]
+        for digit in ['3', '4']:
+            following, next_manifest = self.images_only_release(options, manifest, digit)
+            # Only the images change, so the archive hash — and the release tree — stay the same.
+            self.assertEqual(next_manifest['archiveSha256'], manifest['archiveSha256'])
+            self.assertEqual(host.install(**following, replace_unstarted=True)['status'], 'host_replaced_wallet_stopped')
+            self.assertIn(digit*64, (root/'etc/kamui/release.env').read_text())
+            receipts.append((root/'var/lib/kamui-install/backend.json').read_bytes())
+        kept = sorted(p.name for p in (root/'var/lib/kamui-install').glob('backend-superseded-*.json'))
+        self.assertEqual(len(kept), 2, kept)
+        stored = sorted((root/'var/lib/kamui-install'/name).read_bytes() for name in kept)
+        self.assertEqual(stored, sorted(receipts[:2]))
 
     def test_replacement_refuses_wallet_state_started_receipt_or_changed_units(self):
         root, manifest, options, _, _ = self.fixture()
