@@ -132,7 +132,9 @@ class Reopen:
         self.out('Restarting the backend stack to load its runtime files; the site is down for about a minute.')
         result = self.call('backend', 'reload-runtime', 'reload-runtime', 'backend')
         self.evidence('reload-runtime', result)
-        if result['status'] == 'refused': raise ValueError(('RELOAD_'+result['code'])[:100])
+        if result['status'] == 'refused':
+            if result.get('recoveryJobs'): self.out(json.dumps({'recoveryJobs': result['recoveryJobs']}))
+            raise ValueError(('RELOAD_'+result['code'])[:100])
         return {'status': 'BACKEND_RUNTIME_RELOADED', 'services': result.get('services')}
 
     def check_backend(self, backend):

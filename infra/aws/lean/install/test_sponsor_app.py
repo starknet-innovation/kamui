@@ -8,6 +8,7 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
+import uuid
 
 import test_reopen
 import test_runtime
@@ -74,7 +75,7 @@ class ReloadTest(unittest.TestCase):
         fake = open_backend(self.base/'b'); generation = fake.gate()['generation']
         result = host_program.reload_runtime(fake.host)
         self.assertEqual(result['status'], 'runtime_reloaded')
-        self.assertEqual([c for c in fake.calls if c[0] in {'stop', 'start'}], [('stop', STACK), ('start', STACK)])
+        self.assertEqual([c for c in fake.calls if c[0] in {'stop', 'start', 'host.py'}], [('stop', STACK), ('host.py', 'backend', 'prepare'), ('start', STACK)])
         self.assertEqual((fake.gate()['state'], fake.gate()['generation']), ('ready', generation))
 
     def test_a_closed_gate_or_unfinished_recovery_changes_nothing(self):
@@ -85,6 +86,23 @@ class ReloadTest(unittest.TestCase):
         with self.assertRaises(host_program.Refused) as caught: host_program.reload_runtime(fake.host)
         self.assertEqual(caught.exception.code, 'RECOVERY_JOBS_UNFINISHED')
         self.assertFalse(any(c[0] in {'stop', 'start'} for c in fake.calls))
+
+    def test_a_job_admitted_after_the_count_blocks_writes_instead_of_restarting(self):
+        fake = open_backend(self.base/'late')
+        original = fake.run
+        def run(args):
+            if args[:2] == ['systemctl', 'stop']: fake.jobs = (1, 1, 0)   # committed just before the stop
+            if args[:2] == ['python3', '-B'] and args[2].endswith('/wallet-control.py') and args[3:] == ['restore', 'block']:
+                fake.calls.append(('wallet-control.py', 'restore', 'block'))
+                fake.write_gate({**fake.gate(), 'state': 'blocked', 'generation': str(uuid.uuid4()), 'changedAt': int(fake.clock*1000)})
+                return 0, '', ''
+            return original(args)
+        fake.host.run = run
+        with self.assertRaises(host_program.Refused) as caught: host_program.reload_runtime(fake.host)
+        self.assertEqual(caught.exception.code, 'RECOVERY_INTERRUPTED_GATE_BLOCKED')
+        self.assertEqual(caught.exception.detail['recoveryJobs']['unfinished'], 1)
+        self.assertEqual(fake.gate()['state'], 'blocked')
+        self.assertNotIn(('start', STACK), fake.calls)
 
     def test_workstation_reload_reports_the_digit_bearing_refusal(self):
         reopen = test_reopen.reopen

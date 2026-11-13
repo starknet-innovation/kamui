@@ -280,7 +280,18 @@ def reload_runtime(host):
     if jobs['unfinished']: raise Refused('RECOVERY_JOBS_UNFINISHED', recoveryJobs=jobs)
     if host.run(['systemctl', 'stop', STACK])[0]: raise Refused('STACK_STOP_FAILED')
     if writers_running(host.services('backend')): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT')
-    return {'status': 'runtime_reloaded', 'role': 'backend', 'services': start_stack(host, gate['generation'])}
+    # The API admits recovery requests until it stops and does not drain them, so a job may have
+    # started after the count above. Count again with writers stopped and PostgreSQL alone.
+    if host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare'])[0]: raise Refused('POSTGRES_PREPARE_FAILED')
+    after = recovery_jobs(host, host.services('backend'))
+    if after is None or after['unfinished']:
+        # Interrupted (or unknowable) recovery work: never restart over it. Close writes exactly as a
+        # reboot does, so writes return only through 14 reopen after reconciliation.
+        code, _, _ = host.run(['python3', '-B', LEAN+'/scripts/wallet-control.py', 'restore', 'block'])
+        blocked = read_gate(host)['state'] == 'blocked'
+        raise Refused('RECOVERY_INTERRUPTED_GATE_BLOCKED' if not code and blocked else 'RECOVERY_INTERRUPTED_GATE_BLOCK_FAILED',
+                      recoveryJobs=after)
+    return {'status': 'runtime_reloaded', 'role': 'backend', 'recoveryJobs': after, 'services': start_stack(host, gate['generation'])}
 
 
 def main(argv, host=None):
