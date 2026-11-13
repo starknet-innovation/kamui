@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import uuid
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[3]
@@ -71,6 +72,85 @@ def write(path, value):
     fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try: os.fsync(fd)
     finally: os.close(fd)
+
+
+# Derived from reviewed inputs rather than generated, so they may be regenerated when an input
+# changes (an operator decision, an RPC endpoint). Generated passwords and the database URLs built
+# from them stay write-once: replacing one would silently lock the running database out.
+DERIVED = {'backend.public.env', 'keychain.public.env', 'watcher.public.env', 'backup/operator.settings', 'backup/pgbackrest.conf'}
+DECISIONS = 'runtime-decisions.json'
+WEBHOOK = re.compile(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%!*'()+,;=:@/-]*)?(?:\?[A-Za-z0-9._~%!*'()+,;=:@/?&-]*)?")
+
+
+def update(path, value, history, label):
+    """Replace a derived file atomically, keeping the previous version privately as evidence."""
+    path = Path(path)
+    data = value.encode() if isinstance(value, str) else value
+    if path.exists() or path.is_symlink():
+        current = read(path)
+        if current == data: return False
+        keep = directory(history)/(label+'-'+hashlib.sha256(current).hexdigest()[:16])
+        if keep.exists() or keep.is_symlink():
+            if read(keep) != current: raise ValueError('RUNTIME_HISTORY_CONFLICT')
+        else: write(keep, current)
+    temporary = path.parent/('.'+path.name+'.'+uuid.uuid4().hex)
+    write(temporary, data)
+    os.replace(temporary, path)
+    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try: os.fsync(fd)
+    finally: os.close(fd)
+    return True
+
+
+def load_decisions(root):
+    """Optional private operator decisions. Absent means every decision is still open."""
+    path = Path(root)/'installation'/DECISIONS
+    if not path.exists() and not path.is_symlink(): return {}
+    try: value = json.loads(read(path))
+    except ValueError as error:
+        if str(error).startswith('RUNTIME_'): raise
+        raise ValueError('RUNTIME_DECISIONS_INVALID') from None
+    validate_decisions(value)
+    return value
+
+
+def validate_decisions(value):
+    if not isinstance(value, dict) or value.get('version') != 1 or set(value) - {'version', 'backup', 'alerts'}:
+        raise ValueError('RUNTIME_DECISIONS_INVALID')
+    backup, alerts = value.get('backup', {}), value.get('alerts', {})
+    if not isinstance(backup, dict) or set(backup) - {'reviewed', 'retentionApproved', 'retentionFullDays', 'maxSuccessfulBackupAgeSeconds'}:
+        raise ValueError('RUNTIME_DECISIONS_INVALID')
+    if any(key in backup and not isinstance(backup[key], bool) for key in ['reviewed', 'retentionApproved']):
+        raise ValueError('RUNTIME_DECISIONS_INVALID')
+    # Approving retention is only meaningful on top of the backup review itself.
+    if backup.get('retentionApproved') and not backup.get('reviewed'): raise ValueError('RUNTIME_RETENTION_NEEDS_REVIEW')
+    days = backup.get('retentionFullDays', 7)
+    if type(days) is not int or not 1 <= days <= 365: raise ValueError('RUNTIME_RETENTION_DAYS_INVALID')
+    age = backup.get('maxSuccessfulBackupAgeSeconds')
+    if age is not None and (type(age) is not int or not 3600 <= age <= 2592000): raise ValueError('RUNTIME_BACKUP_AGE_INVALID')
+    if not isinstance(alerts, dict) or set(alerts) - {'watcherWebhookUrl'}: raise ValueError('RUNTIME_DECISIONS_INVALID')
+    url = alerts.get('watcherWebhookUrl', '')
+    if not isinstance(url, str) or (url and (len(url) > 2048 or not WEBHOOK.fullmatch(url))):
+        raise ValueError('RUNTIME_WEBHOOK_INVALID')
+
+
+def operator_settings(decisions):
+    """The reviewed example with only the operator's own decisions filled in."""
+    text = (HERE.parent/'backup/operator.settings.example').read_text()
+    backup = decisions.get('backup', {})
+    for key, value in [('KAMUI_BACKUP_REVIEWED', 'yes' if backup.get('reviewed') else ''),
+                       ('KAMUI_BACKUP_RETENTION_APPROVED', 'yes' if backup.get('retentionApproved') else ''),
+                       ('KAMUI_BACKUP_MAX_AGE_SECONDS', str(backup.get('maxSuccessfulBackupAgeSeconds') or ''))]:
+        if text.count('\n'+key+'=\n') != 1: raise ValueError('RUNTIME_SETTINGS_TEMPLATE_CHANGED')
+        text = text.replace('\n'+key+'=\n', '\n'+key+'='+value+'\n')
+    return text
+
+
+def pgbackrest_conf(data, decisions):
+    text = (HERE.parent/'backup/pgbackrest.conf.example').read_text().replace('REPLACE_WITH_REVIEWED_PRIVATE_BUCKET', data['backupBucket'])
+    if text.count('\nrepo1-retention-full=7\n') != 1: raise ValueError('RUNTIME_SETTINGS_TEMPLATE_CHANGED')
+    days = decisions.get('backup', {}).get('retentionFullDays', 7)
+    return text.replace('\nrepo1-retention-full=7\n', '\nrepo1-retention-full='+str(days)+'\n')
 
 
 def json_bytes(value):
@@ -152,6 +232,8 @@ def prepare(root, metadata=None, source_paths=None):
     directory(backend/'operator')
     data = metadata if metadata is not None else load_metadata(root, source_paths)
     validate_metadata(data)
+    decisions = load_decisions(root)
+    history = root/'installation/runtime-history'
     write(target/'source-pins.json', json_bytes(data))
     for name in ['POSTGRES_PASSWORD', 'APP_DATABASE_PASSWORD']:
         path = secret_dir/name
@@ -163,16 +245,17 @@ def prepare(root, metadata=None, source_paths=None):
     url = 'postgresql://kamui:'+app+'@postgres:5432/kamui\n'
     write(secret_dir/'DATABASE_URL', url)
     write(secret_dir/'OPERATOR_DATABASE_URL', url)
-    write(backend/'backend.public.env', env_bytes({'CHAIN_ID': 'SN_SEPOLIA', 'RPC_URL': RPC, 'RPC_FALLBACK_URL': RPC_FALLBACK,
+    update(backend/'backend.public.env', env_bytes({'CHAIN_ID': 'SN_SEPOLIA', 'RPC_URL': RPC, 'RPC_FALLBACK_URL': RPC_FALLBACK,
         'KAMUI_ACCOUNT_CLASS_HASH': CLASS, 'AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID': data['googleClientId'],
         'RELAYER_ADDRESS': data['relayerAddress'], 'PEPPER_SERVICE_URL': PEPPER,
-        'DEPLOYS_PER_HOUR': '0', 'SPONSORED_PER_HOUR': '0'}))
-    write(backend/'keychain.public.env', env_bytes({'GOOGLE_CLIENT_ID': data['googleClientId'],
+        'DEPLOYS_PER_HOUR': '0', 'SPONSORED_PER_HOUR': '0'}), history, 'backend-backend.public.env')
+    update(backend/'keychain.public.env', env_bytes({'GOOGLE_CLIENT_ID': data['googleClientId'],
         'KAMUI_ACCOUNT_CLASS_HASH': CLASS, 'PROVER_EXECUTOR_ADDRESS': EXECUTOR, 'JWK_REGISTRY_ADDRESS': REGISTRY, 'PUBLIC_RPC_URL': RPC,
-        'PUBLIC_RPC_FALLBACK_URL': RPC_FALLBACK}))
-    write(backend/'watcher.public.env', env_bytes({'CHAIN_ID': 'SN_SEPOLIA', 'RPC_URL': RPC, 'RPC_FALLBACK_URL': RPC_FALLBACK,
+        'PUBLIC_RPC_FALLBACK_URL': RPC_FALLBACK}), history, 'backend-keychain.public.env')
+    update(backend/'watcher.public.env', env_bytes({'CHAIN_ID': 'SN_SEPOLIA', 'RPC_URL': RPC, 'RPC_FALLBACK_URL': RPC_FALLBACK,
         'SN_SEPOLIA_REGISTRY_ADDRESS': REGISTRY, 'SN_SEPOLIA_REGISTRY_BLOCK': data['registryBlock'],
-        'WATCHER_POLL_SECONDS': '60', 'WATCHER_WEBHOOK_URL': ''}))
+        'WATCHER_POLL_SECONDS': '60', 'WATCHER_WEBHOOK_URL': decisions.get('alerts', {}).get('watcherWebhookUrl', '')}),
+        history, 'backend-watcher.public.env')
     write(pepper/'pepper.private.env', env_bytes({'KMS_KEY_ID': data['pepperKeyArn'], 'PEPPER_KEY_CHECK': data['pepperKeyCheck'],
         'GOOGLE_AUDIENCES': data['googleClientId'], 'RATE_IP_BURST': '30', 'RATE_IP_PER_MINUTE': '30',
         'RATE_SUBJECT_BURST': '10', 'RATE_SUBJECT_PER_HOUR': '10'}))
@@ -181,10 +264,10 @@ def prepare(root, metadata=None, source_paths=None):
     for limits in [policy.get('global', {})] + list(policy.get('operations', {}).values()):
         if any(value not in (0, '0') for key,value in limits.items() if key != 'periodSeconds'): raise ValueError('RUNTIME_ZERO_POLICY_REQUIRED')
     write(backend/'funding-policy.json', json_bytes(policy))
-    pgbackrest = (HERE.parent/'backup/pgbackrest.conf.example').read_text().replace('REPLACE_WITH_REVIEWED_PRIVATE_BUCKET', data['backupBucket'])
-    write(backup/'pgbackrest.conf', pgbackrest)
-    # Explicit review acknowledgements stay empty; never auto-enable backup jobs.
-    write(backup/'operator.settings', (HERE.parent/'backup/operator.settings.example').read_text())
+    update(backup/'pgbackrest.conf', pgbackrest_conf(data, decisions), history, 'backend-backup-pgbackrest.conf')
+    # Acknowledgements stay empty unless the operator recorded them in the decisions file; nothing
+    # here ever turns backup jobs on by itself.
+    update(backup/'operator.settings', operator_settings(decisions), history, 'backend-backup-operator.settings')
     mapping = target/'existing-secret-files.json'
     if not mapping.exists(): write(mapping, json_bytes({'version': 1, 'backend': {'RELAYER_PRIVATE_KEY': None}}))
     entries = []
@@ -200,7 +283,7 @@ def prepare(root, metadata=None, source_paths=None):
     manifest = {'version': 1, 'containsGeneratedDatabaseSecrets': True, 'publicPackageAllowed': False,
                 'automaticSecretUploadAllowed': False, 'entries': entries,
                 'requiredExternalFiles': [{'role': 'backend', 'path': 'secrets/RELAYER_PRIVATE_KEY', 'uid': 1000, 'gid': 1000, 'mode': '0400'}]}
-    write(target/'manifest.json', json_bytes(manifest))
+    update(target/'manifest.json', json_bytes(manifest), history, 'manifest.json')
     return validate(root)
 
 

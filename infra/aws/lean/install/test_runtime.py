@@ -143,3 +143,78 @@ class RuntimeTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class DecisionsTests(unittest.TestCase):
+    HOOK = 'https://hooks.example.invalid/services/T000/B000/fixture-token'
+
+    def fixture(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        root = Path(d.name).resolve(); root.chmod(0o700)
+        runtime.prepare(root, metadata())
+        return root, root/'installation/runtime/backend'
+
+    def decide(self, root, value):
+        path = root/'installation'/runtime.DECISIONS
+        if path.exists(): path.unlink()
+        path.write_text(json.dumps(value)); path.chmod(0o600)
+
+    def snapshot(self, backend):
+        return {p.relative_to(backend).as_posix(): p.read_bytes() for p in backend.rglob('*') if p.is_file()}
+
+    def test_without_decisions_output_is_byte_identical_to_the_reviewed_templates(self):
+        root, backend = self.fixture()
+        self.assertEqual((backend/'backup/operator.settings').read_text(), (runtime.HERE.parent/'backup/operator.settings.example').read_text())
+        self.assertIn('\nrepo1-retention-full=7\n', (backend/'backup/pgbackrest.conf').read_text())
+        self.assertIn('WATCHER_WEBHOOK_URL=\n', (backend/'watcher.public.env').read_text())
+        self.assertFalse((root/'installation/runtime-history').exists())
+
+    def test_decisions_regenerate_only_derived_files_and_keep_evidence(self):
+        root, backend = self.fixture(); before = self.snapshot(backend)
+        self.decide(root, {'version': 1, 'backup': {'reviewed': True, 'retentionApproved': True, 'retentionFullDays': 14,
+                           'maxSuccessfulBackupAgeSeconds': 129600}, 'alerts': {'watcherWebhookUrl': self.HOOK}})
+        result = runtime.prepare(root, metadata())
+        after = self.snapshot(backend)
+        settings = (backend/'backup/operator.settings').read_text()
+        self.assertIn('\nKAMUI_BACKUP_REVIEWED=yes\n', settings); self.assertIn('\nKAMUI_BACKUP_RETENTION_APPROVED=yes\n', settings)
+        self.assertIn('\nKAMUI_BACKUP_MAX_AGE_SECONDS=129600\n', settings)
+        self.assertIn('\nrepo1-retention-full=14\n', (backend/'backup/pgbackrest.conf').read_text())
+        self.assertIn('WATCHER_WEBHOOK_URL='+self.HOOK+'\n', (backend/'watcher.public.env').read_text())
+        changed = {path for path in after if after[path] != before[path]}
+        self.assertEqual(changed, {'backup/operator.settings', 'backup/pgbackrest.conf', 'watcher.public.env'})
+        self.assertTrue(changed <= runtime.DERIVED)
+        # Generated passwords and the URLs built from them are never regenerated.
+        for name in ['secrets/POSTGRES_PASSWORD', 'secrets/APP_DATABASE_PASSWORD', 'secrets/DATABASE_URL', 'secrets/OPERATOR_DATABASE_URL']:
+            self.assertEqual(after[name], before[name])
+        history = sorted(p.name.rsplit('-', 1)[0] for p in (root/'installation/runtime-history').iterdir())
+        self.assertEqual(history, ['backend-backup-operator.settings', 'backend-backup-pgbackrest.conf', 'backend-watcher.public.env', 'manifest.json'])
+        self.assertEqual(result['status'], 'private_runtime_prepared')
+        self.assertNotIn(self.HOOK, json.dumps(result))
+        # The same decisions again change nothing and add no evidence.
+        runtime.prepare(root, metadata())
+        self.assertEqual(len(list((root/'installation/runtime-history').iterdir())), 4)
+        self.assertEqual(self.snapshot(backend), after)
+
+    def test_invalid_decisions_are_refused_before_anything_changes(self):
+        cases = [
+            ({'version': 1, 'backup': {'retentionApproved': True}}, 'RUNTIME_RETENTION_NEEDS_REVIEW'),
+            ({'version': 1, 'backup': {'reviewed': 'yes'}}, 'RUNTIME_DECISIONS_INVALID'),
+            ({'version': 1, 'backup': {'maxSuccessfulBackupAgeSeconds': 60}}, 'RUNTIME_BACKUP_AGE_INVALID'),
+            ({'version': 1, 'backup': {'retentionFullDays': 0}}, 'RUNTIME_RETENTION_DAYS_INVALID'),
+            ({'version': 1, 'alerts': {'watcherWebhookUrl': 'http://hooks.example.invalid/x'}}, 'RUNTIME_WEBHOOK_INVALID'),
+            ({'version': 1, 'alerts': {'watcherWebhookUrl': 'https://user:pass@hooks.example.invalid/x'}}, 'RUNTIME_WEBHOOK_INVALID'),
+            ({'version': 1, 'alerts': {'watcherWebhookUrl': 'https://hooks.example.invalid/$(touch x)'}}, 'RUNTIME_WEBHOOK_INVALID'),
+            ({'version': 1, 'funding': {}}, 'RUNTIME_DECISIONS_INVALID'),
+            ({'version': 2}, 'RUNTIME_DECISIONS_INVALID'),
+        ]
+        for value, error in cases:
+            with self.subTest(error=error, value=value):
+                root, backend = self.fixture(); before = self.snapshot(backend)
+                self.decide(root, value)
+                with self.assertRaisesRegex(ValueError, error): runtime.prepare(root, metadata())
+                self.assertEqual(self.snapshot(backend), before)
+
+    def test_a_shared_or_group_readable_decisions_file_is_refused(self):
+        root, _ = self.fixture()
+        self.decide(root, {'version': 1}); (root/'installation'/runtime.DECISIONS).chmod(0o644)
+        with self.assertRaisesRegex(ValueError, 'RUNTIME_PRIVATE_SOURCE_PERMISSIONS_REQUIRED'): runtime.prepare(root, metadata())

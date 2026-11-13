@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "backup": {
+    "reviewed": false,
+    "retentionApproved": false,
+    "retentionFullDays": 7,
+    "maxSuccessfulBackupAgeSeconds": 129600
+  },
+  "alerts": {
+    "watcherWebhookUrl": ""
+  }
+}
