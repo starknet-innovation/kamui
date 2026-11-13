@@ -1,0 +1,98 @@
+# Type-checks the keychain and runs its browser tests (keychain/tests) on every pull request that
+# can change what the keychain serves. The tests start the real keychain server and page and fake
+# everything outside it at the network level, so no secret or deployed service is needed.
+#
+# Only the Chromium project runs here. Firefox and WebKit are configured in playwright.config.ts
+# and can be run locally with `playwright test --project=firefox` / `--project=webkit`.
+
+name: keychain-tests
+
+on:
+  pull_request:
+    paths:
+      - 'keychain/**'
+      - 'sdk/**'
+      - '.github/workflows/keychain-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keychain-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: keychain
+    env:
+      # Playwright's own Chromium instead of the system Chrome the local default uses.
+      KAMUI_TEST_BUNDLED_CHROMIUM: '1'
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      # Same Bun as keychain/Dockerfile and infra/aws/lean/install/release.py. Older Bun cannot
+      # bundle src/main.ts for the browser (node:crypto createHash from a dependency).
+      - uses: oven-sh/setup-bun@v2.0.1
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/cache@v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('keychain/bun.lock', 'sdk/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      # The keychain imports ../../sdk/src, which resolves starknet from sdk/node_modules.
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          (cd ../sdk && bun install --frozen-lockfile)
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Server config unit tests
+        run: bun test ./server-config.test.ts
+
+      # The server reports proverReady only when every pinned file matches keychain/prover/
+      # manifest.json, and one test checks the executor Wasm is served. The prover itself is
+      # faked (tests/prover-fake.ts). The cache only saves the download: prover-assets.ts still
+      # checks the size and SHA-256 of every file and refetches anything that does not match.
+      - uses: actions/cache@v4.3.0
+        with:
+          path: |
+            keychain/prover/auth/browser_virtual_os_bg.wasm
+            keychain/prover/sequencer-prover.wasm
+          key: prover-wasm-${{ hashFiles('keychain/prover/manifest.json') }}
+
+      - name: Fetch pinned prover assets
+        run: bun scripts/prover-assets.ts
+
+      # The lockfile pins @playwright/test, which pins the browser build.
+      - uses: actions/cache@v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('keychain/bun.lock') }}
+
+      # --with-deps installs the system libraries even when the browser came from the cache.
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: bun run test --project=chrome
+
+      - uses: actions/upload-artifact@v4.6.2
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            keychain/playwright-report/
+            keychain/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -17,10 +17,12 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   timeout: 30_000,
-  reporter: [['list']],
+  // CI also writes an HTML report and keeps a trace of each failed test, uploaded on failure.
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
   use: {
     baseURL: process.env.KAMUI_TEST_EXTERNAL_ORIGIN ?? 'http://localhost:5183',
     headless: true,
+    trace: process.env.CI ? 'retain-on-failure' : 'off',
   },
   projects: [
     // The installed Chrome, so nothing has to be downloaded for it.
