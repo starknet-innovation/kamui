@@ -279,18 +279,24 @@ def reload_runtime(host):
     if jobs is None: raise Refused('RECOVERY_JOBS_UNREADABLE')
     if jobs['unfinished']: raise Refused('RECOVERY_JOBS_UNFINISHED', recoveryJobs=jobs)
     if host.run(['systemctl', 'stop', STACK])[0]: raise Refused('STACK_STOP_FAILED')
-    if writers_running(host.services('backend')): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT')
     # The API admits recovery requests until it stops and does not drain them, so a job may have
     # started after the count above. Count again with writers stopped and PostgreSQL alone.
-    if host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare'])[0]: raise Refused('POSTGRES_PREPARE_FAILED')
-    after = recovery_jobs(host, host.services('backend'))
+    # Whatever stops this check (a writer still up, a failed start, an unreadable or missing
+    # table, unfinished jobs), the backend never restarts over it: writes close exactly as after
+    # a reboot and return only through 14 reopen after reconciliation.
+    after, reason = None, 'RECOVERY_INTERRUPTED'
+    try:
+        if writers_running(host.services('backend')): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT')
+        if host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare'])[0]: raise Refused('POSTGRES_PREPARE_FAILED')
+        after = recovery_jobs(host, host.services('backend'))
+        if after is None: raise Refused('RECOVERY_JOBS_UNREADABLE')
+    except Exception as error:
+        reason = error.code if isinstance(error, Refused) else 'RECOVERY_RECHECK_FAILED'
     if after is None or after['unfinished']:
-        # Interrupted (or unknowable) recovery work: never restart over it. Close writes exactly as a
-        # reboot does, so writes return only through 14 reopen after reconciliation.
         code, _, _ = host.run(['python3', '-B', LEAN+'/scripts/wallet-control.py', 'restore', 'block'])
-        blocked = read_gate(host)['state'] == 'blocked'
-        raise Refused('RECOVERY_INTERRUPTED_GATE_BLOCKED' if not code and blocked else 'RECOVERY_INTERRUPTED_GATE_BLOCK_FAILED',
-                      recoveryJobs=after)
+        try: blocked = read_gate(host)['state'] == 'blocked'
+        except Refused: blocked = False
+        raise Refused(('GATE_BLOCKED_' if not code and blocked else 'GATE_BLOCK_FAILED_')+reason, recoveryJobs=after)
     return {'status': 'runtime_reloaded', 'role': 'backend', 'recoveryJobs': after, 'services': start_stack(host, gate['generation'])}
 
 

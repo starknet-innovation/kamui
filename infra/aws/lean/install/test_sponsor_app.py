@@ -99,10 +99,30 @@ class ReloadTest(unittest.TestCase):
             return original(args)
         fake.host.run = run
         with self.assertRaises(host_program.Refused) as caught: host_program.reload_runtime(fake.host)
-        self.assertEqual(caught.exception.code, 'RECOVERY_INTERRUPTED_GATE_BLOCKED')
+        self.assertEqual(caught.exception.code, 'GATE_BLOCKED_RECOVERY_INTERRUPTED')
         self.assertEqual(caught.exception.detail['recoveryJobs']['unfinished'], 1)
         self.assertEqual(fake.gate()['state'], 'blocked')
         self.assertNotIn(('start', STACK), fake.calls)
+
+    def test_an_unreadable_recount_also_blocks_writes(self):
+        for failure in ['psql', 'prepare']:
+            with self.subTest(failure=failure):
+                fake = open_backend(self.base/('fail-'+failure))
+                original, stopped = fake.run, []
+                def run(args, original=original, fake=fake, stopped=stopped):
+                    if args[:2] == ['systemctl', 'stop']: stopped.append(True)
+                    if stopped and failure == 'psql' and 'psql' in args: return 1, '', ''
+                    if stopped and failure == 'prepare' and args[-2:] == ['backend', 'prepare']: return 1, '', ''
+                    if args[:2] == ['python3', '-B'] and args[2].endswith('/wallet-control.py') and args[3:] == ['restore', 'block']:
+                        fake.write_gate({**fake.gate(), 'state': 'blocked', 'generation': str(uuid.uuid4()), 'changedAt': int(fake.clock*1000)})
+                        return 0, '', ''
+                    return original(args)
+                fake.host.run = run
+                with self.assertRaises(host_program.Refused) as caught: host_program.reload_runtime(fake.host)
+                expected = {'psql': 'GATE_BLOCKED_RECOVERY_JOBS_UNREADABLE', 'prepare': 'GATE_BLOCKED_POSTGRES_PREPARE_FAILED'}[failure]
+                self.assertEqual(caught.exception.code, expected)
+                self.assertEqual(fake.gate()['state'], 'blocked')
+                self.assertNotIn(('start', STACK), fake.calls)
 
     def test_workstation_reload_reports_the_digit_bearing_refusal(self):
         reopen = test_reopen.reopen
