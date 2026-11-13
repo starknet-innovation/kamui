@@ -5,12 +5,18 @@ AllocateAddress has no ClientToken. Reconcile the exact setup tags after an
 uncertain request; do not delete state or allocate another address to retry.
 """
 import fcntl
+import importlib.util
 import ipaddress
 import json
 import os
 from pathlib import Path
 import re
 import stat
+
+# The private-file primitives are setup_resources.py's, so every setup stage reads and writes alike.
+_SPEC = importlib.util.spec_from_file_location('kamui_addresses_base', Path(__file__).resolve().parent/'setup_resources.py')
+_base = importlib.util.module_from_spec(_SPEC); _SPEC.loader.exec_module(_base)
+write_private = _base.write_private
 
 
 def private_directory(path, create=False):
@@ -26,27 +32,7 @@ def private_directory(path, create=False):
 
 
 def read_private(path):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077 or info.st_size > 262144:
-            raise ValueError('PRIVATE_FILE_REQUIRED')
-        raw = os.read(descriptor, 262145)
-        if len(raw) > 262144:
-            raise ValueError('PRIVATE_FILE_REQUIRED')
-        return json.loads(raw)
-    finally:
-        os.close(descriptor)
-
-
-def write_private(path, value):
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(descriptor, 'w') as output:
-        output.write(json.dumps(value, indent=2) + '\n')
-        output.flush(); os.fsync(output.fileno())
-    descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try: os.fsync(descriptor)
-    finally: os.close(descriptor)
+    return json.loads(_base.read_private(path))
 
 
 def preserve(path, value):
