@@ -29,7 +29,7 @@ EXTRA = {('ecr', 'describe-images'), ('ecr', 'describe-repositories'), ('ecr', '
          ('secretsmanager', 'describe-secret')}
 # Reboot tooling (reopen.py). Each run observes the host again, like 'verify': the host
 # programs are idempotent and re-check everything, so only an uncertain send is reconciled.
-REBOOT_LABELS = {'inspect', 'fence', 'reopen', 'enable-boot', 'upgrade-prepare', 'upgrade-finish'}
+REBOOT_LABELS = {'inspect', 'fence', 'reopen', 'enable-boot', 'upgrade-prepare', 'upgrade-finish', 'reload-runtime'}
 # Re-observable like verify: an image pull after a package-only upgrade install, retried after a failure.
 RETRY_LABELS = {'pull'}
 # Seconds a command may run on the host. Upgrade preparation runs a full backup (up to an hour,

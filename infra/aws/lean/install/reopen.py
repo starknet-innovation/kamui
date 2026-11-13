@@ -31,7 +31,7 @@ REF = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$')
 ARGUMENT = re.compile(r'^[A-Za-z0-9._/-]{1,120}$')
 CODE = re.compile(r'^[A-Z0-9_]{3,60}$')
 STATUSES = {'inspected', 'refused', 'fenced', 'already_fenced', 'reopened', 'already_open', 'enabled',
-            'upgrade_prepared', 'upgrade_finished', 'awaiting_reopen'}
+            'upgrade_prepared', 'upgrade_finished', 'awaiting_reopen', 'runtime_reloaded'}
 CONFIRMATION = 'REOPEN'
 MAX_WAITS = 6
 # Shown before confirmation. These are what the acknowledgement records on the operator's behalf.
@@ -48,7 +48,7 @@ def host_command(action, *args):
     """A fixed shell body: the reviewed host program on stdin, validated arguments on argv."""
     program = HOST_PROGRAM.read_text()
     if DELIMITER in program: raise ValueError('REOPEN_HOST_PROGRAM_INVALID')
-    if action not in {'inspect', 'fence', 'reopen', 'enable-boot', 'upgrade-prepare', 'upgrade-finish'} or not all(isinstance(a, str) and ARGUMENT.fullmatch(a) for a in args):
+    if action not in {'inspect', 'fence', 'reopen', 'enable-boot', 'upgrade-prepare', 'upgrade-finish', 'reload-runtime'} or not all(isinstance(a, str) and ARGUMENT.fullmatch(a) for a in args):
         raise ValueError('REOPEN_HOST_ARGUMENT_INVALID')
     q = shlex.quote
     lines = ['set -eu', 'umask 077', '[ "$(id -u)" = 0 ]', 'cd /',
@@ -124,6 +124,20 @@ class Reopen:
             results[role] = {k: result.get(k) for k in ['unit', 'stackEnabled'] if k in result}
         return {'status': 'BOOT_START_ENABLED_NOT_APPLIED_UNTIL_NEXT_BOOT', **results}
 
+    def reload_runtime(self):
+        """After 08 and 13: an open backend restarts and fetches its runtime files again."""
+        backend = self.inspect('backend')
+        if backend['gate']['state'] != 'ready': raise ValueError('RELOAD_GATE_NOT_READY_RUN_14_REOPEN')
+        jobs = backend.get('recoveryJobs')
+        if jobs and jobs['unfinished']: raise ValueError('RELOAD_RECOVERY_JOBS_UNFINISHED')
+        self.out('Restarting the backend stack to load its runtime files; the site is down for about a minute.')
+        result = self.call('backend', 'reload-runtime', 'reload-runtime', 'backend')
+        self.evidence('reload-runtime', result)
+        if result['status'] == 'refused':
+            if result.get('recoveryJobs'): self.out(json.dumps({'recoveryJobs': result['recoveryJobs']}))
+            raise ValueError(('RELOAD_'+result['code'])[:100])
+        return {'status': 'BACKEND_RUNTIME_RELOADED', 'services': result.get('services')}
+
     def check_backend(self, backend):
         gate = backend['gate']
         if backend['fence'] == 'missing': raise ValueError('REOPEN_BOOT_FENCE_MISSING_RUN_FENCE_FIRST')
@@ -182,7 +196,7 @@ class Reopen:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('action', choices=['status', 'fence', 'reopen', 'enable-boot'])
+    parser.add_argument('action', choices=['status', 'fence', 'reopen', 'enable-boot', 'reload-runtime'])
     parser.add_argument('--private-directory', default=str(Path.home()/'.kamui-hosting-sepolia'))
     parser.add_argument('--review-ref', help='reopen: your private reconciliation reference, recorded in the gate')
     options = parser.parse_args()
@@ -198,6 +212,7 @@ def main():
         tool = Reopen(root, Driver(root, Aws(root)))
         if options.action == 'reopen': result = tool.reopen(options.review_ref)
         elif options.action == 'enable-boot': result = tool.enable_boot()
+        elif options.action == 'reload-runtime': result = tool.reload_runtime()
         else: result = getattr(tool, options.action)()
         print(json.dumps(result))
     finally: os.close(descriptor)

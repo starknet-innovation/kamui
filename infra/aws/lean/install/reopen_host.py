@@ -55,6 +55,7 @@ WRITERS = {'api', 'rotator'}
 STOPPED = {'exited', 'dead', 'created'}
 LEAN = '/opt/kamui/lean'
 STACK = 'kamui@backend.service'
+SECRETS = 'kamui-secrets@backend.service'  # oneshot: fetches the runtime files from Secrets Manager
 FENCE = 'kamui-backend-boot-fence.service'
 BACKEND_SERVICES = {'caddy', 'keychain', 'api', 'postgres', 'watcher'}
 PEPPER_SERVICES = {'caddy', 'pepper'}
@@ -541,6 +542,47 @@ def finish_backend(host):
             'services': {n: r['state'] for n, r in sorted(services.items())}}
 
 
+def reload_runtime(host):
+    # Never alongside an upgrade's prepare or finish on this host.
+    with upgrade_step_lock(host): return reload_backend(host)
+
+
+def reload_backend(host):
+    """Restart an open backend so it fetches its runtime files again (kamui-secrets@ runs before every start).
+
+    Only an already open backend with no recovery in flight: this never opens writes."""
+    gate = read_gate(host)
+    if gate['state'] != 'ready': raise Refused('RESTORE_GATE_NOT_READY_RUN_14_REOPEN')
+    services = host.services('backend')
+    if host.unit(STACK) != 'active' or not healthy_backend(services): raise Refused('BACKEND_NOT_RUNNING_HEALTHY')
+    jobs = recovery_jobs(host, services)
+    if jobs is None: raise Refused('RECOVERY_JOBS_UNREADABLE')
+    if jobs['unfinished']: raise Refused('RECOVERY_JOBS_UNFINISHED', recoveryJobs=jobs)
+    # The API admits recovery requests until it stops and does not drain them, so a job may have
+    # started after the count above. Count again with writers stopped and PostgreSQL alone.
+    # Whatever stops this check (a failed or partial stop, a writer still up, a failed fetch or
+    # start, an unreadable or missing table, unfinished jobs), the backend never restarts over it:
+    # writes close exactly as after a reboot and return only through 14 reopen after reconciliation.
+    after, reason = None, 'RECOVERY_INTERRUPTED'
+    try:
+        if host.run(['systemctl', 'stop', STACK])[0]: raise Refused('STACK_STOP_FAILED')
+        if writers_running(host.services('backend')): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT')
+        # Fetch the new runtime files before PostgreSQL starts: its single-file mounts (pgbackrest.conf)
+        # keep whatever file existed when the container started.
+        if host.run(['systemctl', 'start', SECRETS])[0]: raise Refused('RUNTIME_FETCH_FAILED')
+        if host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare'])[0]: raise Refused('POSTGRES_PREPARE_FAILED')
+        after = recovery_jobs(host, host.services('backend'))
+        if after is None: raise Refused('RECOVERY_JOBS_UNREADABLE')
+    except Exception as error:
+        reason = error.code if isinstance(error, Refused) else 'RECOVERY_RECHECK_FAILED'
+    if after is None or after['unfinished']:
+        code, _, _ = host.run(['python3', '-B', LEAN+'/scripts/wallet-control.py', 'restore', 'block'])
+        try: blocked = read_gate(host)['state'] == 'blocked'
+        except Refused: blocked = False
+        raise Refused(('GATE_BLOCKED_' if not code and blocked else 'GATE_BLOCK_FAILED_')+reason, recoveryJobs=after)
+    return {'status': 'runtime_reloaded', 'role': 'backend', 'recoveryJobs': after, 'services': start_stack(host, gate['generation'])}
+
+
 def main(argv, host=None):
     host = host or Host()
     try:
@@ -551,6 +593,7 @@ def main(argv, host=None):
         elif action == 'fence' and len(args) == 1: result = fence(host, args[0])
         elif action == 'reopen' and len(args) == 3: result = reopen(host, *args)
         elif action == 'enable-boot' and len(args) == 1 and args[0] in {'backend', 'pepper'}: result = enable_boot(host, args[0])
+        elif action == 'reload-runtime' and args == ['backend']: result = reload_runtime(host)
         elif action == 'upgrade-prepare' and len(args) == 2 and args[0] == 'backend': result = upgrade_prepare_backend(host, args[1])
         elif action == 'upgrade-prepare' and len(args) == 2 and args[0] == 'pepper': result = upgrade_prepare_pepper(host, args[1])
         elif action == 'upgrade-finish' and len(args) == 1 and args[0] in {'backend', 'pepper'}: result = upgrade_finish(host, args[0])
