@@ -30,7 +30,9 @@ FILES = {
     'backend/compose.yml', 'backend/init-app-role.sh', 'pepper/compose.yml',
     'caddy/backend.Caddyfile', 'caddy/pepper.Caddyfile',
     'scripts/host.py', 'scripts/wallet-control.py', 'scripts/monitor.py', 'scripts/boot-fence.py',
+    'scripts/secrets-sync.py', 'scripts/imds-guard.py',
     'systemd/kamui@.service', 'systemd/kamui-monitor@.service', 'systemd/kamui-monitor@.timer',
+    'systemd/kamui-secrets@.service', 'systemd/kamui-imds-guard@.service',
     'systemd/kamui-backend-boot-fence.service', 'systemd/kamui@backend.service.d/restore-fence.conf',
     'backup/backup.sh', 'backup/restore.py', 'backup/restore.sh', 'backup/promote.py', 'backup/promote.sh',
     'backup/postgresql-backup.conf', 'backup/kamui-backup@.service',
@@ -259,7 +261,7 @@ def deliver(root, aws, driver, verify=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('step', choices=['supersede', 'release', 'runtime', 'install', 'verify'])
+    parser.add_argument('step', choices=['supersede', 'release', 'runtime', 'secrets', 'install', 'verify'])
     parser.add_argument('--private-directory', default=str(Path.home()/'.kamui-hosting-sepolia'))
     parser.add_argument('--allow-local-tool-fixes', action='store_true', help='Resume an existing frozen release using logged helper-only local fixes')
     options = parser.parse_args()
@@ -276,6 +278,8 @@ def main():
         if options.step == 'runtime':
             print(json.dumps(load('runtime').prepare(root))); return
         aws = Aws(root); driver = Driver(root, aws)
+        if options.step == 'secrets':
+            print(json.dumps(load('secrets_store').store(root, aws, driver.config))); return
         if options.step == 'release':
             release = load('release').Release(root, aws, allow_local_tools=options.allow_local_tool_fixes)
             release.prepare_resources(driver.stack); release.build_publish()

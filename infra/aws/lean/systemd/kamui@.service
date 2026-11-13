@@ -1,7 +1,8 @@
 [Unit]
 Description=Kamui %i host stack
-Requires=docker.service
-After=docker.service network-online.target
+# The stack never starts without current runtime files and the metadata-service firewall.
+Requires=docker.service kamui-imds-guard@%i.service kamui-secrets@%i.service
+After=docker.service network-online.target kamui-imds-guard@%i.service kamui-secrets@%i.service
 Wants=network-online.target
 
 [Service]

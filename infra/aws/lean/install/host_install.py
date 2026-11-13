@@ -27,7 +27,9 @@ IMAGE_KEYS = {'CADDY_IMAGE', 'KEYCHAIN_IMAGE', 'BACKEND_IMAGE', 'POSTGRES_IMAGE'
 PREFIXES = {'backend', 'pepper', 'caddy', 'scripts', 'systemd', 'backup', 'licenses'}
 ROOT_FILES = {'README.md', 'VALIDATION.md', 'WALLET-MANUAL-VALIDATION-2026-11-12.md', 'release.env.example'}
 COMMON = {'scripts/host.py', 'scripts/wallet-control.py', 'scripts/monitor.py',
-          'systemd/kamui@.service', 'systemd/kamui-monitor@.service', 'systemd/kamui-monitor@.timer'}
+          'scripts/secrets-sync.py', 'scripts/imds-guard.py',
+          'systemd/kamui@.service', 'systemd/kamui-monitor@.service', 'systemd/kamui-monitor@.timer',
+          'systemd/kamui-secrets@.service', 'systemd/kamui-imds-guard@.service'}
 BACKEND = {'scripts/boot-fence.py', 'backend/init-app-role.sh',
            'backup/backup.sh', 'backup/restore.py', 'backup/restore.sh', 'backup/promote.py', 'backup/promote.sh',
            'backup/postgresql-backup.conf', 'backup/kamui-backup@.service', 'backup/kamui-backup-full.timer',
@@ -398,7 +400,8 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
                 directory(state/'restore-gate', 0o750, 0, 1000)
             unit_root = paths.at('/etc/systemd/system'); unit_root.mkdir(parents=True, exist_ok=True)
             lean = destination/'lean'
-            units = ['systemd/kamui@.service', 'systemd/kamui-monitor@.service', 'systemd/kamui-monitor@.timer']
+            units = ['systemd/kamui@.service', 'systemd/kamui-monitor@.service', 'systemd/kamui-monitor@.timer',
+             'systemd/kamui-secrets@.service', 'systemd/kamui-imds-guard@.service']
             if role == 'backend': units += ['systemd/kamui-backend-boot-fence.service', 'systemd/kamui@backend.service.d/restore-fence.conf',
                 'backup/kamui-backup@.service', 'backup/kamui-backup-full.timer', 'backup/kamui-backup-check.timer']
             for relative in units:
@@ -442,7 +445,8 @@ def verify_installed(paths, manifest, receipt):
     verify_tree(expected, manifest)
     images = ''.join(key+'='+manifest['releaseImages'][key]+'\n' for key in sorted(IMAGE_KEYS)).encode()
     if read_managed(paths.at('/etc/kamui/release.env'), 8192, 0o600) != images: raise ValueError('INSTALLED_RELEASE_MANIFEST_CHANGED')
-    units = ['systemd/kamui@.service', 'systemd/kamui-monitor@.service', 'systemd/kamui-monitor@.timer']
+    units = ['systemd/kamui@.service', 'systemd/kamui-monitor@.service', 'systemd/kamui-monitor@.timer',
+             'systemd/kamui-secrets@.service', 'systemd/kamui-imds-guard@.service']
     if manifest['role'] == 'backend': units += ['systemd/kamui-backend-boot-fence.service', 'systemd/kamui@backend.service.d/restore-fence.conf',
         'backup/kamui-backup@.service', 'backup/kamui-backup-full.timer', 'backup/kamui-backup-check.timer']
     for relative in units:

@@ -160,7 +160,11 @@ class InstallationTest(unittest.TestCase):
                 parsed = host.parse_manifest(raw, item['manifest']['sha256'], role)
                 dest = root/role; dest.mkdir()
                 host.unpack_verified(Path(item['archive']['path']).read_bytes(), parsed, dest)
-                self.assertFalse(any('runtime' in p or 'secret' in p for p in parsed['files']))
+                # No runtime data: no secrets/ or runtime/ directory and no file named like one the
+                # runtime step manages. Code that fetches them on the host is expected.
+                managed = {Path(n).name for names in load('runtime').MANAGED_FILES.values() for n in names} | {'RELAYER_PRIVATE_KEY'}
+                self.assertFalse(any({'secrets', 'runtime'} & set(Path(p).parts[:-1]) or Path(p).name in managed for p in parsed['files']))
+                self.assertIn('scripts/secrets-sync.py', parsed['files'])
                 self.assertNotIn(b'PRIVATE_SENTINEL', Path(item['archive']['path']).read_bytes())
             command = workflow.bootstrap('backend', 'fixture-release-bucket', artifacts, verify=True)
             self.assertIn('--check', command)

@@ -24,7 +24,10 @@ AwsError = base.AwsError
 EXTRA = {('ecr', 'describe-images'), ('ecr', 'describe-repositories'), ('ecr', 'batch-get-image'),
          ('s3api', 'head-object'), ('ssm', 'describe-instance-information'),
          ('ssm', 'describe-document'), ('ssm', 'list-command-invocations'),
-         ('ssm', 'get-command-invocation'), ('ssm', 'send-command')}
+         ('ssm', 'get-command-invocation'), ('ssm', 'send-command'),
+         # Metadata only. Values are written by put_secret_value and never read back here.
+         ('secretsmanager', 'describe-secret')}
+SECRET_ARN = re.compile(r'arn:aws:secretsmanager:eu-west-1:[0-9]{12}:secret:kamui-sepolia/(backend|pepper)/[a-z-]+-[A-Za-z0-9]{6}')
 
 
 def sha(data): return hashlib.sha256(data).hexdigest()
@@ -44,16 +47,39 @@ class Aws:
             raise ValueError('INSTALL_PRIVATE_PARAMETER_READ_REFUSED')
         return self._call(profile, service, operation, inputs)
 
-    def _call(self, profile, service, operation, inputs, body=None):
+    def put_secret_value(self, profile, secret_arn, text, token):
+        """Store one secret value. The only Secrets Manager write; there is no read of a value.
+
+        The log keeps the secret's ARN, the request token and the value's SHA-256, never the value:
+        the real request goes through a temporary private file deleted as soon as the call returns.
+        Reusing the same token with the same value is idempotent in Secrets Manager, so a lost
+        response is safely resent rather than reconciled by reading the secret back.
+        """
+        if not SECRET_ARN.fullmatch(secret_arn) or not re.fullmatch(r'[A-Za-z0-9-]{32,64}', token):
+            raise ValueError('INSTALL_SECRET_REQUEST_INVALID')
+        if not isinstance(text, str) or len(text.encode()) > 60000: raise ValueError('INSTALL_SECRET_VALUE_INVALID')
+        record = {'SecretId': secret_arn, 'ClientRequestToken': token, 'SecretStringSha256': sha(text.encode())}
+        return self._call(profile, 'secretsmanager', 'put-secret-value',
+                          {'SecretId': secret_arn, 'ClientRequestToken': token, 'SecretString': text}, record=record)
+
+    def _call(self, profile, service, operation, inputs, body=None, record=None):
         if not re.fullmatch(r'[A-Za-z0-9_.-]{1,128}', profile): raise ValueError('INSTALL_PROFILE_INVALID')
         stem = uuid.uuid4().hex
-        path = self.logs/(stem+'-request.json'); write_private(path, inputs)
         write_private(self.logs/(stem+'-operation.json'), {'profile': profile, 'service': service, 'operation': operation})
+        if record is None:
+            path = self.logs/(stem+'-request.json'); write_private(path, inputs)
+        else:
+            # A request holding a secret value: log a redacted record, send the real one once.
+            write_private(self.logs/(stem+'-request.json'), record)
+            path = self.logs/('.'+stem+'-transient-input.json'); write_private(path, inputs)
         command = ['aws', service, operation, '--profile', profile, '--region', REGION, '--output', 'json',
                    '--no-cli-pager', '--no-cli-auto-prompt', '--cli-connect-timeout', '5', '--cli-read-timeout', '30',
                    '--cli-input-json', 'file://'+str(path)]
         if body is not None: command += ['--body', str(body)]
-        try: result = self.execute(command, capture_output=True, timeout=60, env=base.environment())
+        try:
+            try: result = self.execute(command, capture_output=True, timeout=60, env=base.environment())
+            finally:
+                if record is not None and path.exists(): path.unlink(); base.sync(self.logs)
         except (OSError, subprocess.TimeoutExpired):
             write_private(self.logs/(stem+'-uncertain.json'), {'outcome': 'unknown'})
             raise AwsError('INSTALL_AWS_UNCERTAIN', True) from None
@@ -66,7 +92,7 @@ class Aws:
                 raise AwsError('STACK_NOT_FOUND')
             match = re.search(rb'An error occurred \(([A-Za-z0-9]+)\)', result.stderr)
             code = match[1].decode() if match else 'INSTALL_AWS_FAILED'
-            raise AwsError(code, operation in {'create-stack', 'send-command', 'put-object'})
+            raise AwsError(code, operation in {'create-stack', 'send-command', 'put-object', 'put-secret-value'})
         try: return json.loads(result.stdout or b'{}')
         except Exception: raise AwsError('INSTALL_AWS_RESPONSE_INVALID', True) from None
 

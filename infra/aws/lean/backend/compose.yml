@@ -142,5 +142,6 @@ networks:
   api: { internal: true }
   database: { internal: true }
   api_egress: {}
-  backup_egress: {}
+  # The only backend network allowed to reach the instance metadata service (scripts/imds-guard.py).
+  backup_egress: { ipam: { config: [ { subnet: 10.199.250.0/24 } ] } }
   watcher_egress: {}

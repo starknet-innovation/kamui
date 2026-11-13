@@ -1,0 +1,14 @@
+[Unit]
+Description=Keep Kamui %i containers off the instance metadata service
+Requires=docker.service
+After=docker.service
+Before=kamui@%i.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/kamui/lean/scripts/imds-guard.py %i
+TimeoutStartSec=60
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes

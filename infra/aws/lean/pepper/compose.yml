@@ -43,4 +43,5 @@ services:
 networks:
   edge: {}
   pepper: { internal: true }
-  kms_egress: {}
+  # The only pepper network allowed to reach the instance metadata service (scripts/imds-guard.py).
+  kms_egress: { ipam: { config: [ { subnet: 10.199.251.0/24 } ] } }

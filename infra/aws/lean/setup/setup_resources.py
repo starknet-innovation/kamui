@@ -31,9 +31,18 @@ READS = {('sts', 'get-caller-identity'), ('ssm', 'get-parameter'),
          ('ec2', 'describe-addresses'), ('ec2', 'describe-subnets'),
          ('ec2', 'describe-route-tables'), ('ec2', 'describe-security-groups'),
          ('iam', 'get-instance-profile'), ('s3api', 'head-bucket'),
-         ('s3api', 'get-public-access-block'), ('s3api', 'get-bucket-encryption')}
+         ('s3api', 'get-public-access-block'), ('s3api', 'get-bucket-encryption'),
+         ('cloudformation', 'describe-change-set')}
 WRITES = {('cloudformation', 'create-stack'), ('ec2', 'allocate-address'),
-          ('ec2', 'associate-address')}
+          ('ec2', 'associate-address'), ('cloudformation', 'create-change-set'),
+          ('cloudformation', 'execute-change-set')}
+# The only stack update this tooling performs: the identity stack gains its runtime secrets.
+# Anything a change set would do beyond these additions and an in-place role update stops it.
+SECRETS_TEMPLATE = 'identity-secrets'
+SECRETS_ADDED = {'backend': {'RuntimeSecretsKey', 'RuntimeSecretsKeyAlias', 'RuntimeSecret', 'RuntimeSecretPolicy',
+                             'RelayerSecret', 'RelayerSecretPolicy'},
+                 'pepper': {'RuntimeSecretsKey', 'RuntimeSecretsKeyAlias', 'RuntimeSecret', 'RuntimeSecretPolicy'}}
+SECRETS_MODIFIED = {'HostIdentityRole'}
 
 
 class AwsError(Exception):
@@ -291,6 +300,12 @@ class Setup:
             print('CREATING_'+role.upper()+'_'+kind.upper()+'_STACK', flush=True)
             result = self.aws.request(profile, 'cloudformation', 'create-stack', request)
             write_private(self.directory/(role+'-'+kind+'-submitted.json'), result)
+        # After this tooling applied the reviewed secrets update, the stack legitimately reports
+        # UPDATE_COMPLETE and holds the successor template. Accept exactly that, nothing else.
+        updated = kind == 'identity' and (self.directory/(role+'-identity-secrets-result.json')).exists()
+        expected, done = template, {'CREATE_COMPLETE'}
+        if updated:
+            expected, done = json.loads((HERE/(SECRETS_TEMPLATE+'.json')).read_text()), {'UPDATE_COMPLETE'}
         for attempt in range(self.polls):
             current = observed()
             if current is None:
@@ -298,10 +313,14 @@ class Setup:
                     self.sleep(5); continue
                 raise ValueError('STACK_SUBMISSION_UNCERTAIN_RECONCILE_ONLY')
             status = current.get('StackStatus')
-            if status == 'CREATE_COMPLETE':
+            if status in done:
                 actual = self.aws.request(profile, 'cloudformation', 'get-template', {'StackName': name, 'TemplateStage': 'Original'}).get('TemplateBody')
                 if isinstance(actual, str): actual = json.loads(actual)
-                if digest(actual) != digest(template): raise ValueError('DEPLOYED_TEMPLATE_MISMATCH')
+                if digest(actual) != digest(expected): raise ValueError('DEPLOYED_TEMPLATE_MISMATCH')
+                if updated:
+                    # Callers compare against the outputs recorded at creation.
+                    current = {**current, 'Outputs': [x for x in current.get('Outputs', [])
+                               if x['OutputKey'] not in {'RuntimeSecretArn', 'RuntimeSecretsKeyArn', 'RelayerSecretArn'}]}
                 if {x['ParameterKey']: x['ParameterValue'] for x in current.get('Parameters', [])} != parameters:
                     # CloudFormation includes template defaults as well as supplied parameters.
                     supplied = {x['ParameterKey']: x['ParameterValue'] for x in current.get('Parameters', [])}
@@ -337,6 +356,122 @@ class Setup:
             if target.exists():
                 if json.loads(read_private(target)) != result: raise ValueError('IDENTITY_OUTPUT_CHANGED')
             else: write_private(target, result)
+
+    def identity_secrets(self, execute=False):
+        """Add each host's runtime secrets to its existing identity stack through a reviewed change set.
+
+        The first run creates and checks the change set and stops. Only a run with execute=True
+        applies it. The original template file is never edited, so earlier steps keep verifying
+        what they created.
+        """
+        plan = self.plan()
+        successor = json.loads((HERE/(SECRETS_TEMPLATE+'.json')).read_text())
+        ready = {}
+        for role in ROLES:
+            if plan['config'][role]['instance_profile_name']: raise ValueError('IDENTITY_NOT_CREATED_BY_THIS_TOOLING')
+            ready[role] = self.secrets_change(plan, role, successor, execute)
+        if not execute:
+            print('REVIEWED_CHANGE_SETS_READY_RERUN_WITH_EXECUTE_TO_APPLY', flush=True)
+        return ready
+
+    def secrets_change(self, plan, role, successor, execute):
+        intent = json.loads(read_private(self.directory/(role+'-identity-intent.json')))
+        name, profile = intent['StackName'], plan['config'][role]['aws_profile']
+        original = json.loads(intent['TemplateBody'])
+        result_path = self.directory/(role+'-identity-secrets-result.json')
+        change_name = 'kamui-identity-secrets-'+digest(successor)[:12]
+        request = {'StackName': name, 'ChangeSetName': change_name, 'ChangeSetType': 'UPDATE',
+                   'TemplateBody': json.dumps(successor), 'Parameters': intent['Parameters'],
+                   'Capabilities': ['CAPABILITY_NAMED_IAM'], 'Tags': intent['Tags'],
+                   'ClientToken': change_name+'-'+role,
+                   'Description': 'Adds this host runtime secrets and their single decrypt path.'}
+        def stack():
+            stacks = self.aws.request(profile, 'cloudformation', 'describe-stacks', {'StackName': name}).get('Stacks', [])
+            if len(stacks) != 1 or stacks[0].get('StackName') != name: raise ValueError('STACK_OBSERVATION_INVALID')
+            if {x['Key']: x['Value'] for x in stacks[0].get('Tags', [])} != {x['Key']: x['Value'] for x in intent['Tags']}:
+                raise ValueError('STACK_OWNERSHIP_MISMATCH')
+            return stacks[0]
+        def deployed():
+            body = self.aws.request(profile, 'cloudformation', 'get-template', {'StackName': name, 'TemplateStage': 'Original'}).get('TemplateBody')
+            return digest(json.loads(body) if isinstance(body, str) else body)
+        def outputs(current):
+            return {x['OutputKey']: x['OutputValue'] for x in current.get('Outputs', [])}
+
+        current = stack()
+        if deployed() == digest(successor):
+            # Already applied, by this tooling only: an execution intent must exist.
+            if not (self.directory/(role+'-identity-secrets-execute-intent.json')).exists():
+                raise ValueError('STACK_UPDATED_OUTSIDE_THIS_TOOLING')
+            return self.finish_secrets(role, profile, name, stack, deployed, outputs, successor, result_path)
+        if deployed() != digest(original): raise ValueError('DEPLOYED_TEMPLATE_MISMATCH')
+        if current.get('StackStatus') not in {'CREATE_COMPLETE', 'UPDATE_COMPLETE'}: raise ValueError('STACK_NOT_STABLE')
+
+        change_intent = self.directory/(role+'-identity-secrets-changeset-intent.json')
+        if change_intent.exists():
+            if json.loads(read_private(change_intent)) != request: raise ValueError('CHANGE_SET_INTENT_CHANGED')
+        else:
+            write_private(change_intent, request)
+            print('CREATING_'+role.upper()+'_IDENTITY_SECRETS_CHANGE_SET', flush=True)
+            self.aws.request(profile, 'cloudformation', 'create-change-set', request)
+        changes = self.reviewed_changes(role, profile, name, change_name)
+        reviewed = self.directory/(role+'-identity-secrets-reviewed.json')
+        if reviewed.exists():
+            if json.loads(read_private(reviewed)) != changes: raise ValueError('CHANGE_SET_CHANGED_SINCE_REVIEW')
+        else: write_private(reviewed, changes)
+        for change in changes['changes']:
+            print(role.upper()+'_CHANGE '+change['action']+' '+change['logicalId']+' '+change['type'], flush=True)
+        if not execute: return {'status': 'change_set_reviewed', 'changes': len(changes['changes'])}
+
+        execute_intent = self.directory/(role+'-identity-secrets-execute-intent.json')
+        if not execute_intent.exists():
+            write_private(execute_intent, {'StackName': name, 'ChangeSetName': change_name, 'reviewedSha256': digest(changes)})
+            print('EXECUTING_'+role.upper()+'_IDENTITY_SECRETS_CHANGE_SET', flush=True)
+            self.aws.request(profile, 'cloudformation', 'execute-change-set',
+                             {'StackName': name, 'ChangeSetName': change_name, 'ClientRequestToken': change_name+'-'+role+'-execute'})
+        return self.finish_secrets(role, profile, name, stack, deployed, outputs, successor, result_path)
+
+    def reviewed_changes(self, role, profile, name, change_name):
+        for attempt in range(self.polls):
+            value = self.aws.request(profile, 'cloudformation', 'describe-change-set', {'StackName': name, 'ChangeSetName': change_name})
+            status = value.get('Status')
+            if status == 'CREATE_COMPLETE': break
+            if status == 'FAILED': raise ValueError('CHANGE_SET_FAILED_KEEP_PRIVATE_EVIDENCE')
+            if attempt + 1 < self.polls: self.sleep(5)
+        else: raise ValueError('CHANGE_SET_PENDING_RERUN_SAME_STEP')
+        if value.get('NextToken'): raise ValueError('CHANGE_SET_UNEXPECTEDLY_LARGE')
+        if value.get('ExecutionStatus') not in {'AVAILABLE', 'EXECUTE_IN_PROGRESS', 'EXECUTE_COMPLETE'}:
+            raise ValueError('CHANGE_SET_NOT_EXECUTABLE')
+        changes = []
+        for item in value.get('Changes', []):
+            change = item.get('ResourceChange', {})
+            changes.append({'action': change.get('Action'), 'logicalId': change.get('LogicalResourceId'),
+                            'type': change.get('ResourceType'), 'replacement': change.get('Replacement')})
+        added = {c['logicalId'] for c in changes if c['action'] == 'Add'}
+        modified = {c['logicalId'] for c in changes if c['action'] == 'Modify'}
+        if added != SECRETS_ADDED[role] or modified != SECRETS_MODIFIED or len(changes) != len(added) + len(modified):
+            raise ValueError('CHANGE_SET_SCOPE_UNEXPECTED_NOT_EXECUTED')
+        if any(c['action'] == 'Modify' and c['replacement'] != 'False' for c in changes):
+            raise ValueError('CHANGE_SET_WOULD_REPLACE_A_RESOURCE_NOT_EXECUTED')
+        return {'changeSetName': change_name, 'changes': sorted(changes, key=lambda c: (c['action'], c['logicalId']))}
+
+    def finish_secrets(self, role, profile, name, stack, deployed, outputs, successor, result_path):
+        for attempt in range(self.polls):
+            current = stack(); status = current.get('StackStatus')
+            if status == 'UPDATE_COMPLETE': break
+            if status not in {'UPDATE_IN_PROGRESS', 'UPDATE_COMPLETE_CLEANUP_IN_PROGRESS'}:
+                raise ValueError('STACK_UPDATE_FAILED_KEEP_PRIVATE_EVIDENCE')
+            if attempt % 12 == 0: print('WAITING_'+role.upper()+'_IDENTITY_UPDATE', flush=True)
+            if attempt + 1 < self.polls: self.sleep(5)
+        else: raise ValueError('STACK_UPDATE_PENDING_RERUN_TO_POLL_ONLY')
+        if deployed() != digest(successor): raise ValueError('DEPLOYED_TEMPLATE_MISMATCH')
+        result = outputs(current)
+        needed = {'RuntimeSecretArn', 'RuntimeSecretsKeyArn'} | ({'RelayerSecretArn'} if role == 'backend' else set())
+        if not needed <= set(result): raise ValueError('IDENTITY_SECRETS_OUTPUTS_MISSING')
+        if result_path.exists():
+            if json.loads(read_private(result_path)) != result: raise ValueError('IDENTITY_SECRETS_OUTPUT_CHANGED')
+        else: write_private(result_path, result)
+        print('IDENTITY_SECRETS_APPLIED_'+role.upper(), flush=True)
+        return {'status': 'applied'}
 
     def export(self):
         plan = self.plan(); config = copy.deepcopy(plan['config'])
@@ -466,11 +601,13 @@ class Setup:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('step', choices=['all', 'prepare', 'network', 'identity', 'export', 'status', 'launch', 'addresses'])
+    parser.add_argument('step', choices=['all', 'prepare', 'network', 'identity', 'export', 'status', 'launch', 'addresses', 'identity-secrets'])
+    parser.add_argument('--execute', action='store_true', help='identity-secrets only: apply the change sets reviewed by an earlier run')
     parser.add_argument('--private-directory', default=str(Path.home()/'.kamui-hosting-sepolia'))
     parser.add_argument('--backend-record')
     parser.add_argument('--pepper-env')
     options = parser.parse_args()
+    if options.execute and options.step != 'identity-secrets': raise ValueError('EXECUTE_IS_FOR_IDENTITY_SECRETS_ONLY')
     root = private_dir(options.private_directory)
     directory = private_dir(root/'resources-setup')
     fd = os.open(directory/'.setup.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -486,6 +623,7 @@ def main():
                 config = json.loads(read_private(root/'aws-input.json'))
                 setup.wait_hosts_running(config)
                 print(json.dumps(addresses.assign(root, config, setup.aws)))
+            elif step == 'identity-secrets': setup.identity_secrets(execute=options.execute)
             else: getattr(setup, step)()
         print('REQUESTED_SETUP_STEPS_COMPLETED')
     finally: os.close(fd)
