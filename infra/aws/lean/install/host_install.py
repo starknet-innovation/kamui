@@ -18,6 +18,7 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import time
 import uuid
 
 SCHEMA = 'kamui.host-install.v1'
@@ -232,6 +233,45 @@ def has_wallet_state(state):
     return False
 
 
+UPGRADE_MAX_AGE_SECONDS = 3600
+
+
+def boot_id(paths):
+    value = read_regular(paths.at('/proc/sys/kernel/random/boot_id'), 64).decode().strip()
+    if not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', value): raise ValueError('HOST_BOOT_IDENTITY_UNREADABLE')
+    return value
+
+
+def prepared_upgrade(paths, records, role, previous, now):
+    """The record `15 prepare` leaves when it has stopped this host for an upgrade.
+
+    It must be from this boot (a reboot may have restarted something), recent, written for exactly
+    the release installed now, and on the backend name the generation of a gate that is blocked,
+    so writers cannot resume until the operator reopens them.
+    """
+    path = records/(role+'-upgrade-prepared.json')
+    if not path.exists(): raise ValueError('UPGRADE_NOT_PREPARED_RUN_15_PREPARE')
+    try: value = json.loads(read_managed(path, 4096, 0o600))
+    except ValueError as error:
+        if str(error).isupper(): raise
+        raise ValueError('UPGRADE_PREPARATION_INVALID') from None
+    keys = {'schema', 'role', 'bootId', 'preparedAt', 'previousManifestSha256'} | ({'backupLabel', 'gateGeneration'} if role == 'backend' else set())
+    if not isinstance(value, dict) or set(value) != keys or value['schema'] != 'kamui.upgrade-prepared.v1' or value['role'] != role:
+        raise ValueError('UPGRADE_PREPARATION_INVALID')
+    if value['bootId'] != boot_id(paths): raise ValueError('UPGRADE_PREPARED_BEFORE_A_REBOOT')
+    if type(value['preparedAt']) is not int or not 0 <= now - value['preparedAt'] <= UPGRADE_MAX_AGE_SECONDS:
+        raise ValueError('UPGRADE_PREPARATION_STALE_RUN_15_PREPARE_AGAIN')
+    if value['previousManifestSha256'] != previous['manifestSha256']: raise ValueError('UPGRADE_PREPARED_FOR_ANOTHER_RELEASE')
+    if role == 'backend':
+        gate_path = paths.at('/var/lib/kamui/restore-gate/state.json')
+        try: gate = json.loads(read_managed(gate_path, 4096))
+        except ValueError: raise ValueError('RESTORE_GATE_UNREADABLE') from None
+        if gate.get('state') != 'blocked' or gate.get('generation') != value['gateGeneration']:
+            raise ValueError('UPGRADE_REQUIRES_THE_GATE_BLOCKED_BY_PREPARE')
+        if not re.fullmatch(r'[0-9]{8}-[0-9]{6}F', str(value['backupLabel'])): raise ValueError('UPGRADE_PREPARATION_INVALID')
+    return path, value
+
+
 def unstarted_receipt(value, role):
     """A replaceable receipt is a well-formed, never-started install of the same role."""
     if not isinstance(value, dict) or set(value) != {'schema', 'role', 'manifestSha256', 'archiveSha256', 'walletStarted'}:
@@ -262,7 +302,7 @@ class Runner:
 def version(result): return result.stdout.decode(errors='strict').strip().removeprefix('v')
 
 
-def prerequisites(paths, run, manifest, compose_binary=None, compose_sha256=None):
+def prerequisites(paths, run, manifest, compose_binary=None, compose_sha256=None, upgrade=False):
     release = os_identity(paths)
     values = dict(line.split('=', 1) for line in release.splitlines() if '=' in line)
     if values.get('ID', '').strip('"') != 'amzn' or values.get('VERSION_ID', '').strip('"') != '2023' or platform.machine() != 'x86_64':
@@ -279,7 +319,13 @@ def prerequisites(paths, run, manifest, compose_binary=None, compose_sha256=None
         enabled_state = enabled.stdout.decode(errors='strict').strip()
         # is-enabled returns success for static units too. Static boot-fence units
         # are installed but not enabled; do not mistake that for autostart.
-        if active_unit or enabled_state not in {'disabled', 'static', 'not-found'}:
+        if upgrade:
+            # Upgrading a started wallet keeps its boot configuration, so units may stay enabled,
+            # but nothing may run. The boot fence is a one-shot marker of this boot's fence with no
+            # process; it stays active so the operator's reopen does not reblock the gate.
+            if active_unit and unit != 'kamui-backend-boot-fence.service':
+                raise ValueError('EXISTING_KAMUI_UNIT_MUST_BE_STOPPED')
+        elif active_unit or enabled_state not in {'disabled', 'static', 'not-found'}:
             raise ValueError('EXISTING_KAMUI_UNIT_MUST_BE_STOPPED_DISABLED')
     active = run(['systemctl', 'is-active', '--quiet', 'docker.service'], False).returncode == 0
     if active:
@@ -312,7 +358,8 @@ def prerequisites(paths, run, manifest, compose_binary=None, compose_sha256=None
         raise ValueError('COMPOSE_VERSION_MISMATCH')
 
 
-def install(role, archive_path, manifest_path, expected_manifest, compose_binary=None, compose_sha256=None, paths=None, runner=None, require_root=True, replace_unstarted=False):
+def install(role, archive_path, manifest_path, expected_manifest, compose_binary=None, compose_sha256=None, paths=None, runner=None, require_root=True, replace_unstarted=False, upgrade_started=False, now=time.time):
+    if replace_unstarted and upgrade_started: raise ValueError('INSTALL_MODE_CONFLICT')
     if require_root and (os.geteuid() != 0 or os.getegid() != 0): raise ValueError('ROOT_REQUIRED')
     paths = paths or Paths()
     raw = read_regular(manifest_path, 1024*1024)
@@ -341,10 +388,16 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
                     return {'status': 'already_installed_verified', 'walletStarted': False}
                 # A different release replaces the installed one only when explicitly
                 # requested and nothing was ever started or written by the wallet.
-                if not replace_unstarted: raise ValueError('DIFFERENT_RELEASE_REQUIRES_REVIEWED_UPGRADE')
+                if not (replace_unstarted or upgrade_started): raise ValueError('DIFFERENT_RELEASE_REQUIRES_REVIEWED_UPGRADE')
                 previous = unstarted_receipt(existing, role)
+            elif upgrade_started: raise ValueError('UPGRADE_REQUIRES_AN_INSTALLED_RELEASE')
             state = paths.at('/var/lib/kamui')
-            if state.exists() and has_wallet_state(state):
+            prepared = None
+            if upgrade_started:
+                # A started wallet's state is preserved untouched; the preparation record proves the
+                # host was stopped, backed up and fenced for exactly this upgrade.
+                prepared = prepared_upgrade(paths, records, role, previous, int(now()))
+            elif state.exists() and has_wallet_state(state):
                 raise ValueError('EXISTING_WALLET_STATE_REQUIRES_REVIEWED_UPGRADE')
             release_trees = paths.at('/opt/kamui/releases')
             expected_tree = release_trees/manifest['archiveSha256']/'lean'
@@ -366,7 +419,7 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
                 raise ValueError('INSTALLED_COMPOSE_CHANGED')
             logs = paths.at('/var/log/kamui-install'); directory(logs, 0o700)
             commands = runner or Runner(logs)
-            prerequisites(paths, commands.run, manifest, compose_binary, compose_sha256)
+            prerequisites(paths, commands.run, manifest, compose_binary, compose_sha256, upgrade=upgrade_started)
             release_root = paths.at('/opt/kamui/releases'); directory(release_root, 0o755)
             destination = release_root/manifest['archiveSha256']
             if destination.exists():
@@ -436,6 +489,13 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
                 replace_file(receipt_path, (json.dumps(receipt, sort_keys=True)+'\n').encode(), 0o600,
                              {(json.dumps(previous, sort_keys=True)+'\n').encode()})
             verify_installed(paths, manifest, receipt)
+            if prepared is not None:
+                # Consume the preparation so it can never authorise a second upgrade.
+                path, value = prepared
+                install_file(records/(role+'-upgraded-'+receipt['manifestSha256'][:16]+'.json'),
+                             (json.dumps({**value, 'installedManifestSha256': receipt['manifestSha256']}, sort_keys=True)+'\n').encode(), 0o600)
+                path.unlink()
+                return {'status': 'host_upgraded_wallet_stopped', 'walletStarted': False, 'unitsEnabled': 'unchanged'}
             return {'status': 'host_replaced_wallet_stopped' if previous else 'host_installed_wallet_stopped',
                     'walletStarted': False, 'databaseInitialized': False, 'unitsEnabled': False}
         finally: os.close(lock)
@@ -508,13 +568,14 @@ def main():
     parser.add_argument('--compose-sha256')
     parser.add_argument('--check', action='store_true', help='Read-only verification of the installed public package/dependencies')
     parser.add_argument('--replace-unstarted', action='store_true', help='Replace a different installed release only if the wallet never started')
+    parser.add_argument('--upgrade-started', action='store_true', help='Replace the release of a started wallet that `15 prepare` stopped, backed up and fenced')
     args = parser.parse_args()
-    if args.check and args.replace_unstarted: raise ValueError('CHECK_CANNOT_REPLACE')
+    if args.check and (args.replace_unstarted or args.upgrade_started): raise ValueError('CHECK_CANNOT_REPLACE')
     if args.check:
         print(json.dumps(check(args.role, args.archive, args.manifest, args.manifest_sha256)))
     else:
         print(json.dumps(install(args.role, args.archive, args.manifest, args.manifest_sha256, args.compose_binary, args.compose_sha256,
-                                 replace_unstarted=args.replace_unstarted)))
+                                 replace_unstarted=args.replace_unstarted, upgrade_started=args.upgrade_started)))
 
 
 if __name__ == '__main__':

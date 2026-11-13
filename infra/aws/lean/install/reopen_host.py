@@ -267,6 +267,133 @@ def enable_boot(host, role):
     return {'status': 'enabled', 'role': 'backend', 'unit': FENCE, 'stackEnabled': host.unit(STACK, 'is-enabled')}
 
 
+# --- Upgrading a started wallet (install/upgrade.py, setup/15-upgrade-started-release.sh) ---------
+
+TIMERS = ['kamui-backup-check.timer', 'kamui-backup-full.timer']
+BACKUP_SERVICES = ['kamui-backup@check.service', 'kamui-backup@full.service']
+RECORDS = '/var/lib/kamui-install'
+COMPOSE = ['docker', 'compose', '--env-file', '/etc/kamui/release.env', '-f', LEAN+'/backend/compose.yml']
+HEX64 = re.compile(r'^[0-9a-f]{64}$')
+LABEL = re.compile(r'^[0-9]{8}-[0-9]{6}F$')
+
+
+def installed_manifest(host, role):
+    try:
+        value = json.loads(host.at(RECORDS+'/'+role+'.json').read_text())
+        manifest = value['manifestSha256']
+        if value.get('role') != role or not HEX64.fullmatch(manifest): raise ValueError()
+        return manifest
+    except Exception: raise Refused('INSTALLED_RECEIPT_UNREADABLE') from None
+
+
+def write_prepared(host, role, value):
+    """Root-only, 0600, atomically replaced: the installer reads it as a managed file."""
+    directory = host.at(RECORDS)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077: raise Refused('INSTALL_RECORDS_DIRECTORY_INVALID')
+    temporary = directory/('.'+role+'-upgrade-prepared.tmp')
+    if temporary.is_symlink() or temporary.exists(): temporary.unlink()
+    fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as output:
+        output.write(json.dumps(value, sort_keys=True)+'\n'); output.flush(); os.fsync(output.fileno())
+    os.replace(temporary, directory/(role+'-upgrade-prepared.json'))
+
+
+def no_containers(host, role):
+    services = host.services(role)
+    if any(row['state'] not in STOPPED for row in services.values()): raise Refused('CONTAINERS_STILL_RUNNING')
+
+
+def restart_timers(host, timers):
+    for timer in timers: host.run(['systemctl', 'start', timer])
+
+
+def newest_full_backup(host, since):
+    """Label of the newest successful full backup that finished at or after `since`."""
+    code, out, _ = host.run(COMPOSE+['exec', '-T', '-u', 'postgres', 'postgres', 'pgbackrest',
+                                     '--config=/etc/pgbackrest/pgbackrest.conf', '--stanza=kamui', '--output=json', 'info'])
+    try:
+        if code: raise ValueError()
+        stanza = [x for x in json.loads(out) if x.get('name') == 'kamui'][0]
+        if stanza.get('status', {}).get('code') != 0: raise ValueError()
+        fulls = [b for b in stanza.get('backup', []) if b.get('type') == 'full' and int(b['timestamp']['stop']) >= since]
+        label = max(fulls, key=lambda b: int(b['timestamp']['stop']))['label']
+        if not LABEL.fullmatch(label): raise ValueError()
+        return label
+    except Exception: raise Refused('FRESH_BACKUP_NOT_FOUND') from None
+
+
+def upgrade_prepare_backend(host, expected_boot):
+    boot_id, _ = host.boot()
+    if boot_id != expected_boot: raise Refused('HOST_REBOOTED_SINCE_INSPECTION')
+    # Reopening afterwards relies on this boot's fence staying active (see reopen()).
+    if fence_state(host, boot_id) != 'current' or host.unit(FENCE) != 'active': raise Refused('BOOT_FENCE_NOT_CURRENT_RUN_14_FENCE')
+    started = int(host.now())
+    previous = installed_manifest(host, 'backend')
+    # Refuse before changing anything if a recovery may still be in flight.
+    jobs = recovery_jobs(host, host.services('backend'))
+    if jobs and jobs['unfinished']: raise Refused('RECOVERY_JOBS_UNFINISHED', recoveryJobs=jobs)
+    stopped_timers = [t for t in TIMERS if host.unit(t) == 'active']
+    for timer in stopped_timers:
+        if host.run(['systemctl', 'stop', timer])[0]: raise Refused('BACKUP_TIMER_STOP_FAILED')
+    if any(host.unit(service) == 'active' for service in BACKUP_SERVICES):
+        restart_timers(host, stopped_timers)
+        raise Refused('BACKUP_IN_PROGRESS_RETRY_LATER')
+    if host.unit(STACK) == 'active' and host.run(['systemctl', 'stop', STACK])[0]: raise Refused('STACK_STOP_FAILED', timersStopped=stopped_timers)
+    if writers_running(host.services('backend')): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT', timersStopped=stopped_timers)
+    if host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare'])[0]: raise Refused('POSTGRES_PREPARE_FAILED', timersStopped=stopped_timers)
+    jobs = recovery_jobs(host, host.services('backend'))
+    if jobs is None: raise Refused('RECOVERY_JOBS_UNREADABLE', timersStopped=stopped_timers)
+    if jobs['unfinished']: raise Refused('RECOVERY_JOBS_UNFINISHED', recoveryJobs=jobs, timersStopped=stopped_timers)
+    # The rollback point: a full backup taken now, with writers stopped, then checked.
+    for kind in ['full', 'check']:
+        code, out, _ = host.run(['bash', '-c', 'set -a; . /etc/kamui/backup/operator.settings; set +a; exec '+LEAN+'/backup/backup.sh '+kind])
+        last = out.strip().splitlines()[-1] if out.strip() else ''
+        if code or '"status":"backup-complete"' not in last: raise Refused('BACKUP_'+kind.upper()+'_FAILED', timersStopped=stopped_timers)
+    label = newest_full_backup(host, started)
+    # Writers stay out until the operator reopens them, exactly as after a reboot.
+    code, _, _ = host.run(['python3', '-B', LEAN+'/scripts/wallet-control.py', 'restore', 'block'])
+    gate = read_gate(host)
+    if code or gate['state'] != 'blocked' or gate['reason'] != 'restore': raise Refused('RESTORE_GATE_BLOCK_FAILED', timersStopped=stopped_timers)
+    if host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'down'])[0]: raise Refused('STACK_DOWN_FAILED', timersStopped=stopped_timers)
+    no_containers(host, 'backend')
+    write_prepared(host, 'backend', {'schema': 'kamui.upgrade-prepared.v1', 'role': 'backend', 'bootId': boot_id,
+                                     'preparedAt': int(host.now()), 'previousManifestSha256': previous,
+                                     'backupLabel': label, 'gateGeneration': gate['generation']})
+    return {'status': 'upgrade_prepared', 'role': 'backend', 'backupLabel': label, 'gateGeneration': gate['generation'],
+            'timersStopped': stopped_timers, 'recoveryJobs': jobs}
+
+
+def upgrade_prepare_pepper(host, expected_boot):
+    boot_id, _ = host.boot()
+    if boot_id != expected_boot: raise Refused('HOST_REBOOTED_SINCE_INSPECTION')
+    previous = installed_manifest(host, 'pepper')
+    if host.unit('kamui@pepper.service') == 'active' and host.run(['systemctl', 'stop', 'kamui@pepper.service'])[0]: raise Refused('STACK_STOP_FAILED')
+    no_containers(host, 'pepper')
+    write_prepared(host, 'pepper', {'schema': 'kamui.upgrade-prepared.v1', 'role': 'pepper', 'bootId': boot_id,
+                                    'preparedAt': int(host.now()), 'previousManifestSha256': previous})
+    return {'status': 'upgrade_prepared', 'role': 'pepper'}
+
+
+def upgrade_finish(host, role):
+    if role == 'pepper':
+        if host.unit('kamui@pepper.service') != 'active' and host.run(['systemctl', 'start', 'kamui@pepper.service'])[0]: raise Refused('STACK_START_FAILED')
+        state = inspect_pepper(host)
+        if not state['healthy']: raise Refused('STACK_NOT_HEALTHY_AFTER_START')
+        return {'status': 'upgrade_finished', 'role': 'pepper', 'services': state['services']}
+    gate = read_gate(host)
+    services = host.services('backend')
+    if gate['state'] != 'ready' or host.unit(STACK) != 'active' or not healthy_backend(services):
+        return {'status': 'awaiting_reopen', 'role': 'backend'}
+    started = []
+    for timer in TIMERS:
+        if host.unit(timer, 'is-enabled') == 'enabled' and host.unit(timer) != 'active':
+            if host.run(['systemctl', 'start', timer])[0]: raise Refused('BACKUP_TIMER_START_FAILED')
+            started.append(timer)
+    return {'status': 'upgrade_finished', 'role': 'backend', 'timersStarted': started,
+            'services': {n: r['state'] for n, r in sorted(services.items())}}
+
+
 def main(argv, host=None):
     host = host or Host()
     try:
@@ -277,6 +404,9 @@ def main(argv, host=None):
         elif action == 'fence' and len(args) == 1: result = fence(host, args[0])
         elif action == 'reopen' and len(args) == 3: result = reopen(host, *args)
         elif action == 'enable-boot' and len(args) == 1 and args[0] in {'backend', 'pepper'}: result = enable_boot(host, args[0])
+        elif action == 'upgrade-prepare' and len(args) == 2 and args[0] == 'backend': result = upgrade_prepare_backend(host, args[1])
+        elif action == 'upgrade-prepare' and len(args) == 2 and args[0] == 'pepper': result = upgrade_prepare_pepper(host, args[1])
+        elif action == 'upgrade-finish' and len(args) == 1 and args[0] in {'backend', 'pepper'}: result = upgrade_finish(host, args[0])
         else: raise Refused('HOST_ACTION_INVALID')
     except Refused as error:
         result = {'status': 'refused', 'code': error.code, **error.detail}

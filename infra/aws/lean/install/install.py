@@ -201,10 +201,11 @@ def supersede(root):
             'walletStarted': False}
 
 
-def bootstrap(role, bucket, artifacts, verify=False, replace=False):
+def bootstrap(role, bucket, artifacts, verify=False, replace=False, upgrade=False):
     if role not in ROLES or not re.fullmatch('[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]', bucket):
         raise ValueError('INSTALL_BOOTSTRAP_INPUT_INVALID')
-    if verify and replace: raise ValueError('INSTALL_VERIFY_CANNOT_REPLACE')
+    if verify and (replace or upgrade): raise ValueError('INSTALL_VERIFY_CANNOT_REPLACE')
+    if replace and upgrade: raise ValueError('INSTALL_MODE_CONFLICT')
     q = shlex.quote
     selected = {'host-install.py': artifacts['installer'], 'pull-images.py': artifacts['puller'], 'compose-linux-x86_64': artifacts['compose'],
                 role+'.tar.gz': artifacts['roles'][role]['archive'], role+'-manifest.json': artifacts['roles'][role]['manifest']}
@@ -230,6 +231,8 @@ def bootstrap(role, bucket, artifacts, verify=False, replace=False):
     if verify: command += ' --check'
     # Only after an explicit supersede; the host still refuses a started wallet or any wallet state.
     if replace: command += ' --replace-unstarted'
+    # Only through `15 install`, after `15 prepare` stopped, backed up and fenced this host.
+    if upgrade: command += ' --upgrade-started'
     image_command = 'python3 "$work/pull-images.py" --role '+q(role)+' --manifest "$work/'+role+'-manifest.json" --manifest-sha256 '+q(artifacts['roles'][role]['manifest']['sha256'])+' --docker-config "$work/docker-auth"'
     if verify: image_command += ' --check'
     child += [command, image_command]
@@ -241,7 +244,7 @@ def bootstrap(role, bucket, artifacts, verify=False, replace=False):
     return '\n'.join(lines)+'\n'
 
 
-def deliver(root, aws, driver, verify=False):
+def deliver(root, aws, driver, verify=False, upgrade=False):
     manifest = json.loads(read_private(Path(root)/'installation/release/release.json'))
     artifacts = package(root, manifest)
     bucket = manifest['releaseBucketName']; config = driver.config
@@ -252,10 +255,11 @@ def deliver(root, aws, driver, verify=False):
             path = Path(artifact['path'])
             aws.put_public_file(config['backend']['aws_profile'], bucket, config['backend']['expected_account'],
                                 'installation/'+artifact['sha256']+'/'+path.name, path)
-    replace = not verify and bool(superseded(root))
+    if verify and upgrade: raise ValueError('INSTALL_VERIFY_CANNOT_REPLACE')
+    replace = not verify and not upgrade and bool(superseded(root))
     for role in ROLES:
         target = driver.target(role)
-        driver.command(role, 'verify' if verify else 'install', target['InstanceId'], bootstrap(role, bucket, artifacts, verify, replace))
+        driver.command(role, 'verify' if verify else 'install', target['InstanceId'], bootstrap(role, bucket, artifacts, verify, replace, upgrade))
     return {'publicPackageInstalled': True, 'verificationRequested': verify, 'runtimeDelivered': False, 'walletStarted': False}
 
 
