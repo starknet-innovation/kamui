@@ -1,0 +1,114 @@
+# Builds the container images from the committed Dockerfiles, and on a manual run pushes them to
+# the release registry through OIDC. No AWS access key is stored in GitHub.
+#
+# This is NOT a release. infra/aws/lean/setup/07-build-release.sh remains the only thing that
+# produces an installable one: it pins every base image by digest, verifies the pinned prover
+# assets, records the keychain's main.js hash, and writes the private release record that scripts
+# 08 to 10 read. A push from here lands images tagged ci-<sha>, which no host will ever install.
+# Use it to catch build breakage on a pull request, and to have an image to inspect or run.
+
+name: images
+
+on:
+  pull_request:
+    paths:
+      - 'keychain/**'
+      - 'sdk/**'
+      - 'services/backend/**'
+      - 'services/pepper/**'
+      - 'infra/aws/lean/backup/**'
+      - '.github/workflows/images.yml'
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push the built images to ECR as ci-<sha>
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Pushing needs the credential, so it waits for this environment's reviewers.
+    environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.push) && 'aws-backend-apply' || '' }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Contexts and Dockerfiles match infra/aws/lean/install/release.py exactly, so a build
+          # that passes here is the same build script 07 performs.
+          - image: keychain
+            context: .
+            dockerfile: keychain/Dockerfile
+            prover_assets: true
+          - image: backend
+            context: services/backend
+            dockerfile: services/backend/src/services/api/Dockerfile
+          - image: pepper
+            context: services/pepper
+            dockerfile: services/pepper/Dockerfile
+          - image: postgres
+            context: infra/aws/lean/backup
+            dockerfile: infra/aws/lean/backup/Dockerfile
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: oven-sh/setup-bun@v2.0.1
+        if: matrix.prover_assets
+        with:
+          bun-version: 1.4.4
+
+      # The two Wasm modules are too large for git. This downloads them from the prover release
+      # that keychain/prover/manifest.json pins and refuses anything whose size or SHA-256 does
+      # not match, which is the same check the image build then repeats with --check.
+      - name: Fetch pinned prover assets
+        if: matrix.prover_assets
+        working-directory: keychain
+        run: bun scripts/prover-assets.ts
+
+      - uses: docker/setup-buildx-action@v3.7.1
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          docker buildx build --platform linux/amd64 \
+            --file '${{ matrix.dockerfile }}' \
+            --tag 'kamui-${{ matrix.image }}:ci' \
+            --load '${{ matrix.context }}'
+
+      - uses: aws-actions/configure-aws-credentials@v4.0.2
+        if: github.event_name == 'workflow_dispatch' && inputs.push
+        with:
+          role-to-assume: ${{ vars.AWS_BACKEND_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-publish-${{ github.run_id }}
+
+      - name: Push
+        if: github.event_name == 'workflow_dispatch' && inputs.push
+        env:
+          REGISTRY: ${{ vars.AWS_BACKEND_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$REGISTRY"
+          # The repositories reject a tag that already exists, so a rerun on the same commit
+          # fails rather than replacing an image someone may have inspected.
+          target="$REGISTRY/kamui-sepolia/${{ matrix.image }}:ci-${GITHUB_SHA:0:12}"
+          docker tag 'kamui-${{ matrix.image }}:ci' "$target"
+          docker push "$target"
+          digest=$(docker image inspect "$target" --format '{{index .RepoDigests 0}}')
+          echo "Pushed \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+          docker logout "$REGISTRY"

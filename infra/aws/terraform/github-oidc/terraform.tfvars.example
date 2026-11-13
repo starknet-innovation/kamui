@@ -1,0 +1,35 @@
+# Copy to terraform.tfvars (ignored by git) and fill in with this account's real values.
+# Apply once per account, each with its own backend.hcl key and its own tfvars.
+
+aws_account_id = "<this account's 12 digits>"
+aws_region     = "eu-west-1"
+environment    = "test"
+
+# backend account
+service                  = "backend"
+name                     = "kamui"
+state_bucket_name        = "<state bucket created by ../bootstrap in this account>"
+github_repository        = "starknet-innovation/kamui"
+apply_branch             = "main"
+
+# Leave empty to trust the branch alone. Naming a GitHub Environment makes its reviewers approve
+# before the credential is issued, which is the stronger setting.
+apply_environment = ""
+
+# An account may hold only one provider for token.actions.githubusercontent.com. Set false for
+# the second account if it already has one from another stack.
+create_oidc_provider = true
+
+# Only the backend account holds the release registry. Owned by the lean release CloudFormation
+# stack; this module only grants push access. Leave empty in the pepper account.
+release_repository_names = [
+  "kamui-sepolia/keychain",
+  "kamui-sepolia/backend",
+  "kamui-sepolia/pepper",
+  "kamui-sepolia/postgres",
+  "kamui-sepolia/caddy",
+]
+
+# In the pepper account, list the live pepper HMAC key here: pepper/kms.tf manages its policy,
+# and CI must never be able to rewrite it.
+protected_kms_key_arns = []
