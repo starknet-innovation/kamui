@@ -1,6 +1,6 @@
 # Numbered release and installation
 
-These are operator-run scripts for the two existing **Sepolia** hosts. They build and publish immutable images, prepare private runtime files locally, install the public host package through Systems Manager, and verify it. They do not start Kamui or PostgreSQL, copy a signing key, acknowledge a restore gate, grant registry authority, change DNS/OAuth, or enable funding.
+These are operator-run scripts for the two existing **Sepolia** hosts. They build and publish immutable images, prepare private runtime files locally, install the public host package through Systems Manager, and verify it. Scripts 07–13 do not start Kamui or PostgreSQL, copy a signing key, acknowledge a restore gate, grant registry authority, change DNS/OAuth, or enable funding. Script 14 is the exception for one case: after a host reboot it acknowledges the boot-fenced gate on the operator's interactive attestation and starts the stack ([REBOOT.md](REBOOT.md)).
 
 The current sole-KMS/shared-bootstrap custody acceptance applies to Sepolia only. Mainnet still requires a separate KMS/permission/recovery design and review.
 
@@ -27,6 +27,7 @@ All use `~/.kamui-hosting-sepolia` by default; `--private-directory /absolute/pr
 | **10** | Checks installed package/receipt/units/dependencies and local image digests. Does not publish artifacts, log in to ECR, pull images, install packages or start services. It downloads the same hash-pinned verification payload into temporary host files and sends a separate read-only check command. |
 | **12** | `12-add-host-secrets.sh`: adds each host's runtime secrets, their KMS key and the host role's single decrypt path to the identity stacks, through a change set checked on a first run and applied only with `--execute`. See [SECRET_DELIVERY.md](SECRET_DELIVERY.md). |
 | **13** | `13-store-runtime-secrets.sh`: stores the files from `08` in each host's secret. Never reads a value back and never touches the relayer key. |
+| **14** | `14-reopen-after-reboot.sh status \| fence \| reopen --review-ref <ref> \| enable-boot`: after a host reboot. `status` is read-only on both hosts. `reopen` checks the current boot's fence marker and active fence unit, a gate blocked by this boot (reason `restore`, confirmed generation), the replay window (it waits), stopped API/rotator and zero unfinished recovery jobs, then asks you to type `REOPEN`, acknowledges in `restored` mode (your attestation) and starts the backend stack. `fence` fences a boot that was not fenced at startup. `enable-boot` enables `kamui@pepper.service` and the backend boot fence (not the backend stack) at boot. Host-side code is sent inline over SSM; no host package change. See [REBOOT.md](REBOOT.md). |
 | **11** | `11-supersede-unstarted-release.sh`: only for shipping a new release **before the wallet has ever started**. Archives the completed release, its package and the derived public runtime files (`*.public.env`, runtime `manifest.json`) under `installation/superseded/`; generated database secrets, stack and command evidence stay. Then commit the new source and run `07` → `10` again. No AWS call. |
 
 The operator needs the existing account profiles authenticated, Docker Engine/buildx on the workstation, the current pinned keychain prover assets, and permission for these exact CloudFormation/ECR/S3/SSM operations. The hosts need to be the recorded running AL2023 x86 instances and online SSM managed nodes. No inbound SSH port is added. An unrecognized existing Docker installation, modified host package, active Kamui unit or mismatching owned file stops installation instead of overwriting it.
@@ -61,6 +62,7 @@ The initial host role still provides a shared credential boundary across that ho
 - [Release publication](RELEASE.md)
 - [Host installer](HOST_INSTALL.md)
 - [Private runtime preparation](RUNTIME.md)
+- [Host reboot and reopening backend writes](REBOOT.md)
 
 ```sh
 python3 -B -m unittest discover -s infra/aws/lean/install -p 'test_*.py'
