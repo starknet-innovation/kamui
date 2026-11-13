@@ -131,3 +131,22 @@ class HostPackageTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PostgresSettingsTest(unittest.TestCase):
+    def test_compose_passes_exactly_the_reviewed_backup_settings(self):
+        import re
+        lean = Path(__file__).resolve().parents[1]
+        conf = {}
+        for line in (lean/'backup/postgresql-backup.conf').read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'): continue
+            key, _, value = line.partition('=')
+            conf[key.strip()] = value.strip().strip("'")
+        compose = (lean/'backend/compose.yml').read_text()
+        block = re.search(r'command: \["postgres",(.*?)\]\n', compose, re.S).group(1)
+        flags = re.findall(r'"-c", "([a-z_]+)=([^"]*)"', block)
+        self.assertEqual(dict(flags), conf)
+        self.assertEqual(len(flags), len(conf))
+        # `include` cannot be passed with -c; PostgreSQL refuses to start.
+        self.assertNotIn('include=', block)

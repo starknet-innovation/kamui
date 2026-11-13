@@ -89,9 +89,18 @@ services:
       - ${POSTGRES_DATA_DIRECTORY:-${STATE_DIRECTORY:-/var/lib/kamui}/postgres}:/var/lib/postgresql/data
       - ./init-app-role.sh:/docker-entrypoint-initdb.d/10-kamui-app-role.sh:ro
       - ${CONFIG_DIRECTORY:-/etc/kamui}/backup/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
-      - ../backup/postgresql-backup.conf:/etc/postgresql/kamui.conf:ro
     user: "999:999"
-    command: ["postgres", "-c", "include=/etc/postgresql/kamui.conf"]
+    # `include` is a config-file directive, not a server setting, so it cannot be passed with -c.
+    # Each line of ../backup/postgresql-backup.conf is passed as its own -c instead; a test keeps
+    # the two identical, so that file remains the reviewed source.
+    command: ["postgres",
+      "-c", "wal_level=replica",
+      "-c", "archive_mode=on",
+      "-c", "archive_command=pgbackrest --config=/etc/pgbackrest/pgbackrest.conf --stanza=kamui archive-push %p",
+      "-c", "archive_timeout=60",
+      "-c", "fsync=on",
+      "-c", "full_page_writes=on",
+      "-c", "synchronous_commit=on"]
     networks: [database, backup_egress]
     tmpfs: ["/tmp:rw,nosuid,nodev,size=64m", "/var/run/postgresql:rw,nosuid,nodev,size=4m,uid=999,gid=999"]
     shm_size: 128m
