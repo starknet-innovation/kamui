@@ -137,7 +137,7 @@ sudo systemctl start kamui@pepper.service
 sudo python3 -B /opt/kamui/lean/scripts/host.py pepper status
 ```
 
-Run the remaining backend acknowledgement/full-start/monitor steps from the existing host/backup runbooks after their real evidence is recorded; do not enable all units blindly. Each OS boot reblocks paid operation and needs operator reconciliation.
+Run the remaining backend acknowledgement/full-start/monitor steps from the existing host/backup runbooks after their real evidence is recorded; do not enable all units blindly. Each OS boot reblocks paid operation and needs operator reconciliation: see [install/REBOOT.md](../install/REBOOT.md) and `setup/14-reopen-after-reboot.sh`.
 
 ## 6. DNS, Google and hosted acceptance
 

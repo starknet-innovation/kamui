@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+"""Runs ON a host, sent inline through SSM by install/reopen.py. Not part of the host package.
+
+It only calls the installed reviewed wrappers (host.py, wallet-control.py, systemctl) and reads
+the restore gate, the boot-fence marker and recovery-job counts. Output is one fixed result line
+with statuses, counts and the gate generation/boot id (random identifiers, kept in private
+workstation evidence); no command output, configuration or database row is ever echoed.
+
+Python 3.9 (AL2023 system python): no newer syntax.
+"""
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+import time
+
+RESULT = 'KAMUI_REOPEN_RESULT '
+UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+BOOT_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+REF = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$')
+CODE = re.compile(r'^[A-Z_]{3,60}$')
+# services/backend/src/storage/restore-fence.ts RESTORE_REPLAY_WAIT_MS, plus clock margin.
+REPLAY_WAIT_SECONDS = 600
+REPLAY_MARGIN_SECONDS = 30
+WRITERS = {'api', 'rotator'}
+STOPPED = {'exited', 'dead', 'created'}
+LEAN = '/opt/kamui/lean'
+STACK = 'kamui@backend.service'
+FENCE = 'kamui-backend-boot-fence.service'
+BACKEND_SERVICES = {'caddy', 'keychain', 'api', 'postgres', 'watcher'}
+PEPPER_SERVICES = {'caddy', 'pepper'}
+JOBS_TABLE = "SELECT to_regclass('public.recovery_jobs') IS NOT NULL"
+# Non-terminal = finished_at IS NULL (services/backend/src/services/recovery/postgres-store.ts).
+# A retained intent means a transaction may have been sent with an unknown outcome.
+JOBS_COUNTS = ("BEGIN READ ONLY; SELECT COUNT(*) FILTER (WHERE finished_at IS NULL), "
+               "COUNT(*) FILTER (WHERE finished_at IS NULL AND intent IS NOT NULL), "
+               "COUNT(*) FILTER (WHERE finished_at IS NULL AND state LIKE '%reconciling%') "
+               "FROM public.recovery_jobs; COMMIT;")
+
+
+class Refused(Exception):
+    def __init__(self, code, **detail):
+        super().__init__(code)
+        self.code, self.detail = code, detail
+
+
+def system_run(args):
+    env = {k: v for k, v in os.environ.items() if k not in {'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH', 'POSTGRES_DATA_DIRECTORY', 'KAMUI_ENABLE_AVNU'}}
+    env.update(SYSTEMD_PAGER='', SYSTEMD_COLORS='0', DOCKER_HOST='unix:///var/run/docker.sock',
+               CONFIG_DIRECTORY='/etc/kamui', STATE_DIRECTORY='/var/lib/kamui')
+    try:
+        done = subprocess.run(args, capture_output=True, text=True, timeout=420, env=env)
+    except subprocess.TimeoutExpired:
+        return 124, '', ''
+    return done.returncode, done.stdout, done.stderr
+
+
+class Host:
+    """Every side effect goes through here so tests can substitute a fake host."""
+    def __init__(self, root=Path('/'), run=system_run, now=time.time):
+        self.root, self.run, self.now = Path(root), run, now
+
+    def at(self, absolute): return self.root/absolute.lstrip('/')
+
+    def boot(self):
+        boot_id = self.at('/proc/sys/kernel/random/boot_id').read_text().strip()
+        btime = [int(line.split()[1]) for line in self.at('/proc/stat').read_text().splitlines() if line.startswith('btime ')]
+        if not BOOT_ID.fullmatch(boot_id) or len(btime) != 1: raise Refused('HOST_BOOT_IDENTITY_UNREADABLE')
+        return boot_id, btime[0]
+
+    def unit(self, name, query='is-active'):
+        code, out, _ = self.run(['systemctl', query, name])
+        value = out.strip().splitlines()[0] if out.strip() else ''
+        return value if re.fullmatch(r'[a-z-]{1,40}', value) else 'unknown'
+
+    def services(self, role):
+        code, out, _ = self.run(['python3', '-B', LEAN+'/scripts/host.py', role, 'status'])
+        if code: raise Refused('COMPOSE_STATUS_FAILED')
+        try:
+            rows = json.loads(out)
+            return {str(r['service']): {'state': str(r.get('state')), 'health': r.get('health') or ''} for r in rows}
+        except Exception: raise Refused('COMPOSE_STATUS_FAILED') from None
+
+
+def fence_state(host, boot_id):
+    marker = host.at('/run/kamui/boot-fenced')
+    if marker.is_symlink(): return 'invalid'
+    if not marker.exists(): return 'missing'
+    try: value = marker.read_text().strip()
+    except OSError: return 'invalid'
+    return 'current' if value == boot_id else 'stale'
+
+
+def read_gate(host):
+    path = host.at('/var/lib/kamui/restore-gate/state.json')
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 4096: raise ValueError()
+        gate = json.loads(path.read_text())
+        if gate.get('version') != 1 or gate.get('state') not in {'blocked', 'ready'} or gate.get('reason') not in {'fresh', 'restore'}: raise ValueError()
+        if not isinstance(gate.get('generation'), str) or not UUID.fullmatch(gate['generation']): raise ValueError()
+        if not isinstance(gate.get('changedAt'), int) or isinstance(gate['changedAt'], bool) or gate['changedAt'] <= 0: raise ValueError()
+        return gate
+    except Exception: raise Refused('RESTORE_GATE_UNREADABLE') from None
+
+
+def recovery_jobs(host, services):
+    """Counts only. None when PostgreSQL is not running (nothing can be concluded)."""
+    row = services.get('postgres', {})
+    if row.get('state') != 'running' or row.get('health') not in {'', 'healthy'}: return None
+    psql = ['docker', 'compose', '--env-file', '/etc/kamui/release.env', '-f', LEAN+'/backend/compose.yml', 'exec', '-T',
+            'postgres', 'psql', '-X', '-A', '-t', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'kamui', '-c']
+    code, out, _ = host.run(psql+[JOBS_TABLE])
+    if code or out.strip() not in {'t', 'f'}: raise Refused('RECOVERY_JOBS_UNREADABLE')
+    if out.strip() == 'f': raise Refused('RECOVERY_JOBS_TABLE_MISSING')
+    code, out, _ = host.run(psql+[JOBS_COUNTS])
+    rows = [line for line in out.splitlines() if re.fullmatch(r'[0-9]+\|[0-9]+\|[0-9]+', line.strip())]
+    if code or len(rows) != 1: raise Refused('RECOVERY_JOBS_UNREADABLE')
+    unfinished, with_intent, reconciling = (int(x) for x in rows[0].strip().split('|'))
+    return {'unfinished': unfinished, 'withIntent': with_intent, 'reconciling': reconciling}
+
+
+def writers_running(services):
+    return sorted(name for name, row in services.items() if name in WRITERS and row['state'] not in STOPPED)
+
+
+def inspect_backend(host):
+    boot_id, btime = host.boot()
+    gate = read_gate(host)
+    services = host.services('backend')
+    elapsed = host.now() - gate['changedAt']/1000
+    return {
+        'role': 'backend', 'bootId': boot_id,
+        'fence': fence_state(host, boot_id), 'fenceUnit': host.unit(FENCE),
+        'fenceAtBoot': host.at('/etc/systemd/system/multi-user.target.wants/'+FENCE).is_symlink(),
+        'stackUnit': host.unit(STACK), 'stackEnabled': host.unit(STACK, 'is-enabled'),
+        'gate': {'state': gate['state'], 'reason': gate['reason'], 'mode': gate.get('mode'), 'generation': gate['generation'],
+                 'thisBoot': gate['changedAt']/1000 >= btime, 'ageSeconds': max(0, int(elapsed))},
+        # Only a blocked gate has a replay window; a ready one was already acknowledged.
+        'replayRemainingSeconds': 0 if gate['state'] == 'ready' else max(0, int(REPLAY_WAIT_SECONDS + REPLAY_MARGIN_SECONDS - elapsed + 0.999)),
+        'services': {name: row['state'] for name, row in sorted(services.items())},
+        'writersRunning': writers_running(services),
+        'recoveryJobs': recovery_jobs(host, services),
+    }
+
+
+def inspect_pepper(host):
+    boot_id, _ = host.boot()
+    services = host.services('pepper')
+    healthy = {n for n, r in services.items() if r['state'] == 'running' and r['health'] in {'', 'healthy'}}
+    return {'role': 'pepper', 'bootId': boot_id, 'stackUnit': host.unit('kamui@pepper.service'),
+            'stackEnabled': host.unit('kamui@pepper.service', 'is-enabled'), 'healthy': healthy == PEPPER_SERVICES,
+            'services': {name: row['state'] for name, row in sorted(services.items())}}
+
+
+def fence(host, expected_boot):
+    boot_id, _ = host.boot()
+    if boot_id != expected_boot: raise Refused('HOST_REBOOTED_SINCE_INSPECTION')
+    state = fence_state(host, boot_id)
+    if state == 'current': return {'status': 'already_fenced'}
+    if state != 'missing': raise Refused('BOOT_FENCE_MARKER_INVALID')
+    if host.unit(FENCE) != 'inactive': raise Refused('BOOT_FENCE_UNIT_NOT_INACTIVE')
+    if host.unit(STACK) == 'active': raise Refused('STACK_ACTIVE_WITHOUT_BOOT_FENCE')
+    code, _, _ = host.run(['systemctl', 'start', FENCE])
+    if code or fence_state(host, boot_id) != 'current' or read_gate(host)['state'] != 'blocked': raise Refused('BOOT_FENCE_FAILED')
+    return {'status': 'fenced'}
+
+
+def write_acknowledgement(host, name, value):
+    directory = host.at('/etc/kamui/operator')
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077: raise Refused('OPERATOR_DIRECTORY_INVALID')
+    temporary = directory/('.'+name+'.tmp')
+    if temporary.is_symlink() or temporary.exists(): temporary.unlink()
+    fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as output:
+        output.write(json.dumps(value)+'\n'); output.flush(); os.fsync(output.fileno())
+    os.replace(temporary, directory/name)
+
+
+def start_stack(host, generation):
+    code, _, _ = host.run(['systemctl', 'start', STACK])
+    if code: raise Refused('STACK_START_FAILED')
+    gate = read_gate(host)
+    # A re-run boot fence would have replaced the generation: never report that as open.
+    if gate['state'] != 'ready' or gate['generation'] != generation: raise Refused('RESTORE_GATE_REBLOCKED_DURING_START')
+    services = host.services('backend')
+    if host.unit(STACK) != 'active' or not healthy_backend(services): raise Refused('STACK_NOT_HEALTHY_AFTER_START')
+    return {name: row['state'] for name, row in sorted(services.items())}
+
+
+def reopen(host, expected_boot, generation, review_ref):
+    if not BOOT_ID.fullmatch(expected_boot) or not UUID.fullmatch(generation) or not REF.fullmatch(review_ref): raise Refused('REOPEN_INPUT_INVALID')
+    boot_id, btime = host.boot()
+    if boot_id != expected_boot: raise Refused('HOST_REBOOTED_SINCE_INSPECTION')
+    if fence_state(host, boot_id) != 'current': raise Refused('BOOT_FENCE_MISSING')
+    # Starting the stack pulls the fence in. If it were not already active this boot it would run
+    # again, reblock the gate and silently undo this acknowledgement.
+    if host.unit(FENCE) != 'active': raise Refused('BOOT_FENCE_UNIT_NOT_ACTIVE')
+    gate = read_gate(host)
+    if gate['generation'] != generation: raise Refused('RESTORE_GATE_GENERATION_CHANGED')
+    if gate['changedAt']/1000 < btime: raise Refused('RESTORE_GATE_NOT_FROM_THIS_BOOT')
+    if gate['reason'] != 'restore': raise Refused('RESTORE_GATE_REASON_NOT_RESTORE')
+    acknowledged = gate['state'] == 'ready'
+    if acknowledged and (gate.get('mode') != 'restored' or gate.get('reviewRef') != review_ref): raise Refused('RESTORE_GATE_READY_FOR_ANOTHER_REVIEW')
+    if not acknowledged:
+        remaining = max(0, int(REPLAY_WAIT_SECONDS + REPLAY_MARGIN_SECONDS - (host.now() - gate['changedAt']/1000) + 0.999))
+        if remaining: raise Refused('REPLAY_WINDOW_ACTIVE', replayRemainingSeconds=remaining)
+    stopped_stack = False
+    if host.unit(STACK) == 'active':
+        services = host.services('backend')
+        if acknowledged and healthy_backend(services):
+            return {'status': 'already_open', 'services': {n: r['state'] for n, r in sorted(services.items())}}
+        # An active unit would make `systemctl start` a no-op; stop it through its reviewed ExecStop.
+        code, _, _ = host.run(['systemctl', 'stop', STACK])
+        if code: raise Refused('STACK_STOP_FAILED')
+        stopped_stack = True
+    running = writers_running(host.services('backend'))
+    if running: raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT', writersRunning=running)
+    # PostgreSQL alone: the jobs check and the acknowledgement's writer lease both need it.
+    code, _, _ = host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare'])
+    if code: raise Refused('POSTGRES_PREPARE_FAILED')
+    services = host.services('backend')
+    if writers_running(services): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT', writersRunning=writers_running(services))
+    jobs = recovery_jobs(host, services)
+    if jobs is None: raise Refused('RECOVERY_JOBS_UNREADABLE')
+    if jobs['unfinished']: raise Refused('RECOVERY_JOBS_UNFINISHED', recoveryJobs=jobs)
+    if not acknowledged:
+        name = 'reboot-ack-'+generation+'.json'
+        write_acknowledgement(host, name, {
+            'version': 1, 'generation': generation, 'mode': 'restored', 'reviewRef': review_ref,
+            # Enforced by wallet-control.py (stopped api/rotator) and the PostgreSQL writer lease.
+            'apiAndRotatorStopped': True,
+            # Operator attestations, recorded by running this command with --review-ref.
+            'originalWriterCannotRestart': True, 'signerHistoryReconciled': True,
+            'uncertainIntentsRetained': True, 'replayAndBudgetsConservative': True})
+        code, out, err = host.run(['python3', '-B', LEAN+'/scripts/wallet-control.py', 'restore', 'acknowledge', name])
+        if code:
+            try: reason = json.loads(err.strip().splitlines()[-1]).get('error', '')
+            except Exception: reason = ''
+            raise Refused('ACKNOWLEDGEMENT_REFUSED', walletControl=reason if CODE.fullmatch(str(reason)) else 'UNKNOWN')
+        gate = read_gate(host)
+        if gate['state'] != 'ready' or gate['generation'] != generation or gate.get('mode') != 'restored' or gate.get('reviewRef') != review_ref:
+            raise Refused('ACKNOWLEDGEMENT_NOT_RECORDED')
+    services = start_stack(host, generation)
+    return {'status': 'reopened', 'acknowledgedNow': not acknowledged, 'stoppedActiveStack': stopped_stack,
+            'recoveryJobs': jobs, 'services': services}
+
+
+def healthy_backend(services):
+    return {n for n, r in services.items() if r['state'] == 'running' and r['health'] in {'', 'healthy'}} == BACKEND_SERVICES
+
+
+def enable_boot(host, role):
+    if role == 'pepper':
+        code, _, _ = host.run(['systemctl', 'enable', 'kamui@pepper.service'])
+        if code or host.unit('kamui@pepper.service', 'is-enabled') != 'enabled': raise Refused('PEPPER_ENABLE_FAILED')
+        return {'status': 'enabled', 'role': 'pepper', 'unit': 'kamui@pepper.service'}
+    # The fence unit has no [Install] section; add-wants is the reviewed way to run it at boot.
+    # The full stack stays manual: it cannot start under a blocked gate (the API exits).
+    code, _, _ = host.run(['systemctl', 'add-wants', 'multi-user.target', FENCE])
+    link = host.at('/etc/systemd/system/multi-user.target.wants/'+FENCE)
+    if code or not link.is_symlink(): raise Refused('BOOT_FENCE_ENABLE_FAILED')
+    return {'status': 'enabled', 'role': 'backend', 'unit': FENCE, 'stackEnabled': host.unit(STACK, 'is-enabled')}
+
+
+def main(argv, host=None):
+    host = host or Host()
+    try:
+        if os.geteuid() != 0 and host.root == Path('/'): raise Refused('ROOT_REQUIRED')
+        action, args = argv[0], argv[1:]
+        if action == 'inspect' and args == ['backend']: result = {'status': 'inspected', **inspect_backend(host)}
+        elif action == 'inspect' and args == ['pepper']: result = {'status': 'inspected', **inspect_pepper(host)}
+        elif action == 'fence' and len(args) == 1: result = fence(host, args[0])
+        elif action == 'reopen' and len(args) == 3: result = reopen(host, *args)
+        elif action == 'enable-boot' and len(args) == 1 and args[0] in {'backend', 'pepper'}: result = enable_boot(host, args[0])
+        else: raise Refused('HOST_ACTION_INVALID')
+    except Refused as error:
+        result = {'status': 'refused', 'code': error.code, **error.detail}
+    except Exception:
+        result = {'status': 'refused', 'code': 'HOST_PROGRAM_FAILED'}
+    print(RESULT+json.dumps(result, sort_keys=True), flush=True)
+    return result
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

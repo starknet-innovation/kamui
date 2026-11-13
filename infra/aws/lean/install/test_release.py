@@ -269,3 +269,30 @@ class ReleaseTest(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class InfrastructureOnlyTest(unittest.TestCase):
+    def test_lean_documentation_is_infrastructure_but_package_and_app_files_are_not(self):
+        accepted = ['infra/aws/lean/backup/README.md', 'infra/aws/lean/install/REBOOT.md', 'infra/aws/lean/README.md',
+                    'infra/aws/lean/install/runtime.py', 'infra/aws/lean/setup/14-reopen-after-reboot.sh']
+        refused = ['keychain/README.md', 'services/backend/README.md', 'infra/aws/lean/backup/backup.sh',
+                   'infra/aws/lean/systemd/kamui@.service', 'infra/aws/lean/backend/compose.yml', 'infra/aws/terraform/README.md']
+        for path in accepted: self.assertTrue(release.infrastructure_only([path]), path)
+        for path in refused: self.assertFalse(release.infrastructure_only([path]), path)
+        # The rule is only sound while no Markdown file is shipped in the host package.
+        spec = importlib.util.spec_from_file_location('install_files', HERE/'install.py')
+        install = importlib.util.module_from_spec(spec); spec.loader.exec_module(install)
+        self.assertFalse(any(name.endswith('.md') for name in install.FILES))
+
+    def test_ci_and_keychain_test_files_are_infrastructure_because_no_image_copies_them(self):
+        for path in ['.github/workflows/keychain-tests.yml', 'keychain/tests/keychain.spec.ts', 'keychain/playwright.config.ts']:
+            self.assertTrue(release.infrastructure_only([path]), path)
+        for path in ['keychain/src/main.ts', 'keychain/server.ts', 'keychain/prover/manifest.json', 'keychain/scripts/prover-assets.ts', 'keychain/package.json']:
+            self.assertFalse(release.infrastructure_only([path]), path)
+        import re
+        copied = []
+        for line in (HERE.parents[3]/'keychain/Dockerfile').read_text().splitlines():
+            if line.startswith('COPY') and '--from=' not in line: copied += line.split()[1:-1]
+        self.assertTrue(copied)
+        for source in copied:
+            self.assertFalse(source.startswith(('keychain/tests', '.github')) or source in {'keychain', '.', 'keychain/', 'keychain/playwright.config.ts'}, source)

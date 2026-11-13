@@ -33,6 +33,50 @@ After review, install the root-owned settings file, fill the explicit maximum su
 
 `check` verifies current WAL archival and repository access, then refuses a missing/stale latest successful backup. It does not prove every future restore, and a successful process exit does not mean an alert was delivered. Measure database/WAL growth and S3/request/egress costs before accepting the budget. Test archive outage, disk pressure and failed-unit alerts. Keep fees disabled until a real backup and disposable restore have passed against the reviewed repository.
 
+## Scheduled backups and diagnostic-log retention
+
+Diagnostic-log retention is **30 days** (operator decision, 13 November 2026). `backup.sh` writes one private `run.*` file per operation and one `info.*` file per `check` under `/var/log/kamui-backup` (directory 0700, files 0600, root). The hourly check alone creates about 48 files a day, so retention must be in place before the timers are enabled.
+
+The release package does not install a retention rule. It is a host-level operator action. Install this root-owned file (mode 0644) as `/etc/tmpfiles.d/kamui-backup.conf`:
+
+```
+# Kamui backup diagnostic logs (backup.sh): private, root-only, 30-day retention.
+# Operator decision 2026-11-13. Cleaned by systemd-tmpfiles-clean.timer.
+d /var/log/kamui-backup 0700 root root 30d
+```
+
+The `d` line keeps the directory at 0700 root:root. The `30d` age lets the distribution's daily `systemd-tmpfiles-clean.timer` delete entries older than 30 days. systemd-tmpfiles measures age from the newest of atime, mtime and ctime, so reading a log file pushes its deletion back. It sits under `/etc`, outside `/etc/kamui`, so restarting the stack does not rewrite it. Verify it without deleting anything recent:
+
+```sh
+systemd-tmpfiles --cat-config | grep -n kamui-backup        # rule is loaded
+systemd-tmpfiles --create /etc/tmpfiles.d/kamui-backup.conf  # mode/owner enforced
+systemd-tmpfiles --clean  /etc/tmpfiles.d/kamui-backup.conf  # only removes entries older than 30d
+systemctl is-active systemd-tmpfiles-clean.timer             # must be active
+systemctl list-timers systemd-tmpfiles-clean.timer --no-pager
+```
+
+Enable the timers only after the first full backup and a passing `check`. The timers use the instances `kamui-backup@full.service` (daily 02:15 UTC, up to 5 minutes of random delay) and `kamui-backup@check.service` (hourly, up to 2 minutes of random delay):
+
+```sh
+systemctl daemon-reload
+systemctl enable --now kamui-backup-full.timer kamui-backup-check.timer
+systemctl start kamui-backup@check.service   # exercise the timer's unit once; fails if the check fails
+```
+
+Inspect them with:
+
+```sh
+systemctl list-timers 'kamui-backup*' --all --no-pager     # next and last runs
+systemctl is-enabled kamui-backup-full.timer kamui-backup-check.timer
+systemctl show kamui-backup@check.service -p Result -p ExecMainStatus
+systemctl status kamui-backup@full.service --no-pager
+journalctl -u kamui-backup@check.service -u kamui-backup@full.service --since -1d --no-pager -o cat
+```
+
+The journal shows only fixed status codes, for example `{"status":"backup-complete","operation":"check"}` or `{"status":"refused","error":"BACKUP_MISSING_OR_STALE"}`. Private pgBackRest output stays in `/var/log/kamui-backup`. A failed unit needs a reviewed alert route (`OnFailure=` or monitoring of failed units). The timers alone do not deliver alerts. To pause scheduling, run `systemctl disable --now kamui-backup-full.timer kamui-backup-check.timer`.
+
+On the Sepolia beta backend, the retention rule was installed and both timers were enabled on 13 November 2026. A manual start of `kamui-backup@check.service` returned `Result=success`.
+
 ## Host admission gate
 
 `RESTORE_GATE_FILE` points to `/run/kamui/restore-gate/state.json` inside API/rotator/operator containers. The corresponding host directory is `${STATE_DIRECTORY}/restore-gate`, **outside PGDATA**, mounted as a whole directory read-only in API/rotator and read-write only in the operator container. Do not bind-mount just `state.json`: atomic replacement would leave a single-file mount pinned to the old inode.
@@ -48,6 +92,8 @@ docker compose --env-file /etc/kamui/release.env -f /opt/kamui/lean/backend/comp
 docker compose --env-file /etc/kamui/release.env -f /opt/kamui/lean/backend/compose.yml --profile operator run --rm --no-deps -T operator bun run src/scripts/restore-control.ts status
 docker compose --env-file /etc/kamui/release.env -f /opt/kamui/lean/backend/compose.yml --profile operator run --rm --no-deps -T operator bun run src/scripts/restore-control.ts acknowledge /run/kamui/operator/restore-ack.json
 ```
+
+After an ordinary host reboot (same disk, boot-fence reblock only), `setup/14-reopen-after-reboot.sh reopen` performs the checks it can and this acknowledgement through `wallet-control.py` on the operator's interactive attestation. See [install/REBOOT.md](../install/REBOOT.md). It refuses gates not blocked by the current boot, so it is not a shortcut for the restore procedure below.
 
 Checklist files are mounted from `/etc/kamui/operator`, not passed inline or printed. They hold public operational references/attestations, not credentials, identities or proof material. An acknowledgement records an operator review; it is not cryptographic proof that on-chain history is complete.
 

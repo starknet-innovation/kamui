@@ -27,6 +27,9 @@ EXTRA = {('ecr', 'describe-images'), ('ecr', 'describe-repositories'), ('ecr', '
          ('ssm', 'get-command-invocation'), ('ssm', 'send-command'),
          # Metadata only. Values are written by put_secret_value and never read back here.
          ('secretsmanager', 'describe-secret')}
+# Reboot tooling (reopen.py). Each run observes the host again, like 'verify': the host
+# programs are idempotent and re-check everything, so only an uncertain send is reconciled.
+REBOOT_LABELS = {'inspect', 'fence', 'reopen', 'enable-boot'}
 SECRET_ARN = re.compile(r'arn:aws:secretsmanager:eu-west-1:[0-9]{12}:secret:kamui-sepolia/(backend|pepper)/[a-z-]+-[A-Za-z0-9]{6}')
 
 
@@ -201,9 +204,11 @@ class Driver:
         raise ValueError('INSTALL_STACK_PENDING_RECONCILE_SAME_STEP')
 
     def command(self, role, label, instance, command):
-        """Exactly one SendCommand; unknown results only reconcile by Comment."""
+        """Exactly one SendCommand; unknown results only reconcile by Comment.
+
+        Reboot labels also return the command's standard output for the caller to parse."""
         self.identities()
-        if role not in {'backend', 'pepper'} or label not in {'install', 'verify'} or not re.fullmatch(r'i-[0-9a-f]{8,17}', instance):
+        if role not in {'backend', 'pepper'} or label not in {'install', 'verify'} | REBOOT_LABELS or not re.fullmatch(r'i-[0-9a-f]{8,17}', instance):
             raise ValueError('INSTALL_COMMAND_SCOPE_INVALID')
         target = self.target(role)
         if target['InstanceId'] != instance: raise ValueError('INSTALL_COMMAND_TARGET_CHANGED')
@@ -211,7 +216,7 @@ class Driver:
         fingerprint = sha(command.encode())
         stem = role+'-'+label+'-'+fingerprint[:16]
         sequence = None
-        if label == 'verify':
+        if label != 'install':
             # A new explicit verification must observe the host again. Only an
             # unfinished/uncertain verification reuses its old command intent.
             for sequence in range(10000):
@@ -269,9 +274,10 @@ class Driver:
                 if target.exists():
                     if json.loads(read_private(target)) != result: raise ValueError('INSTALL_COMMAND_EVIDENCE_CHANGED')
                 else: write_private(target, result)
+                if label in REBOOT_LABELS: return {**result, 'output': reply.get('StandardOutputContent', '')}
                 return result
             if reply.get('Status') not in {'Pending', 'InProgress', 'Delayed'}:
-                if label == 'verify':
+                if label != 'install':
                     target = self.directory/(stem+'-terminal.json')
                     if not target.exists(): write_private(target, {'status': 'failed', 'commandId': command_id})
                 raise ValueError('INSTALL_COMMAND_FAILED_KEEP_PRIVATE_LOGS')
