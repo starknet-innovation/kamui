@@ -45,7 +45,11 @@ const config = {
   // Optional. Without it the page does not offer "Continue with Apple".
   appleClientId: process.env.APPLE_CLIENT_ID ?? secrets.AUTHORIZED_APPLE_RECOVERY_CLIENT_ID ?? '',
   // The keychain never reads a credential-bearing backend RPC URL from its secret file.
-  rpcUrl: (production ? publicHttpsUrl(process.env.PUBLIC_RPC_URL, 'PUBLIC_RPC_URL') : process.env.PUBLIC_RPC_URL ?? process.env.RPC_URL) ?? 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10',
+  rpcUrl: (production ? publicHttpsUrl(process.env.PUBLIC_RPC_URL, 'PUBLIC_RPC_URL') : process.env.PUBLIC_RPC_URL ?? process.env.RPC_URL) ?? 'https://sepolia.nodes.starknet.org/rpc/v0_10',
+  // Optional second public node, used only when the first cannot serve a request.
+  rpcFallbackUrl: production
+    ? (process.env.PUBLIC_RPC_FALLBACK_URL ? publicHttpsUrl(process.env.PUBLIC_RPC_FALLBACK_URL, 'PUBLIC_RPC_FALLBACK_URL') : '')
+    : process.env.PUBLIC_RPC_FALLBACK_URL ?? '',
   // Pinned upstream state acquisition deliberately supports only this public endpoint.
   proverRpcUrl: 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10',
   classHash: need(process.env.KAMUI_ACCOUNT_CLASS_HASH ?? deployments.KAMUI_ACCOUNT_CLASS_HASH, 'KAMUI_ACCOUNT_CLASS_HASH'),
@@ -88,7 +92,7 @@ const security = {
     "script-src 'self' 'wasm-unsafe-eval'",
     "worker-src 'self'",
     "style-src 'self'",
-    `connect-src 'self' data: ${new URL(config.rpcUrl).origin} ${new URL(config.proverRpcUrl).origin} ${new URL(config.pepperUrl).origin}`,
+    `connect-src 'self' data: ${[...new Set([config.rpcUrl, config.rpcFallbackUrl, config.proverRpcUrl].filter(Boolean).map(url => new URL(url).origin))].join(' ')} ${new URL(config.pepperUrl).origin}`,
     "base-uri 'none'",
     "form-action 'none'",
     "frame-ancestors 'none'",

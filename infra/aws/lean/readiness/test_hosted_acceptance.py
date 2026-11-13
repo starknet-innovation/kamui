@@ -8,13 +8,13 @@ SPEC = importlib.util.spec_from_file_location('hosted_acceptance', Path(__file__
 m = importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(m)
 
 HEADERS = {
-    'content-security-policy': "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; connect-src 'self' data: https://api.zan.top https://api.zan.top https://pepper-sepolia.kamui.page; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    'content-security-policy': "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; connect-src 'self' data: https://sepolia.nodes.starknet.org https://api.zan.top https://pepper-sepolia.kamui.page; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
     'strict-transport-security': 'max-age=31536000', 'cache-control': 'no-store'
 }
 CONFIG = {'proverReady': True, 'proverExecutor': m.EXECUTOR, 'jwkRegistry': m.REGISTRY,
           'googleClientId': 'public-fixture.apps.googleusercontent.com', 'appleClientId': '',
-          'rpcUrl': m.RPC, 'proverRpcUrl': m.RPC, 'classHash': m.CLASS, 'pepperUrl': m.PEPPER,
+          'rpcUrl': m.RPC, 'rpcFallbackUrl': m.RPC_FALLBACK, 'proverRpcUrl': m.PROVER_RPC, 'classHash': m.CLASS, 'pepperUrl': m.PEPPER,
           'apiUrl': '/api', 'redirectUri': m.KEYCHAIN + '/callback', 'pollMs': 2000}
 
 class HostedAcceptanceTests(unittest.TestCase):

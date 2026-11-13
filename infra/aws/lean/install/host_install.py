@@ -197,6 +197,34 @@ def install_file(path, body, mode=0o644):
     path.chmod(mode)
 
 
+def replace_file(path, body, mode, allowed):
+    """Pre-start replacement only: the current content must be one we expect."""
+    if path.is_symlink(): raise ValueError('MANAGED_FILE_SYMLINK_REFUSED')
+    if path.exists():
+        current = read_managed(path, 4*1024*1024, mode)
+        if current == body: return
+        if current not in allowed: raise ValueError('INSTALLED_FILE_CHANGED_REFUSE_REPLACE')
+    temporary = path.parent/('.replace-'+uuid.uuid4().hex)
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    try:
+        set_root_owner(fd)
+        with os.fdopen(fd, 'wb') as output: output.write(body); output.flush(); os.fsync(output.fileno())
+        temporary.chmod(mode)
+        os.rename(temporary, path)
+    finally:
+        if temporary.exists(): temporary.unlink()
+
+
+def unstarted_receipt(value, role):
+    """A replaceable receipt is a well-formed, never-started install of the same role."""
+    if not isinstance(value, dict) or set(value) != {'schema', 'role', 'manifestSha256', 'archiveSha256', 'walletStarted'}:
+        raise ValueError('INSTALLED_RECEIPT_INVALID')
+    if value['schema'] != SCHEMA or value['role'] != role: raise ValueError('INSTALLED_RECEIPT_INVALID')
+    if value['walletStarted'] is not False: raise ValueError('STARTED_WALLET_REQUIRES_REVIEWED_UPGRADE')
+    hash_string(value['manifestSha256']); hash_string(value['archiveSha256'])
+    return value
+
+
 class Runner:
     def __init__(self, directory): self.directory = directory
     def run(self, args, check=True):
@@ -266,7 +294,7 @@ def prerequisites(paths, run, manifest, compose_binary=None, compose_sha256=None
         raise ValueError('COMPOSE_VERSION_MISMATCH')
 
 
-def install(role, archive_path, manifest_path, expected_manifest, compose_binary=None, compose_sha256=None, paths=None, runner=None, require_root=True):
+def install(role, archive_path, manifest_path, expected_manifest, compose_binary=None, compose_sha256=None, paths=None, runner=None, require_root=True, replace_unstarted=False):
     if require_root and (os.geteuid() != 0 or os.getegid() != 0): raise ValueError('ROOT_REQUIRED')
     paths = paths or Paths()
     raw = read_regular(manifest_path, 1024*1024)
@@ -287,21 +315,33 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
             except BlockingIOError: raise ValueError('HOST_INSTALL_BUSY') from None
             receipt_path = records/(role+'.json')
             receipt = {'schema': SCHEMA, 'role': role, 'manifestSha256': sha(raw), 'archiveSha256': manifest['archiveSha256'], 'walletStarted': False}
+            previous = None
             if receipt_path.exists():
-                if json.loads(read_managed(receipt_path, 4096, 0o600)) != receipt: raise ValueError('DIFFERENT_RELEASE_REQUIRES_REVIEWED_UPGRADE')
-                verify_installed(paths, manifest, receipt)
-                return {'status': 'already_installed_verified', 'walletStarted': False}
+                existing = json.loads(read_managed(receipt_path, 4096, 0o600))
+                if existing == receipt:
+                    verify_installed(paths, manifest, receipt)
+                    return {'status': 'already_installed_verified', 'walletStarted': False}
+                # A different release replaces the installed one only when explicitly
+                # requested and nothing was ever started or written by the wallet.
+                if not replace_unstarted: raise ValueError('DIFFERENT_RELEASE_REQUIRES_REVIEWED_UPGRADE')
+                previous = unstarted_receipt(existing, role)
             state = paths.at('/var/lib/kamui')
             if state.exists() and any(p.is_file() or p.is_symlink() for p in state.rglob('*')):
                 raise ValueError('EXISTING_WALLET_STATE_REQUIRES_REVIEWED_UPGRADE')
-            expected_tree = paths.at('/opt/kamui/releases')/manifest['archiveSha256']/'lean'
+            release_trees = paths.at('/opt/kamui/releases')
+            expected_tree = release_trees/manifest['archiveSha256']/'lean'
             existing_link = paths.root/'opt/kamui/lean'
-            if existing_link.is_symlink() and existing_link.resolve() != expected_tree.resolve():
+            if previous is not None:
+                old_tree = release_trees/previous['archiveSha256']/'lean'
+                # A crash mid-replacement may already have swapped the link.
+                if not existing_link.is_symlink() or existing_link.resolve() not in {old_tree.resolve(), expected_tree.resolve()}:
+                    raise ValueError('INSTALLED_PACKAGE_LINK_CHANGED')
+            elif existing_link.is_symlink() and existing_link.resolve() != expected_tree.resolve():
                 raise ValueError('DIFFERENT_RELEASE_REQUIRES_REVIEWED_UPGRADE')
             if existing_link.exists() and not existing_link.is_symlink(): raise ValueError('EXISTING_PACKAGE_REFUSE_REPLACE')
             images = ''.join(key+'='+manifest['releaseImages'][key]+'\n' for key in sorted(IMAGE_KEYS)).encode()
             existing_manifest = paths.at('/etc/kamui/release.env')
-            if existing_manifest.exists() and read_managed(existing_manifest, 8192, 0o600) != images:
+            if previous is None and existing_manifest.exists() and read_managed(existing_manifest, 8192, 0o600) != images:
                 raise ValueError('EXISTING_FILE_DIFFERS_REFUSE_OVERWRITE')
             existing_plugin = paths.at('/usr/local/lib/docker/cli-plugins/docker-compose')
             if existing_plugin.exists() and sha(read_managed(existing_plugin, 160*1024*1024, 0o755)) != manifest['compose']['sha256']:
@@ -321,14 +361,32 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
                 finally:
                     if stage.exists(): shutil.rmtree(stage)
             link = paths.root/'opt/kamui/lean'
-            if link.is_symlink():
+            if previous is not None:
+                # Keep evidence of what was replaced before changing anything visible.
+                install_file(records/(role+'-superseded-'+previous['archiveSha256'][:16]+'.json'),
+                             (json.dumps(previous, sort_keys=True)+'\n').encode(), 0o600)
+                if link.resolve() != (destination/'lean').resolve():
+                    swap = link.parent/('.lean-replace-'+uuid.uuid4().hex)
+                    os.symlink(destination/'lean', swap)
+                    try: os.rename(swap, link)
+                    finally:
+                        if swap.is_symlink(): swap.unlink()
+            elif link.is_symlink():
                 if link.resolve() != (destination/'lean').resolve(): raise ValueError('DIFFERENT_RELEASE_REQUIRES_REVIEWED_UPGRADE')
             elif link.exists(): raise ValueError('EXISTING_PACKAGE_REFUSE_REPLACE')
             else: os.symlink(destination/'lean', link)
             config = paths.at('/etc/kamui'); directory(config, 0o700)
             for name in ['secrets', 'operator', 'backup']: directory(config/name, 0o700)
             images = ''.join(key+'='+manifest['releaseImages'][key]+'\n' for key in sorted(IMAGE_KEYS)).encode()
-            install_file(config/'release.env', images, 0o600)
+            if previous is not None:
+                # The old image list is not recoverable from the receipt; replace only a
+                # regular root-owned 0600 file that already holds a well-formed list.
+                current = read_managed(config/'release.env', 8192, 0o600) if (config/'release.env').exists() else None
+                if current is not None and current != images and not re.fullmatch(rb'(?:[A-Z_]+_IMAGE=[^\n]+\n){5}', current):
+                    raise ValueError('INSTALLED_FILE_CHANGED_REFUSE_REPLACE')
+                replace_file(config/'release.env', images, 0o600, {current} if current else set())
+            else:
+                install_file(config/'release.env', images, 0o600)
             directory(state, 0o700)
             for name in ['caddy', 'caddy-config']: directory(state/name, 0o700)
             if role == 'backend':
@@ -340,13 +398,25 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
             if role == 'backend': units += ['systemd/kamui-backend-boot-fence.service', 'systemd/kamui@backend.service.d/restore-fence.conf',
                 'backup/kamui-backup@.service', 'backup/kamui-backup-full.timer', 'backup/kamui-backup-check.timer']
             for relative in units:
-                target = relative.removeprefix('systemd/').removeprefix('backup/')
-                install_file(paths.at('/etc/systemd/system/'+target), read_regular(lean/relative, 1024*1024))
+                target = paths.at('/etc/systemd/system/'+relative.removeprefix('systemd/').removeprefix('backup/'))
+                body = read_regular(lean/relative, 1024*1024)
+                if previous is None:
+                    install_file(target, body)
+                else:
+                    # Only the unit the previous release installed may be replaced.
+                    old = release_trees/previous['archiveSha256']/'lean'/relative
+                    allowed = {read_managed(old, 1024*1024)} if old.is_file() and not old.is_symlink() else set()
+                    replace_file(target, body, 0o644, allowed)
             commands.run(['systemctl', 'daemon-reload'])
             # Deliberately no enable/start Kamui/backup/monitor units and no DB/gate action.
-            install_file(receipt_path, (json.dumps(receipt, sort_keys=True)+'\n').encode(), 0o600)
+            if previous is None:
+                install_file(receipt_path, (json.dumps(receipt, sort_keys=True)+'\n').encode(), 0o600)
+            else:
+                replace_file(receipt_path, (json.dumps(receipt, sort_keys=True)+'\n').encode(), 0o600,
+                             {(json.dumps(previous, sort_keys=True)+'\n').encode()})
             verify_installed(paths, manifest, receipt)
-            return {'status': 'host_installed_wallet_stopped', 'walletStarted': False, 'databaseInitialized': False, 'unitsEnabled': False}
+            return {'status': 'host_replaced_wallet_stopped' if previous else 'host_installed_wallet_stopped',
+                    'walletStarted': False, 'databaseInitialized': False, 'unitsEnabled': False}
         finally: os.close(lock)
 
 
@@ -415,11 +485,14 @@ def main():
     parser.add_argument('--compose-binary')
     parser.add_argument('--compose-sha256')
     parser.add_argument('--check', action='store_true', help='Read-only verification of the installed public package/dependencies')
+    parser.add_argument('--replace-unstarted', action='store_true', help='Replace a different installed release only if the wallet never started')
     args = parser.parse_args()
+    if args.check and args.replace_unstarted: raise ValueError('CHECK_CANNOT_REPLACE')
     if args.check:
         print(json.dumps(check(args.role, args.archive, args.manifest, args.manifest_sha256)))
     else:
-        print(json.dumps(install(args.role, args.archive, args.manifest, args.manifest_sha256, args.compose_binary, args.compose_sha256)))
+        print(json.dumps(install(args.role, args.archive, args.manifest, args.manifest_sha256, args.compose_binary, args.compose_sha256,
+                                 replace_unstarted=args.replace_unstarted)))
 
 
 if __name__ == '__main__':

@@ -91,6 +91,68 @@ class HostInstallTest(unittest.TestCase):
         options['manifest_path'].write_text(json.dumps(manifest))
         options['expected_manifest'] = host.sha(options['manifest_path'].read_bytes())
 
+    def next_release(self, options, manifest, changed='caddy/backend.Caddyfile', unit=None):
+        """A second release with one changed package file and new image digests."""
+        bodies = {name: (LEAN/name).read_bytes() for name in manifest['files']}
+        bodies[changed] += b'\n# next release\n'
+        if unit: bodies[unit] += b'\n# next release unit\n'
+        archive = self.archive(bodies)
+        following = copy.deepcopy(manifest)
+        following['files'] = {name: {'sha256': host.sha(body), 'mode': manifest['files'][name]['mode']} for name, body in bodies.items()}
+        following['archiveSha256'] = host.sha(archive)
+        following['releaseImages'] = {key: 'example.invalid/kamui/'+key.lower()+'@sha256:'+'2'*64 for key in host.IMAGE_KEYS}
+        source = options['archive_path'].parent
+        (source/'next.tar.gz').write_bytes(archive); (source/'next.json').write_text(json.dumps(following))
+        return {**options, 'archive_path': source/'next.tar.gz', 'manifest_path': source/'next.json',
+                'expected_manifest': host.sha((source/'next.json').read_bytes())}, following
+
+    def test_different_release_replaces_unstarted_install_only_when_requested(self):
+        root, manifest, options, commands, _ = self.fixture()
+        host.install(**options)
+        old_receipt = (root/'var/lib/kamui-install/backend.json').read_bytes()
+        following, next_manifest = self.next_release(options, manifest, unit='systemd/kamui@.service')
+        with self.assertRaisesRegex(ValueError, 'DIFFERENT_RELEASE_REQUIRES_REVIEWED_UPGRADE'):
+            host.install(**following)
+        result = host.install(**following, replace_unstarted=True)
+        self.assertEqual(result['status'], 'host_replaced_wallet_stopped'); self.assertFalse(result['walletStarted'])
+        self.assertEqual((root/'opt/kamui/lean').resolve(), (root/'opt/kamui/releases'/next_manifest['archiveSha256']/'lean').resolve())
+        self.assertIn(b'2'*64, (root/'etc/kamui/release.env').read_bytes())
+        self.assertIn(b'next release unit', (root/'etc/systemd/system/kamui@.service').read_bytes())
+        self.assertEqual(json.loads((root/'var/lib/kamui-install/backend.json').read_text())['archiveSha256'], next_manifest['archiveSha256'])
+        self.assertEqual((root/'var/lib/kamui-install'/('backend-superseded-'+manifest['archiveSha256'][:16]+'.json')).read_bytes(), old_receipt)
+        self.assertFalse(any(c[:2] in [['systemctl', 'enable'], ['docker', 'run']] for c in commands.calls))
+        self.assertEqual(host.install(**following, replace_unstarted=True)['status'], 'already_installed_verified')
+        read_options = {k: v for k, v in following.items() if k not in {'compose_binary', 'compose_sha256'}}
+        self.assertEqual(host.check(**read_options)['status'], 'public_host_install_verified')
+
+    def test_replacement_refuses_wallet_state_started_receipt_or_changed_units(self):
+        root, manifest, options, _, _ = self.fixture()
+        host.install(**options)
+        following, _ = self.next_release(options, manifest)
+        (root/'var/lib/kamui/postgres/PG_VERSION').write_text('16\n')
+        with self.assertRaisesRegex(ValueError, 'EXISTING_WALLET_STATE_REQUIRES_REVIEWED_UPGRADE'):
+            host.install(**following, replace_unstarted=True)
+        (root/'var/lib/kamui/postgres/PG_VERSION').unlink()
+        receipt = root/'var/lib/kamui-install/backend.json'; original = receipt.read_text()
+        receipt.write_text(json.dumps({**json.loads(original), 'walletStarted': True}))
+        with self.assertRaisesRegex(ValueError, 'STARTED_WALLET_REQUIRES_REVIEWED_UPGRADE'):
+            host.install(**following, replace_unstarted=True)
+        receipt.write_text(original)
+        unit = root/'etc/systemd/system/kamui@.service'; unit.write_bytes(unit.read_bytes()+b'\n# local edit\n')
+        following_unit, _ = self.next_release(options, manifest, unit='systemd/kamui@.service')
+        with self.assertRaisesRegex(ValueError, 'INSTALLED_FILE_CHANGED_REFUSE_REPLACE'):
+            host.install(**following_unit, replace_unstarted=True)
+
+    def test_interrupted_replacement_after_link_swap_resumes(self):
+        root, manifest, options, _, _ = self.fixture()
+        host.install(**options)
+        following, next_manifest = self.next_release(options, manifest)
+        with patch.object(host, 'replace_file', side_effect=ValueError('SIMULATED_CRASH')):
+            with self.assertRaisesRegex(ValueError, 'SIMULATED_CRASH'):
+                host.install(**following, replace_unstarted=True)
+        self.assertEqual((root/'opt/kamui/lean').resolve(), (root/'opt/kamui/releases'/next_manifest['archiveSha256']/'lean').resolve())
+        self.assertEqual(host.install(**following, replace_unstarted=True)['status'], 'host_replaced_wallet_stopped')
+
     def test_backend_install_preserves_startup_fences_and_installs_consumer_layout(self):
         root, manifest, options, commands, ownership = self.fixture()
         result = host.install(**options)

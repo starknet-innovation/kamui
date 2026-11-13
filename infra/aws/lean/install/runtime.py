@@ -11,7 +11,9 @@ import stat
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[3]
-RPC = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10'
+# SNF's public Sepolia node first; ZAN only when it cannot serve a request (no SLA).
+RPC = 'https://sepolia.nodes.starknet.org/rpc/v0_10'
+RPC_FALLBACK = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10'
 KEYCHAIN = 'https://sepolia.kamui.page'
 PEPPER = 'https://pepper-sepolia.kamui.page'
 FIELD = (1 << 251) + 17 * (1 << 192) + 1
@@ -161,13 +163,14 @@ def prepare(root, metadata=None, source_paths=None):
     url = 'postgresql://kamui:'+app+'@postgres:5432/kamui\n'
     write(secret_dir/'DATABASE_URL', url)
     write(secret_dir/'OPERATOR_DATABASE_URL', url)
-    write(backend/'backend.public.env', env_bytes({'CHAIN_ID': 'SN_SEPOLIA', 'RPC_URL': RPC,
+    write(backend/'backend.public.env', env_bytes({'CHAIN_ID': 'SN_SEPOLIA', 'RPC_URL': RPC, 'RPC_FALLBACK_URL': RPC_FALLBACK,
         'KAMUI_ACCOUNT_CLASS_HASH': CLASS, 'AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID': data['googleClientId'],
         'RELAYER_ADDRESS': data['relayerAddress'], 'PEPPER_SERVICE_URL': PEPPER,
         'DEPLOYS_PER_HOUR': '0', 'SPONSORED_PER_HOUR': '0'}))
     write(backend/'keychain.public.env', env_bytes({'GOOGLE_CLIENT_ID': data['googleClientId'],
-        'KAMUI_ACCOUNT_CLASS_HASH': CLASS, 'PROVER_EXECUTOR_ADDRESS': EXECUTOR, 'JWK_REGISTRY_ADDRESS': REGISTRY, 'PUBLIC_RPC_URL': RPC}))
-    write(backend/'watcher.public.env', env_bytes({'CHAIN_ID': 'SN_SEPOLIA', 'RPC_URL': RPC,
+        'KAMUI_ACCOUNT_CLASS_HASH': CLASS, 'PROVER_EXECUTOR_ADDRESS': EXECUTOR, 'JWK_REGISTRY_ADDRESS': REGISTRY, 'PUBLIC_RPC_URL': RPC,
+        'PUBLIC_RPC_FALLBACK_URL': RPC_FALLBACK}))
+    write(backend/'watcher.public.env', env_bytes({'CHAIN_ID': 'SN_SEPOLIA', 'RPC_URL': RPC, 'RPC_FALLBACK_URL': RPC_FALLBACK,
         'SN_SEPOLIA_REGISTRY_ADDRESS': REGISTRY, 'SN_SEPOLIA_REGISTRY_BLOCK': data['registryBlock'],
         'WATCHER_POLL_SECONDS': '60', 'WATCHER_WEBHOOK_URL': ''}))
     write(pepper/'pepper.private.env', env_bytes({'KMS_KEY_ID': data['pepperKeyArn'], 'PEPPER_KEY_CHECK': data['pepperKeyCheck'],

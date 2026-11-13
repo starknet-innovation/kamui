@@ -15,7 +15,10 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[4]
 KEYCHAIN = 'https://sepolia.kamui.page'
 PEPPER = 'https://pepper-sepolia.kamui.page'
-RPC = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10'
+RPC = 'https://sepolia.nodes.starknet.org/rpc/v0_10'
+RPC_FALLBACK = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10'
+# The pinned browser prover v1.0.1 accepts only ZAN; move to RPC with prover v1.0.2.
+PROVER_RPC = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10'
 CLASS = '0x1e128dae2cb709cac9263afa1c6fdb33f7f1f5c2d969547d9739326d08399f6'
 REGISTRY = '0x4bc2b2afcce053e788511a851e6aeb004d18adb243df4fe852e1b727bd09808'
 EXECUTOR = '0x44c921502db6c924a29f78256d72926060efa599cd13d97142efa192eaebd4c'
@@ -74,13 +77,13 @@ def headers_ok(headers, asset=False):
     directives = dict((v.split(None, 1) + [''])[:2] for v in csp.split(';') if v.strip())
     for name, expected in {'default-src': "'none'", 'script-src': "'self' 'wasm-unsafe-eval'", 'worker-src': "'self'", 'style-src': "'self'", 'base-uri': "'none'", 'form-action': "'none'", 'frame-ancestors': "'none'"}.items():
         require(directives.get(name) == expected, 'CSP_MISMATCH')
-    require(set(directives.get('connect-src', '').split()) == {"'self'", "data:", "https://api.zan.top", "https://pepper-sepolia.kamui.page"}, 'CSP_CONNECT_MISMATCH')
+    require(set(directives.get('connect-src', '').split()) == {"'self'", "data:", "https://sepolia.nodes.starknet.org", "https://api.zan.top", "https://pepper-sepolia.kamui.page"}, 'CSP_CONNECT_MISMATCH')
     cache = headers.get('cache-control', '')
     require(('immutable' in cache and 'max-age=31536000' in cache) if asset else cache == 'no-store', 'CACHE_POLICY_MISMATCH')
 
 def config_ok(config, client_id):
     expected = {'proverReady': True, 'proverExecutor': EXECUTOR, 'jwkRegistry': REGISTRY, 'googleClientId': client_id,
-                'appleClientId': '', 'rpcUrl': RPC, 'proverRpcUrl': RPC, 'classHash': CLASS,
+                'appleClientId': '', 'rpcUrl': RPC, 'rpcFallbackUrl': RPC_FALLBACK, 'proverRpcUrl': PROVER_RPC, 'classHash': CLASS,
                 'pepperUrl': PEPPER, 'apiUrl': '/api', 'redirectUri': KEYCHAIN + '/callback'}
     require(set(config) == set(expected) | {'pollMs'}, 'CONFIG_FIELDS_MISMATCH')
     require(all(config.get(k) == v for k, v in expected.items()), 'PUBLIC_CONFIG_MISMATCH')

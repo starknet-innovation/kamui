@@ -6,7 +6,7 @@
   "accountAddress": "FILL_REVIEWED_ADMIN_ACCOUNT_ADDRESS",
   "classHash": "FILL_REVIEWED_KMS_K1_ADMIN_CLASS_HASH",
   "maxFeeFri": "FILL_APPROVED_PER_TRANSACTION_FRI_LIMIT",
-  "rpcUrl": "https://api.zan.top/public/starknet-sepolia/rpc/v0_10",
+  "rpcUrl": "https://sepolia.nodes.starknet.org/rpc/v0_10",
   "transaction": {
     "kind": "invoke",
     "calls": [{

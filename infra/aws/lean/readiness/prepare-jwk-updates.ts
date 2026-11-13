@@ -9,7 +9,7 @@ import { setLogSink } from '../../../../services/backend/src/log';
 const require = createRequire(new URL('../../../../services/backend/package.json', import.meta.url));
 const { RpcProvider, hash } = require('starknet');
 const GOOGLE = 'https://accounts.google.com';
-const RPC = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10';
+const RPC = 'https://sepolia.nodes.starknet.org/rpc/v0_10';
 const REVOKER = hash.getSelectorFromName('REVOKER_ROLE');
 const PRIME = 2n ** 251n + 17n * 2n ** 192n + 1n;
 const publicFelt = (value: unknown): string => {

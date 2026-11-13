@@ -136,9 +136,73 @@ def package(root, manifest, repo=REPO, compose_download=None):
     return artifacts
 
 
-def bootstrap(role, bucket, artifacts, verify=False):
+RUNTIME_DERIVED = ('backend/backend.public.env', 'backend/keychain.public.env', 'backend/watcher.public.env', 'manifest.json')
+SUPERSEDED_NAME = re.compile(r'[0-9]{3}-[0-9a-f]{12}')
+
+
+def superseded(root):
+    """Completed supersessions, oldest first. An unfinished one blocks every other step."""
+    archive = Path(root)/'installation/superseded'
+    if not archive.exists(): return []
+    done = []
+    for entry in sorted(archive.iterdir()):
+        if not SUPERSEDED_NAME.fullmatch(entry.name) or entry.is_symlink() or not entry.is_dir(): raise ValueError('SUPERSEDED_STATE_UNEXPECTED')
+        if not (entry/'complete.json').exists(): raise ValueError('SUPERSEDE_UNFINISHED_RERUN_SUPERSEDE')
+        record = json.loads(read_private(entry/'superseded.json'))
+        if json.loads(read_private(entry/'complete.json')) != record: raise ValueError('SUPERSEDED_STATE_UNEXPECTED')
+        done.append(record)
+    return done
+
+
+def supersede(root):
+    """Archive a completed, never-started release so 07-10 can build and install the next one.
+
+    Hosts still refuse the replacement unless their receipt shows the wallet never started and
+    no wallet state exists. Generated database secrets are kept; only derived public runtime
+    files are archived so script 08 rewrites them from the current source.
+    """
+    installation = Path(root)/'installation'
+    archive = private_dir(installation/'superseded')
+    entries = sorted(archive.iterdir())
+    if any(not SUPERSEDED_NAME.fullmatch(e.name) or e.is_symlink() or not e.is_dir() for e in entries):
+        raise ValueError('SUPERSEDED_STATE_UNEXPECTED')
+    pending = [e for e in entries if not (e/'complete.json').exists()]
+    if len(pending) > 1: raise ValueError('SUPERSEDED_STATE_UNEXPECTED')
+    if pending:
+        target = pending[0]
+        if not (target/'superseded.json').exists(): raise ValueError('SUPERSEDED_STATE_UNEXPECTED')
+        record = json.loads(read_private(target/'superseded.json'))
+    else:
+        release = installation/'release'/'release.json'
+        if not release.exists(): raise ValueError('SUPERSEDE_REQUIRES_COMPLETED_RELEASE')
+        raw = read_private(release)
+        revision = json.loads(raw).get('sourceRevision', '')
+        if not isinstance(revision, str) or not re.fullmatch('[a-f0-9]{40}', revision): raise ValueError('INSTALL_SOURCE_REVISION_REQUIRED')
+        target = archive/f'{len(entries)+1:03d}-{revision[:12]}'
+        os.mkdir(target, 0o700); base.sync(archive)
+        record = {'schema': 'kamui.superseded-release.v1', 'sourceRevision': revision, 'releaseSha256': sha(raw)}
+        write_private(target/'superseded.json', record)
+    # Each move is idempotent, so an interrupted run resumes instead of guessing.
+    moves = [(installation/'release', target/'release'), (installation/'package', target/'package')]
+    moves += [(installation/'runtime'/name, target/('runtime-'+name.replace('/', '-'))) for name in RUNTIME_DERIVED]
+    for source, destination in moves:
+        if source.is_symlink() or destination.is_symlink(): raise ValueError('SUPERSEDE_SYMLINK_REFUSED')
+        if source.exists():
+            if destination.exists(): raise ValueError('SUPERSEDED_STATE_UNEXPECTED')
+            os.rename(source, destination)
+            base.sync(source.parent); base.sync(target)
+    if (target/'release'/'release.json').exists() is False: raise ValueError('SUPERSEDED_STATE_UNEXPECTED')
+    if sha(read_private(target/'release'/'release.json')) != record['releaseSha256']: raise ValueError('SUPERSEDED_STATE_UNEXPECTED')
+    write_private(target/'complete.json', record)
+    return {'superseded': target.name, 'sourceRevision': record['sourceRevision'],
+            'nextSteps': ['07-build-release', '08-prepare-runtime', '09-install-hosts', '10-verify-installation'],
+            'walletStarted': False}
+
+
+def bootstrap(role, bucket, artifacts, verify=False, replace=False):
     if role not in ROLES or not re.fullmatch('[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]', bucket):
         raise ValueError('INSTALL_BOOTSTRAP_INPUT_INVALID')
+    if verify and replace: raise ValueError('INSTALL_VERIFY_CANNOT_REPLACE')
     q = shlex.quote
     selected = {'host-install.py': artifacts['installer'], 'pull-images.py': artifacts['puller'], 'compose-linux-x86_64': artifacts['compose'],
                 role+'.tar.gz': artifacts['roles'][role]['archive'], role+'-manifest.json': artifacts['roles'][role]['manifest']}
@@ -162,6 +226,8 @@ def bootstrap(role, bucket, artifacts, verify=False):
     command = 'python3 "$work/host-install.py" --role '+q(role)+' --archive "$work/'+role+'.tar.gz" --manifest "$work/'+role+'-manifest.json" --manifest-sha256 '+q(artifacts['roles'][role]['manifest']['sha256'])
     command += ' --compose-binary "$work/compose-linux-x86_64" --compose-sha256 '+q(COMPOSE_SHA)
     if verify: command += ' --check'
+    # Only after an explicit supersede; the host still refuses a started wallet or any wallet state.
+    if replace: command += ' --replace-unstarted'
     image_command = 'python3 "$work/pull-images.py" --role '+q(role)+' --manifest "$work/'+role+'-manifest.json" --manifest-sha256 '+q(artifacts['roles'][role]['manifest']['sha256'])+' --docker-config "$work/docker-auth"'
     if verify: image_command += ' --check'
     child += [command, image_command]
@@ -184,15 +250,16 @@ def deliver(root, aws, driver, verify=False):
             path = Path(artifact['path'])
             aws.put_public_file(config['backend']['aws_profile'], bucket, config['backend']['expected_account'],
                                 'installation/'+artifact['sha256']+'/'+path.name, path)
+    replace = not verify and bool(superseded(root))
     for role in ROLES:
         target = driver.target(role)
-        driver.command(role, 'verify' if verify else 'install', target['InstanceId'], bootstrap(role, bucket, artifacts, verify))
+        driver.command(role, 'verify' if verify else 'install', target['InstanceId'], bootstrap(role, bucket, artifacts, verify, replace))
     return {'publicPackageInstalled': True, 'verificationRequested': verify, 'runtimeDelivered': False, 'walletStarted': False}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('step', choices=['release', 'runtime', 'install', 'verify'])
+    parser.add_argument('step', choices=['supersede', 'release', 'runtime', 'install', 'verify'])
     parser.add_argument('--private-directory', default=str(Path.home()/'.kamui-hosting-sepolia'))
     parser.add_argument('--allow-local-tool-fixes', action='store_true', help='Resume an existing frozen release using logged helper-only local fixes')
     options = parser.parse_args()
@@ -203,6 +270,9 @@ def main():
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         print('STEP_'+options.step.upper(), flush=True)
+        if options.step == 'supersede':
+            print(json.dumps(supersede(root))); return
+        superseded(root)  # an interrupted supersede must be finished first
         if options.step == 'runtime':
             print(json.dumps(load('runtime').prepare(root))); return
         aws = Aws(root); driver = Driver(root, aws)

@@ -9,7 +9,7 @@ import stat
 import urllib.request
 from inspect_aws import load_private
 
-RPC_URL = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10'
+RPC_URL = 'https://sepolia.nodes.starknet.org/rpc/v0_10'
 CHAIN_ID = '0x' + b'SN_SEPOLIA'.hex()
 PRIME = 2**251 + 17*2**192 + 1
 ADMIN = '0x0'

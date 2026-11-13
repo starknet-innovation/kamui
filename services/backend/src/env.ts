@@ -18,14 +18,31 @@ export function env(name: string): string {
   return v;
 }
 
+/** Statuses after which the same JSON-RPC request is sent to the fallback node. */
+export function rpcUnavailable(status: number) {
+  return status === 429 || status >= 500;
+}
+
 // Kamui: every RPC request has a deadline (RPC_TIMEOUT_MS, 30 seconds by default), so a node
-// that stops answering fails a request instead of holding it.
+// that stops answering fails a request instead of holding it. With RPC_FALLBACK_URL set, a
+// request the primary node cannot serve (network error, timeout, 429 or 5xx) is sent once to the
+// fallback. Answers are never mixed within one request, and JSON-RPC errors are not retried.
+// Resending a signed transaction is safe: it has the same hash on either node.
 export function makeProvider() {
   const timeoutMs = Number(process.env.RPC_TIMEOUT_MS ?? 30_000);
+  const primary = env('RPC_URL');
+  const fallback = process.env.RPC_FALLBACK_URL || undefined;
+  const send = (url: RequestInfo | URL, init?: RequestInit) => fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   return new RpcProvider({
-    nodeUrl: env('RPC_URL'),
-    baseFetch: ((input: RequestInfo | URL, init?: RequestInit) =>
-      fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) })) as typeof fetch,
+    nodeUrl: primary,
+    baseFetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!fallback) return send(input, init);
+      try {
+        const answer = await send(input, init);
+        if (!rpcUnavailable(answer.status)) return answer;
+      } catch { /* unreachable or timed out: try the fallback */ }
+      return send(fallback, init);
+    }) as typeof fetch,
   });
 }
 

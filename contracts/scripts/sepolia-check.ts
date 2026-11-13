@@ -5,7 +5,7 @@ import { RpcProvider } from 'starknet';
 const account = process.argv[2];
 if (!account) throw new Error('usage: bun run sepolia-check.ts <account> [RPC_URL]');
 const provider = new RpcProvider({
-  nodeUrl: process.argv[3] ?? 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10',
+  nodeUrl: process.argv[3] ?? 'https://sepolia.nodes.starknet.org/rpc/v0_10',
 });
 const call = (entrypoint: string, calldata: string[] = []) =>
   provider.callContract({ contractAddress: account, entrypoint, calldata });

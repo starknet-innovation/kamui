@@ -230,3 +230,67 @@ class InstallationTest(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+
+
+class SupersedeTest(unittest.TestCase):
+    def layout(self, directory):
+        root = Path(directory).resolve(); installation = root/'installation'
+        for path in ['installation', 'installation/release', 'installation/package', 'installation/runtime',
+                     'installation/runtime/backend', 'installation/runtime/backend/secrets', 'installation/operations']:
+            (root/path).mkdir(mode=0o700)
+        common.write_private(installation/'release/release.json', {'sourceRevision': 'c'*40})
+        common.write_private(installation/'package/package.json', {'fixture': True})
+        for name in workflow.RUNTIME_DERIVED: common.write_private(installation/'runtime'/name, {'derived': name})
+        common.write_private(installation/'runtime/backend/secrets/APP_DATABASE_PASSWORD', {'kept': True})
+        common.write_private(installation/'operations/backend-release-stack-intent.json', {'kept': True})
+        return root, installation
+
+    def test_supersede_archives_release_package_and_derived_runtime_but_keeps_secrets(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, installation = self.layout(d)
+            self.assertEqual(workflow.superseded(root), [])
+            result = workflow.supersede(root)
+            self.assertEqual(result['superseded'], '001-'+'c'*12)
+            archive = installation/'superseded'/result['superseded']
+            self.assertFalse((installation/'release').exists()); self.assertFalse((installation/'package').exists())
+            self.assertTrue((archive/'release/release.json').exists()); self.assertTrue((archive/'package/package.json').exists())
+            for name in workflow.RUNTIME_DERIVED: self.assertFalse((installation/'runtime'/name).exists())
+            self.assertTrue((installation/'runtime/backend/secrets/APP_DATABASE_PASSWORD').exists())
+            self.assertTrue((installation/'operations/backend-release-stack-intent.json').exists())
+            self.assertEqual([r['sourceRevision'] for r in workflow.superseded(root)], ['c'*40])
+            with self.assertRaisesRegex(ValueError, 'SUPERSEDE_REQUIRES_COMPLETED_RELEASE'):
+                workflow.supersede(root)
+
+    def test_interrupted_supersede_blocks_other_steps_and_resumes(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, installation = self.layout(d)
+            real = os.rename; calls = []
+            def crash(source, destination):
+                calls.append(source)
+                if len(calls) == 2: raise OSError('simulated crash')
+                return real(source, destination)
+            with patch.object(workflow.os, 'rename', side_effect=crash):
+                with self.assertRaises(OSError): workflow.supersede(root)
+            with self.assertRaisesRegex(ValueError, 'SUPERSEDE_UNFINISHED_RERUN_SUPERSEDE'):
+                workflow.superseded(root)
+            self.assertEqual(workflow.supersede(root)['superseded'], '001-'+'c'*12)
+            self.assertFalse((installation/'package').exists())
+            self.assertEqual(len(workflow.superseded(root)), 1)
+
+    def test_supersede_without_completed_release_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, installation = self.layout(d)
+            (installation/'release/release.json').unlink()
+            with self.assertRaisesRegex(ValueError, 'SUPERSEDE_REQUIRES_COMPLETED_RELEASE'):
+                workflow.supersede(root)
+
+    def test_bootstrap_requests_replacement_only_for_install(self):
+        artifact = {'path': 'fixture', 'sha256': 'a'*64}
+        value = {'installer': artifact, 'puller': artifact, 'compose': artifact,
+                 'roles': {'backend': {'archive': artifact, 'manifest': artifact}}}
+        self.assertNotIn('--replace-unstarted', workflow.bootstrap('backend', 'fixture-release-bucket', value))
+        command = workflow.bootstrap('backend', 'fixture-release-bucket', value, replace=True)
+        self.assertIn('--replace-unstarted', command)
+        subprocess.run(['sh', '-n'], input=command, text=True, capture_output=True, check=True)
+        with self.assertRaisesRegex(ValueError, 'INSTALL_VERIFY_CANNOT_REPLACE'):
+            workflow.bootstrap('backend', 'fixture-release-bucket', value, verify=True, replace=True)

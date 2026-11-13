@@ -15,7 +15,7 @@ import { canonicalClassHash, parseOperatorInput } from './operator';
 const ROOT = join(homedir(), '.kamui-admin-sepolia');
 const DIR = join(ROOT, 'kms-sepolia-live');
 const JOURNAL = join(DIR, BUDGET_FILE);
-const RPC = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10';
+const RPC = 'https://sepolia.nodes.starknet.org/rpc/v0_10';
 const CHAIN = constants.StarknetChainId.SN_SEPOLIA;
 const RELAYER = '0x5bf22a824e3d20dfe018fab5de043a9cab41c45361f4ded0f2e2fc51776118e';
 const TOKEN = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
