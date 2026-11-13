@@ -218,6 +218,20 @@ def replace_file(path, body, mode, allowed, limit=4*1024*1024):
         if temporary.exists(): temporary.unlink()
 
 
+def has_wallet_state(state):
+    """Any file or link under the state directory counts as wallet state, except the empty lock the
+    host tool takes for every prepare/up/down. That lock holds no data; a non-empty one, a link in
+    its place, or the same name anywhere deeper still counts."""
+    for path in state.rglob('*'):
+        if path.is_symlink(): return True
+        if not path.is_file(): continue
+        if path.parent == state and path.name == '.operator.lock':
+            info = path.lstat()
+            if info.st_size == 0 and info.st_nlink == 1: continue
+        return True
+    return False
+
+
 def unstarted_receipt(value, role):
     """A replaceable receipt is a well-formed, never-started install of the same role."""
     if not isinstance(value, dict) or set(value) != {'schema', 'role', 'manifestSha256', 'archiveSha256', 'walletStarted'}:
@@ -330,7 +344,7 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
                 if not replace_unstarted: raise ValueError('DIFFERENT_RELEASE_REQUIRES_REVIEWED_UPGRADE')
                 previous = unstarted_receipt(existing, role)
             state = paths.at('/var/lib/kamui')
-            if state.exists() and any(p.is_file() or p.is_symlink() for p in state.rglob('*')):
+            if state.exists() and has_wallet_state(state):
                 raise ValueError('EXISTING_WALLET_STATE_REQUIRES_REVIEWED_UPGRADE')
             release_trees = paths.at('/opt/kamui/releases')
             expected_tree = release_trees/manifest['archiveSha256']/'lean'

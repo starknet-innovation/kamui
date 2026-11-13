@@ -170,6 +170,21 @@ class HostInstallTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'INSTALLED_FILE_CHANGED_REFUSE_REPLACE'):
             host.install(**following_unit, replace_unstarted=True)
 
+    def test_the_empty_host_control_lock_is_not_wallet_state_but_anything_else_is(self):
+        root, manifest, options, _, _ = self.fixture()
+        host.install(**options)
+        following, _ = self.next_release(options, manifest)
+        lock = root/'var/lib/kamui/.operator.lock'
+        lock.write_bytes(b'')
+        self.assertEqual(host.install(**following, replace_unstarted=True)['status'], 'host_replaced_wallet_stopped')
+        third, _ = self.images_only_release(following, json.loads(following['manifest_path'].read_text()), '5')
+        for setup in [lambda: lock.write_bytes(b'x'),
+                      lambda: (lock.unlink(), lock.symlink_to(root/'elsewhere')),
+                      lambda: (lock.unlink() if lock.is_symlink() else None, (root/'var/lib/kamui/postgres/.operator.lock').write_bytes(b''))]:
+            setup()
+            with self.assertRaisesRegex(ValueError, 'EXISTING_WALLET_STATE_REQUIRES_REVIEWED_UPGRADE'):
+                host.install(**third, replace_unstarted=True)
+
     def test_interrupted_replacement_after_link_swap_resumes(self):
         root, manifest, options, _, _ = self.fixture()
         host.install(**options)
