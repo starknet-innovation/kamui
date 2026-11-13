@@ -26,6 +26,28 @@ BOOT_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 REF = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$')
 CODE = re.compile(r'^[A-Z0-9_]{3,60}$')
 HELD_LOCK = 'KAMUI_HOST_CONTROL_LOCK_FD'  # scripts/host.py inherited_lock
+# Runs an older release's host.py or wallet-control.py (argv[1]) with the lock this process tree
+# already holds. Same check as scripts/host.py inherited_lock: the inherited descriptor must be the
+# state directory's lock file, and re-locking it succeeds only for its holder.
+LEGACY_SHIM = '''import fcntl, importlib.util, json, os, re, sys
+from contextlib import contextmanager
+from pathlib import Path
+script = sys.argv[1]; sys.argv = sys.argv[1:]
+fd = int(os.environ['KAMUI_HOST_CONTROL_LOCK_FD'])
+@contextmanager
+def held(state):
+    info, path = os.fstat(fd), os.lstat(Path(state)/'.operator.lock')
+    if (info.st_dev, info.st_ino) != (path.st_dev, path.st_ino): raise ValueError('HOST_CONTROL_LOCK_INVALID')
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    yield
+spec = importlib.util.spec_from_file_location('kamui_legacy_wrapper', script)
+wrapper = importlib.util.module_from_spec(spec); spec.loader.exec_module(wrapper)
+(wrapper.host if hasattr(wrapper, 'host') else wrapper).control_lock = held
+try: wrapper.main()
+except Exception as error:
+    code = str(error) if isinstance(error, ValueError) and re.fullmatch('[A-Z0-9_]{3,60}', str(error)) else 'LEGACY_WRAPPER_FAILED'
+    print(json.dumps({'ok': False, 'error': code}), file=sys.stderr); sys.exit(1)
+'''
 # services/backend/src/storage/restore-fence.ts RESTORE_REPLAY_WAIT_MS, plus clock margin.
 REPLAY_WAIT_SECONDS = 600
 REPLAY_MARGIN_SECONDS = 30
@@ -99,22 +121,15 @@ class Host:
         try: return HELD_LOCK in self.at(LEAN+'/scripts/host.py').read_text()
         except OSError: return False
 
-    @contextmanager
-    def lock_handoff(self):
-        """Around a host.py / wallet-control.py call made while holding the control lock.
+    def wrapped(self, args):
+        """A host.py / wallet-control.py call made while holding the control lock.
 
-        Wrappers from this release inherit the lock. An older installed release (the first upgrade
-        away from it) cannot: the lock is released for that one call and taken back immediately
-        after, refusing if anybody else took it meanwhile. Callers re-check what they rely on."""
-        fd = getattr(self, 'lock_fd', None)
-        if fd is None or self.inherits_lock():
-            yield; return
-        fcntl.flock(fd, fcntl.LOCK_UN); os.environ.pop(HELD_LOCK, None)
-        try: yield
-        finally:
-            try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError: raise Refused('HOST_CONTROL_BUSY') from None
-            os.environ[HELD_LOCK] = str(fd)
+        Wrappers from this release inherit the held lock themselves. An older installed release
+        (the first upgrade away from it) cannot, and the lock is never released for it: its wrapper
+        runs through LEGACY_SHIM, which loads it unchanged and only swaps its control_lock for one
+        that accepts the descriptor this process holds. Nobody else can take the lock meanwhile."""
+        if getattr(self, 'lock_fd', None) is None or self.inherits_lock(): return args
+        return args[:2] + ['-c', LEGACY_SHIM] + args[2:]
 
     def boot(self):
         boot_id = self.at('/proc/sys/kernel/random/boot_id').read_text().strip()
@@ -442,7 +457,7 @@ def prepare_backend(host, expected_boot, stopped_timers):
 
 def prepare_stopped_backend(host, boot_id, started, previous, stopped_timers):
     if writers_running(host.services('backend')): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT')
-    with host.lock_handoff(): code = host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare'])[0]
+    code = host.run(host.wrapped(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare']))[0]
     if code: raise Refused('POSTGRES_PREPARE_FAILED')
     services = host.services('backend')
     if writers_running(services): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT')
@@ -456,12 +471,10 @@ def prepare_stopped_backend(host, boot_id, started, previous, stopped_timers):
         if code or '"status":"backup-complete"' not in last: raise Refused('BACKUP_'+kind.upper()+'_FAILED')
     label = newest_full_backup(host, started)
     # Writers stay out until the operator reopens them, exactly as after a reboot.
-    # wallet-control refuses to block while a writer runs, so a writer started in an older release's
-    # brief handoff cannot slip past the block unnoticed.
-    with host.lock_handoff(): code, _, _ = host.run(['python3', '-B', LEAN+'/scripts/wallet-control.py', 'restore', 'block'])
+    code, _, _ = host.run(host.wrapped(['python3', '-B', LEAN+'/scripts/wallet-control.py', 'restore', 'block']))
     gate = read_gate(host)
     if code or gate['state'] != 'blocked' or gate['reason'] != 'restore': raise Refused('RESTORE_GATE_BLOCK_FAILED')
-    with host.lock_handoff(): code = host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'down'])[0]
+    code = host.run(host.wrapped(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'down']))[0]
     if code: raise Refused('STACK_DOWN_FAILED')
     no_containers(host, 'backend')
     prepare_id = str(uuid.uuid4())

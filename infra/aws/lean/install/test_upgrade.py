@@ -56,6 +56,8 @@ class UpgradeHost(FakeHost):
     def prepared(self): return json.loads((self.root/'var/lib/kamui-install'/(self.role+'-upgrade-prepared.json')).read_text())
 
     def run(self, args):
+        if args[:3] == ['python3', '-B', '-c']:
+            self.calls.append(('legacy-shim', Path(args[4]).name)); args = args[:2] + args[4:]
         if args[:2] in (['systemctl', 'stop'], ['systemctl', 'start']) and args[2] in TIMERS + ['kamui@pepper.service']:
             self.calls.append((args[1], args[2]))
             if args[2] == 'kamui@pepper.service':
@@ -203,7 +205,7 @@ class PrepareTest(unittest.TestCase):
         seen = []
         original = fake.run
         def observe(args):
-            if args[:2] == ['bash', '-c'] or (args[:2] == ['python3', '-B'] and args[2].endswith('/wallet-control.py')):
+            if args[:2] == ['bash', '-c'] or (args[:2] == ['python3', '-B'] and args[-3].endswith('/wallet-control.py')):
                 other = os.open(lock, os.O_WRONLY)
                 try: fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB); seen.append('free')
                 except BlockingIOError: seen.append('held')
@@ -212,9 +214,10 @@ class PrepareTest(unittest.TestCase):
             return original(args)
         fake.host.run = observe
         host_program.upgrade_prepare_backend(fake.host, BOOT)
-        # Backup, check, block. An older installed release cannot inherit the lock, so it is handed
-        # over for the block alone; the backups always run under it.
-        self.assertEqual(seen, ['held', True]*3 if inherits else ['held', True, 'held', True, 'free', False])
+        # Backup, check, block: always under the lock, whichever release is installed.
+        self.assertEqual(seen, ['held', True]*3)
+        shimmed = [c[1] for c in fake.calls if c[0] == 'legacy-shim']
+        self.assertEqual(shimmed, [] if inherits else ['host.py', 'wallet-control.py', 'host.py'])
         self.assertNotIn(host_program.HELD_LOCK, os.environ)
         other = os.open(lock, os.O_WRONLY)
         try: fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -223,19 +226,37 @@ class PrepareTest(unittest.TestCase):
     def test_an_older_installed_release_hands_the_lock_over_only_for_its_own_calls(self):
         self.test_the_control_lock_is_held_from_the_writer_check_to_the_record(inherits=False)
 
-    def test_a_lock_taken_during_the_handoff_refuses(self):
-        fake = self.host()
-        lock, others = fake.root/'var/lib/kamui/.operator.lock', []
-        original = fake.run
-        def grab(args):
-            if args[:2] == ['python3', '-B'] and args[2].endswith('/wallet-control.py'):
-                other = os.open(lock, os.O_WRONLY); others.append(other); fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return original(args)
-        fake.host.run = grab
-        self.addCleanup(lambda: [os.close(o) for o in others])
-        with self.assertRaises(host_program.Refused) as caught: host_program.upgrade_prepare_backend(fake.host, BOOT)
-        self.assertEqual(caught.exception.code, 'HOST_CONTROL_BUSY')
-        self.assertFalse((fake.root/'var/lib/kamui-install/backend-upgrade-prepared.json').exists())
+    def test_the_legacy_shim_runs_an_old_wrapper_under_the_held_lock(self):
+        """Real processes: an old-style wrapper that takes the lock itself, run with the lock held."""
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        state = Path(temporary.name).resolve(); state.chmod(0o700)
+        legacy = state/'host.py'
+        legacy.write_text("""import fcntl, os, sys
+from contextlib import contextmanager
+from pathlib import Path
+@contextmanager
+def control_lock(state):
+    fd = os.open(Path(state)/'.operator.lock', os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); yield
+    finally: os.close(fd)
+def main():
+    with control_lock(Path(sys.argv[1])): print('ran', sys.argv[2])
+""")
+        fd = os.open(state/'.operator.lock', os.O_CREAT | os.O_WRONLY, 0o600); self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        env = {**os.environ, host_program.HELD_LOCK: str(fd)}
+        direct = subprocess.run(['python3', '-B', '-c', 'import runpy,sys; m=runpy.run_path(sys.argv[1]); sys.argv=sys.argv[1:]; m["main"]()', str(legacy), str(state), 'x'],
+                                capture_output=True, text=True, env=env, pass_fds=(fd,))
+        self.assertNotEqual(direct.returncode, 0)  # the old wrapper alone cannot take a held lock
+        shimmed = subprocess.run(['python3', '-B', '-c', host_program.LEGACY_SHIM, str(legacy), str(state), 'prepare'],
+                                 capture_output=True, text=True, env=env, pass_fds=(fd,))
+        self.assertEqual((shimmed.returncode, shimmed.stdout), (0, 'ran prepare\n'))
+        # A descriptor that does not hold the lock is still refused.
+        other = os.open(state/'.operator.lock', os.O_WRONLY); self.addCleanup(os.close, other)
+        refused = subprocess.run(['python3', '-B', '-c', host_program.LEGACY_SHIM, str(legacy), str(state), 'prepare'],
+                                 capture_output=True, text=True, env={**os.environ, host_program.HELD_LOCK: str(other)}, pass_fds=(other,))
+        self.assertNotEqual(refused.returncode, 0)
 
     def test_a_busy_control_lock_refuses_before_the_backup(self):
         fake = self.host()

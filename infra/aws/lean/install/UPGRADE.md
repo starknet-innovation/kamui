@@ -20,10 +20,10 @@ hosts that hold real data. It is tested offline only until its first live run.
 - **No lifecycle command in between.** `prepare` holds the host lifecycle lock (the one `host.py` and
   `wallet-control.py` take) from its writer check, through the backup and the gate block, until the
   record is written. The installer holds it from validating the record until the replacement is
-  done. A concurrent `host.py up` or gate change is refused with `HOST_CONTROL_BUSY`. Release 5 and
-  earlier cannot inherit the lock, so on the first upgrade away from them it is handed over for
-  each of their own `host.py` / `wallet-control.py` calls only and retaken at once (refusing if
-  anyone else took it). `wallet-control` itself refuses to block the gate while a writer runs.
+  done. A concurrent `host.py up` or gate change is refused with `HOST_CONTROL_BUSY`. Wrappers from
+  this release inherit the held lock. Release 5 and earlier cannot, so on the first upgrade away
+  from them `prepare` runs their own `host.py` / `wallet-control.py` unchanged through a small
+  wrapper that accepts the held lock. The lock is never released mid-preparation.
 - **Backup timers come back as they were.** Before stopping anything, `prepare` records which backup
   timers were running, adding to an earlier record if a previous attempt refused. `finish` starts
   exactly those, whether or not they are enabled, and forgets the record.
