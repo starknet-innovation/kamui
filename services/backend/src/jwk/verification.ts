@@ -130,17 +130,32 @@ export type Jwt = {
   signature: Uint8Array<ArrayBuffer>;
 };
 
+/**
+ * Splits and type-checks a token. Throws only `BAD_JWT`, `UNSUPPORTED_ALG` or `BAD_PAYLOAD`:
+ * never a JSON error, whose message would echo part of the token. Same checks as the pepper
+ * service's `extractJwt`.
+ */
 export function extractJwt(jwt: string): Jwt {
   const parts = jwt.split('.');
   if (parts.length !== 3) throw new Error('BAD_JWT');
-
   const [header, payload, signature] = parts;
-  const json = (s: string) => JSON.parse(Buffer.from(s, 'base64url').toString());
-  const h = json(header) as { alg?: string; kid?: string };
-  const p = json(payload) as Partial<Pick<Jwt, 'iss' | 'aud' | 'sub' | 'nonce' | 'exp' | 'iat'>>;
 
-  if (h.alg !== 'RS256' || !h.kid) throw new Error('UNSUPPORTED_ALG');
-  if (!p.iss || !p.aud || !p.sub || !p.nonce || !p.exp || !p.iat) throw new Error('BAD_PAYLOAD');
+  let h: Record<string, unknown>, p: Record<string, unknown>;
+  try {
+    const json = (s: string) => JSON.parse(Buffer.from(s, 'base64url').toString());
+    h = json(header);
+    p = json(payload);
+  } catch {
+    throw new Error('BAD_JWT');
+  }
+  if (typeof h !== 'object' || h === null || typeof p !== 'object' || p === null) throw new Error('BAD_JWT');
+
+  // RS256 only: `none` and HMAC algorithms are refused here, before any key is looked up.
+  if (h.alg !== 'RS256' || typeof h.kid !== 'string' || !h.kid) throw new Error('UNSUPPORTED_ALG');
+  const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+  const int = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
+  // `aud` must be one string. The contract hashes it as one ByteArray, and both issuers send one.
+  if (!str(p.iss) || !str(p.aud) || !str(p.sub) || !str(p.nonce) || !int(p.exp) || !int(p.iat)) throw new Error('BAD_PAYLOAD');
 
   return {
     kid: h.kid,
