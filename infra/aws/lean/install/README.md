@@ -6,7 +6,7 @@ The current sole-KMS/shared-bootstrap custody acceptance applies to Sepolia only
 
 ## Run in order
 
-First finish `06-addresses.sh` using the corrected attachment check. Preserve the existing private directory and all intents. Commit and review the installation changes before `07`: image publication and package generation refuse a dirty or changed source revision.
+First finish `06-addresses.sh` using the corrected attachment check. Preserve the existing private directory and all intents. Commit and review the installation changes before `07`: image publication and package generation refuse a dirty tree or changed application revision. Narrow installation-helper fixes on a committed descendant may resume the existing frozen release, preserving every original intent and image tag.
 
 From `infra/aws/lean/setup`:
 
@@ -22,7 +22,7 @@ All use `~/.kamui-hosting-sepolia` by default; `--private-directory /absolute/pr
 | Script | What it does |
 |---|---|
 | **07** | Creates additive release-only CloudFormation stacks: private immutable ECR repositories, a private artifact bucket and narrow host pull policies. Builds the committed source for linux/amd64, pins upstream base digests, verifies pinned prover assets, publishes five images, and saves private `release.env`/`release.json` including the main.js hash. |
-| **08** | Prepares runtime configuration, fresh persistent database passwords/URLs and zero-limit funding policy **locally only**. Reads allowlisted public metadata; never reads/copies a relayer signing key. A paths-only external-delivery placeholder remains pending. |
+| **08** | Prepares runtime configuration, fresh persistent database passwords/URLs and zero-limit funding policy **locally only**. Extracts only allowlisted public metadata from local configuration; no signer field is selected or copied. A paths-only external-delivery placeholder remains pending. |
 | **09** | Creates content-addressed **non-secret** package artifacts, uploads only an explicit allowlist to the new private bucket, and sends one reviewed-hash SSM installation command per exact saved host. Installs Docker/CLI prerequisites, pinned Compose, immutable lean files and disabled units. Pulls the role's digest-pinned ECR images with temporary instance-role credentials. Starts Docker on a verified pristine host, but no app/database container. |
 | **10** | Checks installed package/receipt/units/dependencies and local image digests. Does not publish artifacts, log in to ECR, pull images, install packages or start services. It downloads the same hash-pinned verification payload into temporary host files and sends a separate read-only check command. |
 
@@ -32,7 +32,7 @@ The operator needs the existing account profiles authenticated, Docker Engine/bu
 
 ## Secret boundary
 
-Private local runtime files are under `installation/runtime/`. **They are never included in an image, archive, artifact upload or SSM command.** Database passwords and URLs remain in those private local files. The relayer key is not read by these scripts; do not paste it into chat, a command argument or an SSM command. Runtime delivery must use the approved private operator process later. No administrator key, KMS signing identity or AWS static credential is installed on either host.
+Private local runtime files are under `installation/runtime/`. **They are never included in an image, archive, artifact upload or SSM command.** Database passwords and URLs remain in those private local files. No relayer-key field or external key-file contents are extracted by these scripts; do not paste it into chat, a command argument or an SSM command. Runtime delivery must use the approved private operator process later. No administrator key, KMS signing identity or AWS static credential is installed on either host.
 
 The public package uses a fixed source-file allowlist, independently pinned installer/manifest/Compose hashes and a committed source revision. SSM bodies contain only artifact references, hashes and public installation code. Host command output goes to a root-private log; the workstation prints fixed status labels. ECR login passwords are held in memory, sent to Docker stdin and stored only in a temporary Docker configuration removed on completion or ordinary error. No application secret is required to pull images. The payload retains the project license and the official Docker Compose v2.40.3 LICENSE/NOTICE; review any other required third-party notices before distribution/public launch. The pinned [Compose release](https://github.com/docker/compose/releases/tag/v2.40.3) binary is independently checked against its committed SHA-256.
 
@@ -66,3 +66,5 @@ python3 -B -m unittest discover -s infra/aws/lean/install -p 'test_*.py'
 Tests use fake AWS/process/host transports and synthetic credentials. CloudFormation lint covers the release template. No live AWS operation, image build/push, remote install, private runtime delivery or hosted wallet startup was executed while writing this package. cfn-guard and service-side account validation are not claimed by local tests.
 
 Implementation validation on 13 November 2026: **50 installation tests**, **34 resource-setup tests**, **30 readiness tests**, and **12 host/provision tests** passed (**126 total**), plus shell syntax, release-template cfn-lint 1.60.1 and private-identifier/credential scans. These are local/fake-transport results, not live AWS/image/host acceptance.
+
+Runtime metadata source files that also contain secrets must remain mode `0600` or stricter. A too-open source now reports `RUNTIME_PRIVATE_SOURCE_PERMISSIONS_REQUIRED`; the checker is not weakened. Local metadata parsing reads the source file inside the private process and retains only its public allowlist; private signer-file mapping remains paths-only and is never bundled or uploaded.

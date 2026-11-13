@@ -31,6 +31,14 @@ SHA = re.compile(r'sha256:[0-9a-f]{64}')
 def sha(data): return hashlib.sha256(data).hexdigest()
 
 
+def infrastructure_only(paths):
+    """Permit publisher/installer fixes without changing the frozen app build."""
+    return all(path == 'PLAN.md' or path.startswith((
+        'infra/aws/lean/install/', 'infra/aws/lean/setup/', 'infra/aws/lean/licenses/'))
+        or path in {'infra/aws/lean/README.md', 'infra/aws/lean/readiness/README.md'}
+        or path.startswith('infra/aws/lean/readiness/') and path.endswith('.md') for path in paths)
+
+
 def load(path): return json.loads(setup.read_private(path, limit=2*1024*1024))
 
 
@@ -115,16 +123,24 @@ class Release:
                 raise ValueError('RELEASE_ACCOUNT_MISMATCH')
         if config['backend']['expected_account']==config['pepper']['expected_account']:raise ValueError('RELEASE_DISTINCT_ACCOUNTS_REQUIRED')
 
-    def source_revision(self):
+    def source_revision(self, pinned=None):
         if self.run(['git','status','--porcelain','--untracked-files=all'],cwd=self.repo).strip():
             raise ValueError('RELEASE_COMMITTED_CLEAN_SOURCE_REQUIRED')
         revision=self.run(['git','rev-parse','HEAD'],cwd=self.repo).decode().strip()
         if not re.fullmatch('[0-9a-f]{40}',revision):raise ValueError('RELEASE_SOURCE_REVISION_INVALID')
+        if pinned and revision!=pinned:
+            if not re.fullmatch('[0-9a-f]{40}',pinned):raise ValueError('RELEASE_SOURCE_REVISION_INVALID')
+            try:self.run(['git','merge-base','--is-ancestor',pinned,revision],cwd=self.repo)
+            except Exception:raise ValueError('RELEASE_SOURCE_NOT_ANCESTOR') from None
+            changed=self.run(['git','diff','--name-only','-z',pinned,revision],cwd=self.repo).decode().split('\0')
+            if not infrastructure_only([p for p in changed if p]):raise ValueError('RELEASE_APPLICATION_SOURCE_CHANGED')
+            return pinned
         return revision
 
     def prepare_resources(self,stack_callback):
         config=load(self.root/'aws-input.json');self.identities(config)
-        revision=self.source_revision()
+        saved=self.directory/'resources.json'
+        revision=self.source_revision(load(saved)['sourceRevision'] if saved.exists() else None)
         template=json.loads((HERE/'release-resources.json').read_text())
         roles={}
         for role in ('backend','pepper'):
@@ -151,7 +167,7 @@ class Release:
 
     def plan(self):
         resources=load(self.directory/'resources.json');self.identities(resources['config'])
-        if self.source_revision()!=resources['sourceRevision']:raise ValueError('RELEASE_SOURCE_CHANGED')
+        self.source_revision(resources['sourceRevision'])
         path=self.directory/'plan.json'
         if path.exists():
             plan=load(path)
@@ -174,10 +190,27 @@ class Release:
         batch=self.aws.request(profile,'ecr','batch-get-image',request)
         manifests=batch.get('images',[])
         if len(manifests)!=1:raise ValueError('RELEASE_IMAGE_MANIFEST_REQUIRED')
-        manifest=json.loads(manifests[0]['imageManifest'])
-        if sha(manifests[0]['imageManifest'].encode())!=images[0]['imageDigest'].removeprefix('sha256:'):
-            raise ValueError('RELEASE_IMAGE_MANIFEST_MISMATCH')
-        return {'digest':images[0]['imageDigest'],'configDigest':manifest.get('config',{}).get('digest')}
+        def verified(item, expected):
+            body=item.get('imageManifest','')
+            if not isinstance(body,str) or 'sha256:'+sha(body.encode())!=expected:
+                raise ValueError('RELEASE_IMAGE_MANIFEST_MISMATCH')
+            return json.loads(body)
+        manifest=verified(manifests[0],images[0]['imageDigest'])
+        if 'manifests' in manifest:
+            candidates=[m for m in manifest['manifests'] if m.get('platform',{}).get('os')=='linux'
+                and m.get('platform',{}).get('architecture')=='amd64' and m.get('platform',{}).get('variant') in (None,'')]
+            if len(candidates)!=1 or not SHA.fullmatch(candidates[0].get('digest','')):
+                raise ValueError('RELEASE_UNIQUE_AMD64_IMAGE_REQUIRED')
+            child_digest=candidates[0]['digest']
+            child=self.aws.request(profile,'ecr','batch-get-image',{'registryId':account,
+                'repositoryName':'kamui-sepolia/'+name,'imageIds':[{'imageDigest':child_digest}]}).get('images',[])
+            if len(child)!=1:raise ValueError('RELEASE_AMD64_MANIFEST_REQUIRED')
+            manifest=verified(child[0],child_digest)
+        config=manifest.get('config',{}).get('digest','')
+        if not SHA.fullmatch(config):raise ValueError('RELEASE_IMAGE_CONFIG_REQUIRED')
+        # Deployment pins the index digest; validation binds its amd64 child's
+        # config to the exact local build. Attestations are never execution images.
+        return {'digest':images[0]['imageDigest'],'configDigest':config}
 
     def build_publish(self):
         resources,plan=self.plan()
@@ -249,7 +282,8 @@ class Release:
                     raise ValueError('RELEASE_REMOTE_IMAGE_MISMATCH')
                 images[KEYS[name]]=resources['backend'][name.title()+'RepositoryUri']+'@'+observed['digest']
                 if name=='keychain':main_sha=local['mainJsSha256']
-        manifest={'schema':'kamui.release.v1','sourceRevision':plan['sourceRevision'],'sourceCommit':plan['sourceRevision'],'baseImages':plan['baseImages'],
+        manifest={'schema':'kamui.release.v1','sourceRevision':plan['sourceRevision'],'sourceCommit':plan['sourceRevision'],
+                  'publisherRevision':self.source_revision(),'baseImages':plan['baseImages'],
                   'images':images,'mainJsSha256':main_sha,'architecture':'linux/amd64','requiresVulnerabilityAndLicenseReview':True,
                   'releaseBucketName':resources['backend']['ReleaseBucketName'],'releaseBucketArn':resources['backend']['ReleaseBucketArn']}
         content=''.join(k+'='+images[k]+'\n' for k in sorted(images))

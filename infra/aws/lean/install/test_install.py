@@ -124,6 +124,20 @@ class InstallationTest(unittest.TestCase):
             self.assertEqual(len(sent), 2)
             self.assertNotEqual(sent[0]['Comment'], sent[1]['Comment'])
 
+    def test_package_source_accepts_only_committed_infrastructure_fixes(self):
+        def answer(changed):
+            def execute(args,**kwargs):
+                if args[1:3]==['rev-parse','HEAD']:return subprocess.CompletedProcess(args,0,'b'*40+'\n','')
+                if args[1]=='status':return subprocess.CompletedProcess(args,0,'','')
+                if args[1]=='merge-base':return subprocess.CompletedProcess(args,0,b'',b'')
+                if args[1]=='diff':return subprocess.CompletedProcess(args,0,changed+'\0','')
+                raise AssertionError('unexpected git operation')
+            return execute
+        with patch.object(workflow.subprocess,'run',side_effect=answer('infra/aws/lean/install/release.py')):
+            workflow.committed_source('a'*40)
+        with patch.object(workflow.subprocess,'run',side_effect=answer('services/backend/src/index.ts')):
+            with self.assertRaisesRegex(ValueError,'INSTALL_APPLICATION_SOURCE_CHANGED'):workflow.committed_source('a'*40)
+
     def test_public_allowlist_package_is_consumed_by_host_verifier_without_runtime_data(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d).resolve(); repo = root/'repo'; repo.mkdir()

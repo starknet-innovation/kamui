@@ -45,7 +45,9 @@ def read(path, private=True):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or (private and info.st_mode & 0o077) or info.st_size > 262144:
+        if private and info.st_mode & 0o077:
+            raise ValueError('RUNTIME_PRIVATE_SOURCE_PERMISSIONS_REQUIRED')
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_size > 262144:
             raise ValueError('RUNTIME_SOURCE_FILE_INVALID')
         value = os.read(fd, 262145)
         if len(value) > 262144: raise ValueError('RUNTIME_SOURCE_FILE_INVALID')

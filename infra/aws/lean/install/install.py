@@ -56,7 +56,13 @@ def preserve_bytes(path, data):
 def committed_source(revision, repo=REPO):
     head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
     dirty = subprocess.run(['git', 'status', '--porcelain', '--untracked-files=all'], cwd=repo, capture_output=True, text=True, check=True).stdout
-    if head != revision or dirty: raise ValueError('INSTALL_REQUIRES_CLEAN_REVIEWED_RELEASE_REVISION')
+    if dirty: raise ValueError('INSTALL_REQUIRES_CLEAN_REVIEWED_RELEASE_REVISION')
+    if head != revision:
+        ancestor=subprocess.run(['git','merge-base','--is-ancestor',revision,head],cwd=repo,capture_output=True)
+        if ancestor.returncode:raise ValueError('INSTALL_RELEASE_SOURCE_NOT_ANCESTOR')
+        changed=subprocess.run(['git','diff','--name-only','-z',revision,head],cwd=repo,capture_output=True,text=True,check=True).stdout
+        if not load('release').infrastructure_only([p for p in changed.split('\0') if p]):
+            raise ValueError('INSTALL_APPLICATION_SOURCE_CHANGED')
 
 
 def package(root, manifest, repo=REPO, compose_download=None):

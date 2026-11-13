@@ -108,7 +108,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_private_file_symlinks_and_world_accessible_sources_fail_closed(self):
         root=self.fixture();path=root/'source.env.local';path.write_text('GOOGLE_CLIENT_ID=fixture\n');path.chmod(0o644)
-        with self.assertRaisesRegex(ValueError,'RUNTIME_SOURCE_FILE_INVALID'):runtime.fields(path, {'GOOGLE_CLIENT_ID'})
+        with self.assertRaisesRegex(ValueError,'RUNTIME_PRIVATE_SOURCE_PERMISSIONS_REQUIRED'):runtime.fields(path, {'GOOGLE_CLIENT_ID'})
         path.chmod(0o600);link=root/'linked.env.local';link.symlink_to(path)
         with self.assertRaises(OSError):runtime.fields(link, {'GOOGLE_CLIENT_ID'})
         root.chmod(0o755)

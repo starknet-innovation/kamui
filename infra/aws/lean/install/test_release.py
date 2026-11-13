@@ -32,6 +32,7 @@ class Fake:
     def __init__(self):
         self.calls=[];self.tools=[];self.remote={};self.pushes=[];self.lose=False;self.omit=False
         self.accounts={'backend-profile':'000000000001','pepper-profile':'000000000002'}
+        self.head=b'a'*40;self.changed=[];self.ancestor=True
         self.files={'keychain/Dockerfile':'FROM oven/bun:1.4.4-slim\n',
             'services/backend/src/services/api/Dockerfile':'FROM oven/bun:1.4.4\n',
             'services/pepper/Dockerfile':'FROM oven/bun:1.4.4-slim\n',
@@ -46,12 +47,19 @@ class Fake:
         if name not in self.remote:raise Error()
         item=self.remote[name]
         if operation=='describe-images':return {'imageDetails':[{'imageTags':[inputs['imageIds'][0]['imageTag']],'imageDigest':item['digest']}]}
-        if operation=='batch-get-image':return {'images':[{'imageManifest':item['manifest']}]}
+        if operation=='batch-get-image':
+            requested=inputs['imageIds'][0].get('imageDigest')
+            if requested:return {'images':[{'imageManifest':item.get('children',{}).get(requested,'{}')}]}
+            return {'images':[{'imageManifest':item['manifest']}]}
         raise AssertionError('unexpected operation')
     def run(self,args,**kwargs):
         self.tools.append((args,kwargs))
         if args[:3]==['git','status','--porcelain']:return b''
-        if args[:3]==['git','rev-parse','HEAD']:return b'a'*40+b'\n'
+        if args[:3]==['git','rev-parse','HEAD']:return self.head+b'\n'
+        if args[:3]==['git','merge-base','--is-ancestor']:
+            if not self.ancestor:raise ValueError('NOT_ANCESTOR')
+            return b''
+        if args[:3]==['git','diff','--name-only']:return b'\0'.join(p.encode() for p in self.changed)
         if args[:2]==['git','archive']:return archive(self.files)
         if args[:4]==['docker','buildx','imagetools','inspect']:
             return json.dumps({'manifests':[{'platform':{'os':'linux','architecture':'amd64'},'digest':'sha256:'+release.sha(args[-1].encode())}]}).encode()
@@ -117,6 +125,48 @@ class ReleaseTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'PUSH_RESPONSE_LOST'):item.build_publish()
         with self.assertRaisesRegex(ValueError,'RELEASE_PUSH_UNCERTAIN_RECONCILE_ONLY'):item.build_publish()
         self.assertEqual(fake.pushes,['keychain'])
+
+    def indexed(self,fake):
+        item=fake.remote['keychain'];child=item['manifest'];child_digest=item['digest']
+        value={'schemaVersion':2,'mediaType':'application/vnd.oci.image.index.v1+json','manifests':[
+            {'digest':child_digest,'platform':{'os':'linux','architecture':'amd64'}},
+            {'digest':'sha256:'+'f'*64,'platform':{'os':'unknown','architecture':'unknown'}}]}
+        raw=json.dumps(value)
+        fake.remote['keychain']={'manifest':raw,'digest':'sha256:'+release.sha(raw.encode()),'children':{child_digest:child}}
+        return value,child_digest
+
+    def test_pushed_oci_index_binds_amd64_config_and_resumes_without_repush(self):
+        _,fake,item,stack,_=self.fixture();item.prepare_resources(stack);fake.lose=True
+        with self.assertRaises(ValueError):item.build_publish()
+        self.indexed(fake)
+        # The tool fixes are committed descendants; the app build stays frozen.
+        fake.head=b'b'*40;fake.changed=['infra/aws/lean/install/release.py','PLAN.md']
+        item.prepare_resources(stack);result=item.build_publish()
+        self.assertEqual(result['sourceRevision'],'a'*40)
+        self.assertTrue(result['images']['KEYCHAIN_IMAGE'].endswith(fake.remote['keychain']['digest']))
+        self.assertEqual(fake.pushes,list(release.IMAGES))
+        self.assertTrue(any('imageDigest' in c[3].get('imageIds',[{}])[0] for c in fake.calls if c[2]=='batch-get-image'))
+
+    def test_index_child_hash_mismatch_and_duplicate_amd64_are_refused(self):
+        for failure in ['hash','duplicate']:
+            _,fake,item,stack,_=self.fixture();item.prepare_resources(stack);fake.lose=True
+            with self.assertRaises(ValueError):item.build_publish()
+            value,child=self.indexed(fake)
+            if failure=='hash':fake.remote['keychain']['children'][child]='{}'
+            else:
+                value['manifests'].append(value['manifests'][0]);raw=json.dumps(value)
+                fake.remote['keychain'].update(manifest=raw,digest='sha256:'+release.sha(raw.encode()))
+            with self.assertRaisesRegex(ValueError,'RELEASE_IMAGE_MANIFEST_MISMATCH' if failure=='hash' else 'RELEASE_UNIQUE_AMD64_IMAGE_REQUIRED'):
+                item.build_publish()
+            self.assertEqual(fake.pushes,['keychain'])
+
+    def test_app_changes_or_unrelated_history_cannot_resume_frozen_release(self):
+        for changed,ancestor in [(['keychain/src/main.ts'],True),(['infra/aws/lean/backup/Dockerfile'],True),(['infra/aws/lean/install/release.py'],False)]:
+            _,fake,item,stack,_=self.fixture();item.prepare_resources(stack)
+            fake.head=b'b'*40;fake.changed=changed;fake.ancestor=ancestor
+            with self.assertRaisesRegex(ValueError,'RELEASE_APPLICATION_SOURCE_CHANGED' if ancestor else 'RELEASE_SOURCE_NOT_ANCESTOR'):
+                item.build_publish()
+            self.assertEqual(fake.pushes,[])
     def test_account_mismatch_prevents_cloudformation_or_build(self):
         _,fake,item,stack,calls=self.fixture();fake.accounts['pepper-profile']='000000000003'
         with self.assertRaisesRegex(ValueError,'RELEASE_ACCOUNT_MISMATCH'):item.prepare_resources(stack)
