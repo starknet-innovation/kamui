@@ -93,6 +93,8 @@ docker compose --env-file /etc/kamui/release.env -f /opt/kamui/lean/backend/comp
 docker compose --env-file /etc/kamui/release.env -f /opt/kamui/lean/backend/compose.yml --profile operator run --rm --no-deps -T operator bun run src/scripts/restore-control.ts acknowledge /run/kamui/operator/restore-ack.json
 ```
 
+After an ordinary host reboot (same disk, boot-fence reblock only), `setup/14-reopen-after-reboot.sh reopen` performs the checks it can and this acknowledgement through `wallet-control.py` on the operator's interactive attestation. See [install/REBOOT.md](../install/REBOOT.md). It refuses gates not blocked by the current boot, so it is not a shortcut for the restore procedure below.
+
 Checklist files are mounted from `/etc/kamui/operator`, not passed inline or printed. They hold public operational references/attestations, not credentials, identities or proof material. An acknowledgement records an operator review; it is not cryptographic proof that on-chain history is complete.
 
 ## Restore after data loss or stale backup
