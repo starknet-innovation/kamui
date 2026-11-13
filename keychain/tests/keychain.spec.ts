@@ -1272,6 +1272,6 @@ test.describe('page security', () => {
     await signIn(page);
     // Its own origin (which includes the session registry, behind /api), the chain, the pepper
     // service and the issuer's sign-in page. No CDN.
-    expect([...origins].sort()).toEqual(['http://localhost:5183', 'http://localhost:5184', 'http://localhost:5185', 'https://accounts.google.com', 'https://api.zan.top'].sort());
+    expect([...origins].sort()).toEqual(['http://localhost:5183', 'http://localhost:5184', 'http://localhost:5185', 'https://accounts.google.com', 'https://sepolia.nodes.starknet.org'].sort());
   });
 });

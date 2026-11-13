@@ -53,13 +53,13 @@ test('only pinned public prover files are served with Wasm MIME and immutable ca
 test('cancellation also interrupts preparation RPC before any Worker or relay', async ({ page, context }) => {
   const world = newWorld();
   await installFakes(context, world);
-  await context.route('https://api.zan.top/public/starknet-sepolia/rpc/v0_10', async route => {
+  await context.route('https://sepolia.nodes.starknet.org/rpc/v0_10', async route => {
     // Hold the acquisition request; AbortSignal must break the client's await independently.
     await new Promise<void>(resolve => page.once('close', () => resolve()));
     await route.abort().catch(() => {});
   });
   await page.goto('/');
-  const preparing = page.waitForRequest('https://api.zan.top/public/starknet-sepolia/rpc/v0_10');
+  const preparing = page.waitForRequest('https://sepolia.nodes.starknet.org/rpc/v0_10');
   await page.getByRole('button', { name: 'Continue with Google' }).click();
   await preparing;
   await page.getByRole('button', { name: 'Cancel proving' }).click();
@@ -71,12 +71,12 @@ test('the deadline bounds hung preparation rather than only running Workers', as
   const world = newWorld();
   await installFakes(context, world);
   await page.clock.install();
-  await context.route('https://api.zan.top/public/starknet-sepolia/rpc/v0_10', async route => {
+  await context.route('https://sepolia.nodes.starknet.org/rpc/v0_10', async route => {
     await new Promise<void>(resolve => page.once('close', () => resolve()));
     await route.abort().catch(() => {});
   });
   await page.goto('/');
-  const preparing = page.waitForRequest('https://api.zan.top/public/starknet-sepolia/rpc/v0_10');
+  const preparing = page.waitForRequest('https://sepolia.nodes.starknet.org/rpc/v0_10');
   await page.getByRole('button', { name: 'Continue with Google' }).click();
   await preparing;
   await page.clock.fastForward(20 * 60_000 + 1);

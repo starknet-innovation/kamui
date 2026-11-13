@@ -17,8 +17,7 @@ KEYCHAIN = 'https://sepolia.kamui.page'
 PEPPER = 'https://pepper-sepolia.kamui.page'
 RPC = 'https://sepolia.nodes.starknet.org/rpc/v0_10'
 RPC_FALLBACK = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10'
-# The pinned browser prover v1.0.1 accepts only ZAN; move to RPC with prover v1.0.2.
-PROVER_RPC = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10'
+PROVER_RPC = RPC
 CLASS = '0x1e128dae2cb709cac9263afa1c6fdb33f7f1f5c2d969547d9739326d08399f6'
 REGISTRY = '0x4bc2b2afcce053e788511a851e6aeb004d18adb243df4fe852e1b727bd09808'
 EXECUTOR = '0x44c921502db6c924a29f78256d72926060efa599cd13d97142efa192eaebd4c'

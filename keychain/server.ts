@@ -35,6 +35,10 @@ const PORT = Number(process.env.PORT ?? 5173);
 const API = process.env.API_URL ?? 'http://localhost:3000';
 if (production && (!process.env.KEYCHAIN_PUBLIC_ORIGIN || !process.env.API_URL)) throw new Error('KEYCHAIN_PRODUCTION_CONFIG_REQUIRED');
 const { origin, redirectUri } = keychainOrigin({ port: PORT, publicOrigin: process.env.KEYCHAIN_PUBLIC_ORIGIN });
+// Must stay identical to PROVING_RPC_ENDPOINT/PROVING_RPC_FALLBACK_ENDPOINT in src/proving.ts.
+// The pinned transport fails over to the second endpoint itself, so both must be connectable.
+const PROVER_RPC = 'https://sepolia.nodes.starknet.org/rpc/v0_10';
+const PROVER_RPC_FALLBACK = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10';
 // Public values only. The environment wins over the backend's files, which is how the browser
 // tests point the keychain at their own fakes.
 const config = {
@@ -51,7 +55,7 @@ const config = {
     ? (process.env.PUBLIC_RPC_FALLBACK_URL ? publicHttpsUrl(process.env.PUBLIC_RPC_FALLBACK_URL, 'PUBLIC_RPC_FALLBACK_URL') : '')
     : process.env.PUBLIC_RPC_FALLBACK_URL ?? '',
   // Pinned upstream state acquisition deliberately supports only this public endpoint.
-  proverRpcUrl: 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10',
+  proverRpcUrl: PROVER_RPC,
   classHash: need(process.env.KAMUI_ACCOUNT_CLASS_HASH ?? deployments.KAMUI_ACCOUNT_CLASS_HASH, 'KAMUI_ACCOUNT_CLASS_HASH'),
   pepperUrl: production ? publicHttpsUrl(process.env.PEPPER_URL, 'PEPPER_URL') : process.env.PEPPER_URL ?? 'http://localhost:8787',
   apiUrl: '/api',
@@ -92,7 +96,7 @@ const security = {
     "script-src 'self' 'wasm-unsafe-eval'",
     "worker-src 'self'",
     "style-src 'self'",
-    `connect-src 'self' data: ${[...new Set([config.rpcUrl, config.rpcFallbackUrl, config.proverRpcUrl].filter(Boolean).map(url => new URL(url).origin))].join(' ')} ${new URL(config.pepperUrl).origin}`,
+    `connect-src 'self' data: ${[...new Set([config.rpcUrl, config.rpcFallbackUrl, config.proverRpcUrl, PROVER_RPC_FALLBACK].filter(Boolean).map(url => new URL(url).origin))].join(' ')} ${new URL(config.pepperUrl).origin}`,
     "base-uri 'none'",
     "form-action 'none'",
     "frame-ancestors 'none'",

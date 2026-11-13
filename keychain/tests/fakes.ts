@@ -247,7 +247,7 @@ const sendBack = (route: Route, to: string) =>
 /** Replaces the outside world for every page of `context`. */
 export async function installFakes(context: BrowserContext, world: World) {
   await installProverFake(context, world);
-  await context.route(url => url.href.startsWith(`${RPC}/`) || url.href === 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10', async (route) => {
+  await context.route(url => url.href.startsWith(`${RPC}/`) || url.href === 'https://sepolia.nodes.starknet.org/rpc/v0_10', async (route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
     const body = route.request().postDataJSON();
     const one = (call: any) => {

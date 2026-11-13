@@ -4,8 +4,10 @@ import { init, rsa2048Sha256CalldataBuilder } from 'garaga';
 import { clientProofFacts, decodeIdToken, identity, recoveryMessage, V2_HEADER, type ClientProver } from '../../sdk/src';
 
 export const PROVER_ASSETS = '/prover/v1.0.1/';
-// Kept identical to the pinned upstream read-only transport allow-list.
-export const PROVING_RPC_ENDPOINT = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10';
+// Kept identical to the pinned upstream read-only transport allow-list. The transport falls
+// back to PROVING_RPC_FALLBACK_ENDPOINT by itself, so both origins must be allowed to connect.
+export const PROVING_RPC_ENDPOINT = 'https://sepolia.nodes.starknet.org/rpc/v0_10';
+export const PROVING_RPC_FALLBACK_ENDPOINT = 'https://api.zan.top/public/starknet-sepolia/rpc/v0_10';
 const PROVING_TIMEOUT_MS = 20 * 60_000;
 const MEMORY64 = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 5, 3, 1, 4, 1]);
 export function provingSupported(): boolean {

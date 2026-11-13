@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/starknet-innovation/snip-36-prover-wasm",
-  "commit": "32596db806409e8e24008cc922bc80ae164854b8",
-  "release": "v1.0.1",
+  "commit": "4791ed7c1d67615b74845601ac55b7df01bccf54",
+  "release": "v1.0.2",
   "files": {
     "public-run-controller.mjs": {
       "bytes": 3359,
@@ -28,12 +28,12 @@
       "sha256": "83968189498d96a64adbc3697d23c4f2e1c66a3cc448662c455236cbe47bfb8b"
     },
     "anchored-rpc.mjs": {
-      "bytes": 16018,
-      "sha256": "d2bc026f152b874d6d803c0acc7f6a5f893280d870f885fbc7cc0c35907694ab"
+      "bytes": 23346,
+      "sha256": "2545c315caf57c933ff7379cd08cc178f8269a4c3a0deb44e5fe0bc736983a38"
     },
     "rpc-retry.mjs": {
-      "bytes": 1112,
-      "sha256": "3878258720102185dedb6406da5cdafd7a9f3069ea4896de9313ac1ba508c432"
+      "bytes": 1140,
+      "sha256": "10ee0ae17d8acaf509c63232a61b2977364fbdb3e1b59d8debe7546398d27159"
     },
     "public-pipeline.mjs": {
       "bytes": 4564,
