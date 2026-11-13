@@ -29,6 +29,7 @@ WRITERS = {'api', 'rotator'}
 STOPPED = {'exited', 'dead', 'created'}
 LEAN = '/opt/kamui/lean'
 STACK = 'kamui@backend.service'
+SECRETS = 'kamui-secrets@backend.service'  # oneshot: fetches the runtime files from Secrets Manager
 FENCE = 'kamui-backend-boot-fence.service'
 BACKEND_SERVICES = {'caddy', 'keychain', 'api', 'postgres', 'watcher'}
 PEPPER_SERVICES = {'caddy', 'pepper'}
@@ -278,15 +279,18 @@ def reload_runtime(host):
     jobs = recovery_jobs(host, services)
     if jobs is None: raise Refused('RECOVERY_JOBS_UNREADABLE')
     if jobs['unfinished']: raise Refused('RECOVERY_JOBS_UNFINISHED', recoveryJobs=jobs)
-    if host.run(['systemctl', 'stop', STACK])[0]: raise Refused('STACK_STOP_FAILED')
     # The API admits recovery requests until it stops and does not drain them, so a job may have
     # started after the count above. Count again with writers stopped and PostgreSQL alone.
-    # Whatever stops this check (a writer still up, a failed start, an unreadable or missing
-    # table, unfinished jobs), the backend never restarts over it: writes close exactly as after
-    # a reboot and return only through 14 reopen after reconciliation.
+    # Whatever stops this check (a failed or partial stop, a writer still up, a failed fetch or
+    # start, an unreadable or missing table, unfinished jobs), the backend never restarts over it:
+    # writes close exactly as after a reboot and return only through 14 reopen after reconciliation.
     after, reason = None, 'RECOVERY_INTERRUPTED'
     try:
+        if host.run(['systemctl', 'stop', STACK])[0]: raise Refused('STACK_STOP_FAILED')
         if writers_running(host.services('backend')): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT')
+        # Fetch the new runtime files before PostgreSQL starts: its single-file mounts (pgbackrest.conf)
+        # keep whatever file existed when the container started.
+        if host.run(['systemctl', 'start', SECRETS])[0]: raise Refused('RUNTIME_FETCH_FAILED')
         if host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare'])[0]: raise Refused('POSTGRES_PREPARE_FAILED')
         after = recovery_jobs(host, host.services('backend'))
         if after is None: raise Refused('RECOVERY_JOBS_UNREADABLE')

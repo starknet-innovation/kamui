@@ -58,8 +58,18 @@ class RegisterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'SPONSOR_APP_REGISTERED_WITH_ANOTHER_CREDENTIAL'): sponsor_app.register(root, KEY)
 
 
+class ReloadHost(FakeHost):
+    """The reboot fake host plus the oneshot runtime fetch."""
+    fetch_fails = False
+
+    def run(self, args):
+        if args == ['systemctl', 'start', host_program.SECRETS]:
+            self.calls.append(('start', host_program.SECRETS)); return (1 if self.fetch_fails else 0), '', ''
+        return super().run(args)
+
+
 def open_backend(base):
-    fake = FakeHost(base, now=BTIME+20+700)
+    fake = ReloadHost(base, now=BTIME+20+700)
     gate = fake.gate(); fake.write_gate({**gate, 'state': 'ready', 'mode': 'restored', 'reviewRef': 'opened'})
     fake.units[STACK] = 'active'
     fake.services = {'postgres': ('running', 'healthy'), 'api': ('running', 'healthy'), 'keychain': ('running', 'healthy'),
@@ -75,7 +85,8 @@ class ReloadTest(unittest.TestCase):
         fake = open_backend(self.base/'b'); generation = fake.gate()['generation']
         result = host_program.reload_runtime(fake.host)
         self.assertEqual(result['status'], 'runtime_reloaded')
-        self.assertEqual([c for c in fake.calls if c[0] in {'stop', 'start', 'host.py'}], [('stop', STACK), ('host.py', 'backend', 'prepare'), ('start', STACK)])
+        self.assertEqual([c for c in fake.calls if c[0] in {'stop', 'start', 'host.py'}],
+                         [('stop', STACK), ('start', host_program.SECRETS), ('host.py', 'backend', 'prepare'), ('start', STACK)])
         self.assertEqual((fake.gate()['state'], fake.gate()['generation']), ('ready', generation))
 
     def test_a_closed_gate_or_unfinished_recovery_changes_nothing(self):
@@ -105,7 +116,7 @@ class ReloadTest(unittest.TestCase):
         self.assertNotIn(('start', STACK), fake.calls)
 
     def test_an_unreadable_recount_also_blocks_writes(self):
-        for failure in ['psql', 'prepare']:
+        for failure in ['psql', 'prepare', 'stop', 'fetch']:
             with self.subTest(failure=failure):
                 fake = open_backend(self.base/('fail-'+failure))
                 original, stopped = fake.run, []
@@ -113,13 +124,17 @@ class ReloadTest(unittest.TestCase):
                     if args[:2] == ['systemctl', 'stop']: stopped.append(True)
                     if stopped and failure == 'psql' and 'psql' in args: return 1, '', ''
                     if stopped and failure == 'prepare' and args[-2:] == ['backend', 'prepare']: return 1, '', ''
+                    if failure == 'stop' and args[:2] == ['systemctl', 'stop']:
+                        fake.services['api'] = ('exited', ''); return 1, '', ''   # API gone, another container stuck
+                    if failure == 'fetch' and args == ['systemctl', 'start', host_program.SECRETS]: return 1, '', ''
                     if args[:2] == ['python3', '-B'] and args[2].endswith('/wallet-control.py') and args[3:] == ['restore', 'block']:
                         fake.write_gate({**fake.gate(), 'state': 'blocked', 'generation': str(uuid.uuid4()), 'changedAt': int(fake.clock*1000)})
                         return 0, '', ''
                     return original(args)
                 fake.host.run = run
                 with self.assertRaises(host_program.Refused) as caught: host_program.reload_runtime(fake.host)
-                expected = {'psql': 'GATE_BLOCKED_RECOVERY_JOBS_UNREADABLE', 'prepare': 'GATE_BLOCKED_POSTGRES_PREPARE_FAILED'}[failure]
+                expected = {'psql': 'GATE_BLOCKED_RECOVERY_JOBS_UNREADABLE', 'prepare': 'GATE_BLOCKED_POSTGRES_PREPARE_FAILED',
+                            'stop': 'GATE_BLOCKED_STACK_STOP_FAILED', 'fetch': 'GATE_BLOCKED_RUNTIME_FETCH_FAILED'}[failure]
                 self.assertEqual(caught.exception.code, expected)
                 self.assertEqual(fake.gate()['state'], 'blocked')
                 self.assertNotIn(('start', STACK), fake.calls)
