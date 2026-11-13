@@ -36,7 +36,13 @@ def infrastructure_only(paths):
     return all(path == 'PLAN.md' or path.startswith((
         'infra/aws/lean/install/', 'infra/aws/lean/setup/', 'infra/aws/lean/licenses/'))
         or path in {'infra/aws/lean/README.md', 'infra/aws/lean/readiness/README.md'}
-        or path.startswith('infra/aws/lean/readiness/') and path.endswith('.md') for path in paths)
+        # Documentation anywhere in the lean tree: no Markdown file is built into an image or
+        # copied into the host package (install.FILES lists no .md), so it cannot change a release.
+        or path.startswith('infra/aws/lean/') and path.endswith('.md')
+        # CI configuration and the keychain's browser tests: no image copies them (see the keychain
+        # Dockerfile's COPY lines; a test keeps this true) and the host package lists neither.
+        or path.startswith(('.github/', 'keychain/tests/')) or path == 'keychain/playwright.config.ts'
+        for path in paths)
 
 
 def load(path): return json.loads(setup.read_private(path, limit=2*1024*1024))
