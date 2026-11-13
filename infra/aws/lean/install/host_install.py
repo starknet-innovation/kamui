@@ -185,9 +185,10 @@ def directory(path, mode, uid=0, gid=0):
     os.chown(path, uid, gid); path.chmod(mode)
 
 
-def install_file(path, body, mode=0o644):
+def install_file(path, body, mode=0o644, limit=4*1024*1024):
+    """`limit` must admit the largest body this path may legitimately already hold."""
     if path.exists() or path.is_symlink():
-        if path.is_symlink() or read_managed(path, 4*1024*1024, mode) != body:
+        if path.is_symlink() or read_managed(path, limit, mode) != body:
             raise ValueError('EXISTING_FILE_DIFFERS_REFUSE_OVERWRITE')
         return
     path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
@@ -197,11 +198,11 @@ def install_file(path, body, mode=0o644):
     path.chmod(mode)
 
 
-def replace_file(path, body, mode, allowed):
+def replace_file(path, body, mode, allowed, limit=4*1024*1024):
     """Pre-start replacement only: the current content must be one we expect."""
     if path.is_symlink(): raise ValueError('MANAGED_FILE_SYMLINK_REFUSED')
     if path.exists():
-        current = read_managed(path, 4*1024*1024, mode)
+        current = read_managed(path, limit, mode)
         if current == body: return
         if current not in allowed: raise ValueError('INSTALLED_FILE_CHANGED_REFUSE_REPLACE')
     temporary = path.parent/('.replace-'+uuid.uuid4().hex)
@@ -284,7 +285,8 @@ def prerequisites(paths, run, manifest, compose_binary=None, compose_sha256=None
         body = read_regular(compose_binary, 160*1024*1024)
         if sha(body) != manifest['compose']['sha256'] or compose_sha256 != manifest['compose']['sha256'] or not body.startswith(b'\x7fELF'):
             raise ValueError('COMPOSE_BINARY_PIN_MISMATCH')
-        install_file(paths.at('/usr/local/lib/docker/cli-plugins/docker-compose'), body, 0o755)
+        # The pinned Compose binary is far larger than install_file's default read limit.
+        install_file(paths.at('/usr/local/lib/docker/cli-plugins/docker-compose'), body, 0o755, limit=160*1024*1024)
     plugin = paths.at('/usr/local/lib/docker/cli-plugins/docker-compose')
     if not plugin.is_file() or sha(read_managed(plugin, 160*1024*1024, 0o755)) != manifest['compose']['sha256']:
         raise ValueError('PINNED_COMPOSE_BINARY_REQUIRED')

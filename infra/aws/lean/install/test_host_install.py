@@ -53,7 +53,9 @@ class HostInstallTest(unittest.TestCase):
         bodies = {path: (LEAN/path).read_bytes() for path in required}
         files = {name: {'sha256': host.sha(body), 'mode': '0755' if name.endswith('.sh') else '0644'} for name, body in bodies.items()}
         archive = self.archive(bodies)
-        binary = b'\x7fELF' + b'public-reviewed-compose-fixture'
+        # Larger than install_file's default read limit, so a replacement install
+        # exercises the real pinned-Compose size rather than a tiny stand-in.
+        binary = b'\x7fELF' + b'public-reviewed-compose-fixture' + bytes(4*1024*1024)
         manifest = {'schema': host.SCHEMA, 'role': role, 'archiveSha256': host.sha(archive), 'files': files,
                     'releaseImages': {key: 'example.invalid/kamui/'+key.lower()+'@sha256:'+'1'*64 for key in host.IMAGE_KEYS},
                     'compose': {'version': 'v2.40.3', 'sha256': host.sha(binary)}}
