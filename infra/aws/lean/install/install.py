@@ -193,7 +193,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('step', choices=['release', 'runtime', 'install', 'verify'])
     parser.add_argument('--private-directory', default=str(Path.home()/'.kamui-hosting-sepolia'))
+    parser.add_argument('--allow-local-tool-fixes', action='store_true', help='Resume an existing frozen release using logged helper-only local fixes')
     options = parser.parse_args()
+    if options.allow_local_tool_fixes and options.step!='release':raise ValueError('LOCAL_TOOL_FIXES_RELEASE_ONLY')
     root = private_dir(options.private_directory)
     directory = private_dir(root/'installation')
     descriptor = os.open(directory/'.installation.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -204,7 +206,7 @@ def main():
             print(json.dumps(load('runtime').prepare(root))); return
         aws = Aws(root); driver = Driver(root, aws)
         if options.step == 'release':
-            release = load('release').Release(root, aws)
+            release = load('release').Release(root, aws, allow_local_tools=options.allow_local_tool_fixes)
             release.prepare_resources(driver.stack); release.build_publish()
             print('IMMUTABLE_RELEASE_PUBLISHED_REVIEW_STILL_REQUIRED')
         else: print(json.dumps(deliver(root, aws, driver, options.step == 'verify')))

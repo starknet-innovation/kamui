@@ -32,7 +32,7 @@ class Fake:
     def __init__(self):
         self.calls=[];self.tools=[];self.remote={};self.pushes=[];self.lose=False;self.omit=False
         self.accounts={'backend-profile':'000000000001','pepper-profile':'000000000002'}
-        self.head=b'a'*40;self.changed=[];self.ancestor=True
+        self.head=b'a'*40;self.changed=[];self.ancestor=True;self.dirty=[];self.descriptors={}
         self.files={'keychain/Dockerfile':'FROM oven/bun:1.4.4-slim\n',
             'services/backend/src/services/api/Dockerfile':'FROM oven/bun:1.4.4\n',
             'services/pepper/Dockerfile':'FROM oven/bun:1.4.4-slim\n',
@@ -54,12 +54,13 @@ class Fake:
         raise AssertionError('unexpected operation')
     def run(self,args,**kwargs):
         self.tools.append((args,kwargs))
-        if args[:3]==['git','status','--porcelain']:return b''
+        if args[:3]==['git','status','--porcelain']:return b'M helpers' if self.dirty else b''
         if args[:3]==['git','rev-parse','HEAD']:return self.head+b'\n'
         if args[:3]==['git','merge-base','--is-ancestor']:
             if not self.ancestor:raise ValueError('NOT_ANCESTOR')
             return b''
-        if args[:3]==['git','diff','--name-only']:return b'\0'.join(p.encode() for p in self.changed)
+        if args[:3]==['git','diff','--name-only']:return b'\0'.join(p.encode() for p in (self.dirty if args[-1]=='HEAD' else self.changed))
+        if args[:3]==['git','ls-files','--others']:return b''
         if args[:2]==['git','archive']:return archive(self.files)
         if args[:4]==['docker','buildx','imagetools','inspect']:
             return json.dumps({'manifests':[{'platform':{'os':'linux','architecture':'amd64'},'digest':'sha256:'+release.sha(args[-1].encode())}]}).encode()
@@ -71,6 +72,7 @@ class Fake:
             return b''
         if args[:3]==['docker','image','inspect']:
             name=args[-1].split('/')[-1].split(':')[0]
+            if args[args.index('--format')+1]=='{{json .}}':return json.dumps(self.descriptors[name]).encode()
             return ('sha256:'+release.sha(name.encode())).encode()
         if args[:2]==['docker','run']:return b'public-main-js'
         if args[:2]==['docker','push']:
@@ -159,6 +161,50 @@ class ReleaseTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'RELEASE_IMAGE_MANIFEST_MISMATCH' if failure=='hash' else 'RELEASE_UNIQUE_AMD64_IMAGE_REQUIRED'):
                 item.build_publish()
             self.assertEqual(fake.pushes,['keychain'])
+
+    def test_legacy_docker_index_id_is_verified_without_rewriting_or_repush(self):
+        root,fake,item,stack,_=self.fixture();item.prepare_resources(stack);fake.lose=True
+        with self.assertRaises(ValueError):item.build_publish()
+        self.indexed(fake);digest=fake.remote['keychain']['digest']
+        built=json.loads((item.directory/'keychain-built.json').read_text())
+        built.pop('imageId');built['configDigest']=digest  # Historical field held Docker's index ID.
+        for suffix in ['built','push-intent']:(item.directory/('keychain-'+suffix+'.json')).write_text(json.dumps(built))
+        before=(item.directory/'keychain-push-intent.json').read_bytes()
+        fake.descriptors['keychain']={'Id':digest,'Descriptor':{'digest':digest,'mediaType':'application/vnd.oci.image.index.v1+json'},'Os':'linux','Architecture':'amd64'}
+        result=item.build_publish()
+        self.assertTrue(result['images']['KEYCHAIN_IMAGE'].endswith(digest))
+        self.assertEqual(fake.pushes,list(release.IMAGES))
+        self.assertEqual((item.directory/'keychain-push-intent.json').read_bytes(),before)
+        self.assertEqual(json.loads((item.directory/'keychain-identity-verified.json').read_text())['identityKind'],'descriptor')
+
+    def test_wrong_local_descriptor_cannot_mask_config_mismatch(self):
+        _,fake,item,stack,_=self.fixture();item.prepare_resources(stack);fake.lose=True
+        with self.assertRaises(ValueError):item.build_publish()
+        self.indexed(fake);digest=fake.remote['keychain']['digest']
+        built=json.loads((item.directory/'keychain-built.json').read_text());built['imageId']=digest
+        for suffix in ['built','push-intent']:(item.directory/('keychain-'+suffix+'.json')).write_text(json.dumps(built))
+        fake.descriptors['keychain']={'Id':digest,'Descriptor':{'digest':digest,'mediaType':'application/vnd.oci.image.index.v1+json'},'Os':'linux','Architecture':'arm64'}
+        with self.assertRaisesRegex(ValueError,'RELEASE_LOCAL_DESCRIPTOR_MISMATCH'):item.build_publish()
+        self.assertEqual(fake.pushes,['keychain'])
+
+    def test_local_helper_exception_is_explicit_existing_release_only_and_logged(self):
+        root,fake,item,stack,_=self.fixture();item.prepare_resources(stack)
+        file=root/'infra/aws/lean/install/release.py';file.parent.mkdir(parents=True);file.write_text('reviewed helper fix')
+        fake.dirty=['infra/aws/lean/install/release.py']
+        with self.assertRaisesRegex(ValueError,'RELEASE_COMMITTED_CLEAN_SOURCE_REQUIRED'):item.plan()
+        item.allow_local_tools=True
+        item.plan()
+        records=list(item.directory.glob('local-tool-fixes-*.json'))
+        self.assertEqual(len(records),1)
+        self.assertEqual(json.loads(records[0].read_text())['files'][fake.dirty[0]],release.sha(file.read_bytes()))
+        fake.dirty=['services/backend/src/index.ts']
+        with self.assertRaisesRegex(ValueError,'LOCAL_TOOL_FIXES_APPLICATION_CHANGE_REFUSED'):item.plan()
+
+    def test_local_helper_exception_cannot_start_a_new_release(self):
+        _,fake,item,stack,callbacks=self.fixture();item.allow_local_tools=True
+        fake.dirty=['infra/aws/lean/install/release.py']
+        with self.assertRaisesRegex(ValueError,'LOCAL_TOOL_FIXES_EXISTING_RELEASE_ONLY'):item.prepare_resources(stack)
+        self.assertEqual(callbacks,[]);self.assertEqual(fake.pushes,[])
 
     def test_app_changes_or_unrelated_history_cannot_resume_frozen_release(self):
         for changed,ancestor in [(['keychain/src/main.ts'],True),(['infra/aws/lean/backup/Dockerfile'],True),(['infra/aws/lean/install/release.py'],False)]:

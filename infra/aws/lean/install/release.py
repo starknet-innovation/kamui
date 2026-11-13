@@ -109,10 +109,11 @@ def copy_verified_assets(repo, stage):
 
 
 class Release:
-    def __init__(self,root,aws,run=None,repo=REPO):
+    def __init__(self,root,aws,run=None,repo=REPO,allow_local_tools=False):
         self.root=setup.private_dir(root);self.directory=setup.private_dir(self.root/'installation')
         self.directory=setup.private_dir(self.directory/'release')
         self.aws=aws;self.repo=Path(repo)
+        self.allow_local_tools=allow_local_tools;self.local_fix_files={}
         self.run=run or Tools(setup.private_dir(self.directory/'tool-private')).run
 
     def identities(self,config):
@@ -125,7 +126,21 @@ class Release:
 
     def source_revision(self, pinned=None):
         if self.run(['git','status','--porcelain','--untracked-files=all'],cwd=self.repo).strip():
-            raise ValueError('RELEASE_COMMITTED_CLEAN_SOURCE_REQUIRED')
+            if not self.allow_local_tools:raise ValueError('RELEASE_COMMITTED_CLEAN_SOURCE_REQUIRED')
+            if not (self.directory/'resources.json').exists():raise ValueError('LOCAL_TOOL_FIXES_EXISTING_RELEASE_ONLY')
+            paths=self.run(['git','diff','--name-only','-z','HEAD'],cwd=self.repo).decode().split('\0')
+            paths+=self.run(['git','ls-files','--others','--exclude-standard','-z'],cwd=self.repo).decode().split('\0')
+            paths=sorted(set(p for p in paths if p))
+            if not infrastructure_only(paths):raise ValueError('LOCAL_TOOL_FIXES_APPLICATION_CHANGE_REFUSED')
+            snapshot={}
+            for name in paths:
+                file=self.repo/name
+                if not file.is_file() or file.is_symlink():raise ValueError('LOCAL_TOOL_FIX_FILE_REQUIRED')
+                snapshot[name]=sha(file.read_bytes())
+            self.local_fix_files=snapshot
+            record={'files':snapshot,'workingTreeHelperFilesOnly':True}
+            evidence=self.directory/('local-tool-fixes-'+sha(json.dumps(record,sort_keys=True).encode())+'.json')
+            preserve(evidence,record)
         revision=self.run(['git','rev-parse','HEAD'],cwd=self.repo).decode().strip()
         if not re.fullmatch('[0-9a-f]{40}',revision):raise ValueError('RELEASE_SOURCE_REVISION_INVALID')
         if pinned and revision!=pinned:
@@ -210,7 +225,26 @@ class Release:
         if not SHA.fullmatch(config):raise ValueError('RELEASE_IMAGE_CONFIG_REQUIRED')
         # Deployment pins the index digest; validation binds its amd64 child's
         # config to the exact local build. Attestations are never execution images.
-        return {'digest':images[0]['imageDigest'],'configDigest':config}
+        return {'digest':images[0]['imageDigest'],'configDigest':config,
+                'mediaType':json.loads(manifests[0]['imageManifest']).get('mediaType')}
+
+    def verify_local_identity(self,name,local,observed):
+        identifier=local.get('imageId',local.get('configDigest'))
+        if identifier==observed['configDigest']:
+            kind='config'
+        elif identifier==observed['digest']:
+            # Docker's containerd image store reports an OCI index/manifest ID,
+            # not a config ID. Authenticate the saved ID against its descriptor.
+            raw=self.run(['docker','image','inspect','--format','{{json .}}',local['image']])
+            metadata=json.loads(raw);descriptor=metadata.get('Descriptor',{})
+            allowed={'application/vnd.oci.image.index.v1+json','application/vnd.docker.distribution.manifest.list.v2+json',
+                     'application/vnd.oci.image.manifest.v1+json','application/vnd.docker.distribution.manifest.v2+json'}
+            if metadata.get('Id')!=identifier or descriptor.get('digest')!=identifier or descriptor.get('mediaType') not in allowed or descriptor.get('mediaType')!=observed['mediaType'] or metadata.get('Os')!='linux' or metadata.get('Architecture')!='amd64':
+                raise ValueError('RELEASE_LOCAL_DESCRIPTOR_MISMATCH')
+            kind='descriptor'
+        else:raise ValueError('RELEASE_REMOTE_IMAGE_MISMATCH')
+        preserve(self.directory/(name+'-identity-verified.json'),{'localImageId':identifier,'identityKind':kind,
+            'rootDigest':observed['digest'],'configDigest':observed['configDigest'],'savedBuildRecordHash':sha(json.dumps(local,sort_keys=True).encode())})
 
     def build_publish(self):
         resources,plan=self.plan()
@@ -263,7 +297,7 @@ class Release:
                         self.run(['docker','build','--platform','linux/amd64','--file',str(dockerfile),'--tag',target,str(context)])
                     raw=self.run(['docker','image','inspect','--format','{{.Id}}',target]).decode().strip()
                     if not SHA.fullmatch(raw):raise ValueError('RELEASE_LOCAL_IMAGE_INVALID')
-                    local={'image':target,'configDigest':raw}
+                    local={'image':target,'imageId':raw}
                     if name=='keychain':
                         main=self.run(['docker','run','--rm','--network','none','--entrypoint','bun',target,'-e',"process.stdout.write(await Bun.file('/app/dist/main.js').text())"])
                         local['mainJsSha256']=sha(main)
@@ -278,12 +312,13 @@ class Release:
                     print('PUBLISHING_'+name.upper()+'_IMAGE',flush=True)
                     self.run(['docker','push',target],env=env)
                     observed=self.image(resources,name,tag)
-                if observed is None or observed['configDigest']!=local['configDigest']:
-                    raise ValueError('RELEASE_REMOTE_IMAGE_MISMATCH')
+                if observed is None:raise ValueError('RELEASE_REMOTE_IMAGE_MISMATCH')
+                self.verify_local_identity(name,local,observed)
                 images[KEYS[name]]=resources['backend'][name.title()+'RepositoryUri']+'@'+observed['digest']
                 if name=='keychain':main_sha=local['mainJsSha256']
+        self.source_revision(plan['sourceRevision'])
         manifest={'schema':'kamui.release.v1','sourceRevision':plan['sourceRevision'],'sourceCommit':plan['sourceRevision'],
-                  'publisherRevision':self.source_revision(),'baseImages':plan['baseImages'],
+                  'publisherRevision':self.source_revision(),'publisherWorkingTreeFiles':self.local_fix_files,'baseImages':plan['baseImages'],
                   'images':images,'mainJsSha256':main_sha,'architecture':'linux/amd64','requiresVulnerabilityAndLicenseReview':True,
                   'releaseBucketName':resources['backend']['ReleaseBucketName'],'releaseBucketArn':resources['backend']['ReleaseBucketArn']}
         content=''.join(k+'='+images[k]+'\n' for k in sorted(images))

@@ -1,0 +1,58 @@
+{
+  "schema": "kamui.release-publication-validation.v1",
+  "date": "2026-11-13",
+  "status": "five_immutable_images_published_and_verified",
+  "applicationSourceRevision": "0041d6d9eaeb2e29c48350be83b8c4b612b670ec",
+  "publisherCommittedRevision": "8bdafa66552f35c70c9bf4fa9feedc6b784faddd",
+  "publisherLocalToolFixFileHashes": {
+    "infra/aws/lean/install/install.py": "1ab4f3aa424b0181eefb0d8bb46d4337cfeea45db0b1316db2d3047578fd1568",
+    "infra/aws/lean/install/release.py": "73f7994f863493043e45d5752ea3ebc2d5974cb152a43e3ee7fca95983b8b6a7",
+    "infra/aws/lean/install/test_release.py": "43d886d3dcdf1c8c6e1e2553f7c283722441fcde98f14cd9f4925f9ab347e855"
+  },
+  "mainJsSha256": "c614ff74e743c47b3e8023746786da9616c0ad217f5a36a8d101e364abd40c7f",
+  "images": {
+    "keychain": {
+      "localImageId": "sha256:cc5cc2f94f924ba1e3f99dbaa4c0cffa174d79f995802b6569fedf5b48ef9aae",
+      "identityKind": "descriptor",
+      "rootDigest": "sha256:cc5cc2f94f924ba1e3f99dbaa4c0cffa174d79f995802b6569fedf5b48ef9aae",
+      "configDigest": "sha256:09fb34f2034dd8c328b324c5dfea5cd4c68267e7723980ac2e024bf432e6e1cb",
+      "pushInvocationsIncludingOriginal": 1
+    },
+    "backend": {
+      "localImageId": "sha256:ad1f2f85d31b6cd3f1eb00cc7d3249ab48ef1b6bab9708e1de14d159f2ffcee5",
+      "identityKind": "descriptor",
+      "rootDigest": "sha256:ad1f2f85d31b6cd3f1eb00cc7d3249ab48ef1b6bab9708e1de14d159f2ffcee5",
+      "configDigest": "sha256:e58990da9910a6ac70cb6231405e2c5ef186558fdbc58ed1fdc3b2e2cb85328b",
+      "pushInvocationsIncludingOriginal": 1
+    },
+    "pepper": {
+      "localImageId": "sha256:1461d62109cf299ba883d186ca68421f1771a1dae093386272be2db53f2cc131",
+      "identityKind": "descriptor",
+      "rootDigest": "sha256:1461d62109cf299ba883d186ca68421f1771a1dae093386272be2db53f2cc131",
+      "configDigest": "sha256:09b0a74771c46c2dda065919ebfa6594dbd00c73197b7da31171caffd30e3025",
+      "pushInvocationsIncludingOriginal": 1
+    },
+    "postgres": {
+      "localImageId": "sha256:2cb39f25f90a9f43257f7f85f9abb72781e0f71cca70cf49b80948761062d9df",
+      "identityKind": "descriptor",
+      "rootDigest": "sha256:2cb39f25f90a9f43257f7f85f9abb72781e0f71cca70cf49b80948761062d9df",
+      "configDigest": "sha256:51684c5061cd6c81a2eadc95fae636662096a1c277e493a20e0a556580e91d01",
+      "pushInvocationsIncludingOriginal": 1
+    },
+    "caddy": {
+      "localImageId": "sha256:fc9cbc100585871d18d4e451cca7021785c90a7006087427ae5ceb3e4efe6424",
+      "identityKind": "descriptor",
+      "rootDigest": "sha256:fc9cbc100585871d18d4e451cca7021785c90a7006087427ae5ceb3e4efe6424",
+      "configDigest": "sha256:5813f7eb9b94fac4970f9f576695fe1ed1d53d41586fd3eaa350caf7c4627d9c",
+      "pushInvocationsIncludingOriginal": 1
+    }
+  },
+  "keychainRepushedDuringResume": false,
+  "originalBuildAndPushRecordsPreserved": true,
+  "agentTransport": "account-pinned-local-profiles-via-AWS-SDK",
+  "agentInfrastructureMutationAPIsAllowed": false,
+  "remoteInstallationPerformed": false,
+  "runtimeSecretsUploaded": false,
+  "walletOrDatabaseStarted": false,
+  "validationScope": "AWS metadata/digest observations and workstation Docker build/push; not hosted acceptance or permissions audit"
+}
