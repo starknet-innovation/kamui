@@ -407,7 +407,8 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
             receipt = {'schema': SCHEMA, 'role': role, 'manifestSha256': sha(raw), 'archiveSha256': manifest['archiveSha256'], 'walletStarted': False}
             previous = None
             if receipt_path.exists():
-                existing = json.loads(read_managed(receipt_path, 4096, 0o600))
+                existing_raw = read_managed(receipt_path, 4096, 0o600)
+                existing = json.loads(existing_raw)
                 if existing == receipt:
                     verify_installed(paths, manifest, receipt)
                     return {'status': 'already_installed_verified', 'walletStarted': False}
@@ -533,7 +534,9 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
                 install_file(receipt_path, (json.dumps(receipt, sort_keys=True)+'\n').encode(), 0o600)
             else:
                 replace_file(receipt_path, (json.dumps(receipt, sort_keys=True)+'\n').encode(), 0o600,
-                             {(json.dumps(previous, sort_keys=True)+'\n').encode()})
+                             # Exactly the bytes read at the start, in whatever valid formatting:
+                             # replaced unless someone changed them meanwhile.
+                             {existing_raw})
             verify_installed(paths, manifest, receipt)
             if prepared is not None:
                 # Consume the preparation so it can never authorise a second upgrade.

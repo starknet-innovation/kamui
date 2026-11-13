@@ -418,9 +418,26 @@ def newest_full_backup(host, since):
     except Exception: raise Refused('FRESH_BACKUP_NOT_FOUND') from None
 
 
+@contextmanager
+def upgrade_step_lock(host):
+    """Serialises backend prepare and finish on the host, so finish can never restore and forget the
+    timer record between prepare recording the timers and stopping them. Separate from the lifecycle
+    lock, which the stack unit's own start and stop take."""
+    directory = host.at(RECORDS)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077: raise Refused('INSTALL_RECORDS_DIRECTORY_INVALID')
+    fd = os.open(directory/'.upgrade-step.lock', os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    try:
+        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: raise Refused('UPGRADE_STEP_BUSY') from None
+        yield
+    finally: os.close(fd)
+
+
 def upgrade_prepare_backend(host, expected_boot):
     stopped_timers = []
-    try: return prepare_backend(host, expected_boot, stopped_timers)
+    try:
+        with upgrade_step_lock(host): return prepare_backend(host, expected_boot, stopped_timers)
     except Refused as error:
         error.detail.setdefault('timersStopped', list(stopped_timers)); raise
     except Exception:
@@ -499,11 +516,17 @@ def upgrade_prepare_pepper(host, expected_boot):
 
 
 def upgrade_finish(host, role):
+    if role == 'backend':
+        with upgrade_step_lock(host): return finish_backend(host)
     if role == 'pepper':
         if host.unit('kamui@pepper.service') != 'active' and host.run(['systemctl', 'start', 'kamui@pepper.service'])[0]: raise Refused('STACK_START_FAILED')
         state = inspect_pepper(host)
         if not state['healthy']: raise Refused('STACK_NOT_HEALTHY_AFTER_START')
         return {'status': 'upgrade_finished', 'role': 'pepper', 'services': state['services']}
+    raise Refused('HOST_ACTION_INVALID')
+
+
+def finish_backend(host):
     gate = read_gate(host)
     if gate['state'] != 'ready': return {'status': 'awaiting_reopen', 'role': 'backend'}
     services = host.services('backend')

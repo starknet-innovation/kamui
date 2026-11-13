@@ -284,6 +284,18 @@ def main():
         self.assertEqual(fake.units['kamui-backup-full.timer'], 'inactive')
         self.assertFalse((fake.root/'var/lib/kamui-install/backend-upgrade-timers.json').exists())
 
+    def test_prepare_and_finish_never_overlap_on_the_host(self):
+        fake = self.host()
+        lock = fake.root/'var/lib/kamui-install/.upgrade-step.lock'
+        other = os.open(lock, os.O_CREAT | os.O_WRONLY, 0o600); self.addCleanup(os.close, other)
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with self.assertRaises(host_program.Refused) as caught: host_program.upgrade_finish(fake.host, 'backend')
+        self.assertEqual(caught.exception.code, 'UPGRADE_STEP_BUSY')
+        with self.assertRaises(host_program.Refused) as caught: host_program.upgrade_prepare_backend(fake.host, BOOT)
+        self.assertEqual(caught.exception.code, 'UPGRADE_STEP_BUSY')
+        self.assertTrue(all(fake.units[t] == 'active' for t in TIMERS))
+        self.assertFalse((fake.root/'var/lib/kamui-install/backend-upgrade-timers.json').exists())
+
     def test_pepper_finish_starts_the_stack(self):
         fake = self.host('pepper')
         host_program.upgrade_prepare_pepper(fake.host, BOOT)
@@ -398,6 +410,14 @@ class InstallerUpgradeTest(test_host_install.HostInstallTest):
             self.prepare(root, current, generation, prepareId=prep)
             self.assertEqual(host.install(**options, upgrade_started=prep, now=lambda: 1_000_000)['status'], 'host_upgraded_wallet_stopped')
         self.assertEqual(len(list((root/'var/lib/kamui-install').glob('backend-upgraded-*.json'))), 3)
+
+    def test_a_receipt_in_another_valid_formatting_is_replaced_and_updated(self):
+        root, receipt, generation, following, next_manifest = self.started()
+        path = root/'var/lib/kamui-install/backend.json'
+        path.write_text(json.dumps(receipt, indent=2)+'\n')   # same content, not the canonical bytes
+        self.prepare(root, receipt, generation)
+        self.assertEqual(host.install(**following, upgrade_started=PREP, now=lambda: 1_000_000)['status'], 'host_upgraded_wallet_stopped')
+        self.assertEqual(json.loads(path.read_text())['archiveSha256'], next_manifest['archiveSha256'])
 
     def test_read_only_monitor_timers_may_keep_running(self):
         root, receipt, generation, following, _ = self.started()
