@@ -29,7 +29,12 @@ EXTRA = {('ecr', 'describe-images'), ('ecr', 'describe-repositories'), ('ecr', '
          ('secretsmanager', 'describe-secret')}
 # Reboot tooling (reopen.py). Each run observes the host again, like 'verify': the host
 # programs are idempotent and re-check everything, so only an uncertain send is reconciled.
-REBOOT_LABELS = {'inspect', 'fence', 'reopen', 'enable-boot'}
+REBOOT_LABELS = {'inspect', 'fence', 'reopen', 'enable-boot', 'upgrade-prepare', 'upgrade-finish'}
+# Re-observable like verify: an image pull after a package-only upgrade install, retried after a failure.
+RETRY_LABELS = {'pull'}
+# Seconds a command may run on the host. Upgrade preparation runs a full backup (up to an hour,
+# reopen_host.system_run) plus its check and the stack stop/start around it.
+EXECUTION_SECONDS = {'upgrade-prepare': 7200}
 SECRET_ARN = re.compile(r'arn:aws:secretsmanager:eu-west-1:[0-9]{12}:secret:kamui-sepolia/(backend|pepper)/[a-z-]+-[A-Za-z0-9]{6}')
 
 
@@ -208,7 +213,7 @@ class Driver:
 
         Reboot labels also return the command's standard output for the caller to parse."""
         self.identities()
-        if role not in {'backend', 'pepper'} or label not in {'install', 'verify'} | REBOOT_LABELS or not re.fullmatch(r'i-[0-9a-f]{8,17}', instance):
+        if role not in {'backend', 'pepper'} or label not in {'install', 'verify'} | REBOOT_LABELS | RETRY_LABELS or not re.fullmatch(r'i-[0-9a-f]{8,17}', instance):
             raise ValueError('INSTALL_COMMAND_SCOPE_INVALID')
         target = self.target(role)
         if target['InstanceId'] != instance: raise ValueError('INSTALL_COMMAND_TARGET_CHANGED')
@@ -232,7 +237,7 @@ class Driver:
             raise ValueError('INSTALL_SSM_DOCUMENT_PIN_INVALID')
         request = {'DocumentName': 'AWS-RunShellScript', 'DocumentVersion': '1', 'DocumentHash': document['Hash'],
                    'DocumentHashType': 'Sha256', 'InstanceIds': [instance], 'Comment': comment,
-                   'Parameters': {'commands': [command], 'executionTimeout': ['1800']},
+                   'Parameters': {'commands': [command], 'executionTimeout': [str(EXECUTION_SECONDS.get(label, 1800))]},
                    'TimeoutSeconds': 600, 'MaxConcurrency': '1', 'MaxErrors': '0',
                    'CloudWatchOutputConfig': {'CloudWatchOutputEnabled': False}}
         command_id = None
@@ -261,7 +266,9 @@ class Driver:
             write_private(self.directory/(stem+'-response.json'), response)
             command_id = response.get('Command', {}).get('CommandId')
         if not isinstance(command_id, str) or not re.fullmatch('[a-f0-9-]{36}', command_id): raise ValueError('INSTALL_COMMAND_ID_INVALID')
-        for index in range(self.polls):
+        # Wait as long as the host may run, so a long preparation is observed rather than left pending.
+        polls = max(self.polls, EXECUTION_SECONDS[label]//5 + 24) if label in EXECUTION_SECONDS else self.polls
+        for index in range(polls):
             try: reply = self.aws.request(profile, 'ssm', 'get-command-invocation', {'CommandId': command_id, 'InstanceId': instance})
             except AwsError as error:
                 if error.code != 'InvocationDoesNotExist': raise
@@ -282,7 +289,7 @@ class Driver:
                     if not target.exists(): write_private(target, {'status': 'failed', 'commandId': command_id})
                 raise ValueError('INSTALL_COMMAND_FAILED_KEEP_PRIVATE_LOGS')
             if index % 12 == 0: print('WAITING_'+role.upper()+'_'+label.upper()+'_COMMAND', flush=True)
-            if index + 1 < self.polls: self.sleep(5)
+            if index + 1 < polls: self.sleep(5)
         raise ValueError('INSTALL_COMMAND_PENDING_RECONCILE_SAME_STEP')
 
     def target(self, role):

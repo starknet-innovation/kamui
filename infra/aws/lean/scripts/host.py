@@ -46,10 +46,31 @@ def assert_writers_stopped(rows):
         raise ValueError('STOP_OLD_WRITERS_REQUIRED')
 
 
+HELD_LOCK = 'KAMUI_HOST_CONTROL_LOCK_FD'
+
+
+def inherited_lock(state):
+    """A parent (an upgrade preparation) holding this lock passes its descriptor down.
+
+    Locking an already locked open file description again succeeds only for its holder, so a
+    descriptor that is not the held lock file, or one somebody else holds, is still refused."""
+    try: fd = int(os.environ[HELD_LOCK])
+    except (KeyError, ValueError): return False
+    try:
+        info, path = os.fstat(fd), os.lstat(state/'.operator.lock')
+        if (info.st_dev, info.st_ino) != (path.st_dev, path.st_ino) or not stat.S_ISREG(path.st_mode): raise ValueError('HOST_CONTROL_LOCK_INVALID')
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError: raise ValueError('HOST_CONTROL_BUSY') from None
+    except OSError: raise ValueError('HOST_CONTROL_LOCK_INVALID') from None
+    return True
+
+
 @contextmanager
 def control_lock(state):
     if not state.is_absolute() or state.is_symlink() or not state.is_dir():
         raise ValueError('STATE_DIRECTORY_REQUIRED')
+    if inherited_lock(state):
+        yield; return
     fd = os.open(state/'.operator.lock', os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(fd)
