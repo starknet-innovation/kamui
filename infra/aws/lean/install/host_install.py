@@ -245,6 +245,20 @@ def boot_id(paths):
 PREPARE_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 
 
+def host_control_lock(state):
+    """scripts/host.py control_lock, taken (never waited for) and returned as an open descriptor."""
+    if state.is_symlink() or not state.is_dir(): raise ValueError('STATE_DIRECTORY_REQUIRED')
+    fd = os.open(state/'.operator.lock', os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077: raise ValueError('HOST_CONTROL_LOCK_INVALID')
+        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: raise ValueError('HOST_CONTROL_BUSY') from None
+        return fd
+    except BaseException:
+        os.close(fd); raise
+
+
 def prepared_upgrade(paths, records, role, previous, now, prepare_id):
     """The record `15 prepare` leaves when it has stopped this host for an upgrade.
 
@@ -385,6 +399,7 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
         unpack_verified(data, manifest, checked)
         records = paths.at('/var/lib/kamui-install'); directory(records, 0o700)
         lock = os.open(records/'.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        operator_lock = None
         try:
             try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError: raise ValueError('HOST_INSTALL_BUSY') from None
@@ -404,6 +419,10 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
             state = paths.at('/var/lib/kamui')
             prepared = None
             if upgrade_started:
+                # The lifecycle lock host.py and wallet-control.py take: held from validating the
+                # preparation until the replacement is complete, so no supported command can start
+                # PostgreSQL or change the gate in between. Closed with the install lock below.
+                operator_lock = host_control_lock(state)
                 # A started wallet's state is preserved untouched; the preparation record proves the
                 # host was stopped, backed up and fenced for exactly this upgrade.
                 prepared = prepared_upgrade(paths, records, role, previous, int(now()), upgrade_started)
@@ -526,7 +545,9 @@ def install(role, archive_path, manifest_path, expected_manifest, compose_binary
                 return {'status': 'host_upgraded_wallet_stopped', 'walletStarted': False, 'unitsEnabled': 'unchanged'}
             return {'status': 'host_replaced_wallet_stopped' if previous else 'host_installed_wallet_stopped',
                     'walletStarted': False, 'databaseInitialized': False, 'unitsEnabled': False}
-        finally: os.close(lock)
+        finally:
+            os.close(lock)
+            if operator_lock is not None: os.close(operator_lock)
 
 
 def verify_tree(tree, manifest):
@@ -609,5 +630,5 @@ def main():
 if __name__ == '__main__':
     try: main()
     except Exception as error:
-        code = str(error) if isinstance(error, ValueError) and re.fullmatch('[A-Z_]{3,100}', str(error)) else 'HOST_INSTALL_REFUSED_PRIVATE_LOGS_RETAINED'
+        code = str(error) if isinstance(error, ValueError) and re.fullmatch('[A-Z0-9_]{3,100}', str(error)) else 'HOST_INSTALL_REFUSED_PRIVATE_LOGS_RETAINED'
         print(code); raise SystemExit(1)

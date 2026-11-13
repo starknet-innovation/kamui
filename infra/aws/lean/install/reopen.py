@@ -29,7 +29,7 @@ DELIMITER = 'KAMUI_REOPEN_HOST_PROGRAM_END'
 RESULT = 'KAMUI_REOPEN_RESULT '
 REF = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$')
 ARGUMENT = re.compile(r'^[A-Za-z0-9._/-]{1,120}$')
-CODE = re.compile(r'^[A-Z_]{3,60}$')
+CODE = re.compile(r'^[A-Z0-9_]{3,60}$')
 STATUSES = {'inspected', 'refused', 'fenced', 'already_fenced', 'reopened', 'already_open', 'enabled',
             'upgrade_prepared', 'upgrade_finished', 'awaiting_reopen'}
 CONFIRMATION = 'REOPEN'
@@ -206,5 +206,5 @@ def main():
 if __name__ == '__main__':
     try: main()
     except Exception as error:
-        code = str(error) if isinstance(error, (ValueError, AwsError)) and re.fullmatch('[A-Z_]{3,100}', str(error)) else 'REOPEN_STOPPED_PRIVATE_EVIDENCE_RETAINED'
+        code = str(error) if isinstance(error, (ValueError, AwsError)) and re.fullmatch('[A-Z0-9_]{3,100}', str(error)) else 'REOPEN_STOPPED_PRIVATE_EVIDENCE_RETAINED'
         print(code); raise SystemExit(1)

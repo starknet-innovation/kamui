@@ -8,6 +8,8 @@ workstation evidence); no command output, configuration or database row is ever 
 
 Python 3.9 (AL2023 system python): no newer syntax.
 """
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -22,7 +24,8 @@ RESULT = 'KAMUI_REOPEN_RESULT '
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 BOOT_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 REF = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$')
-CODE = re.compile(r'^[A-Z_]{3,60}$')
+CODE = re.compile(r'^[A-Z0-9_]{3,60}$')
+HELD_LOCK = 'KAMUI_HOST_CONTROL_LOCK_FD'  # scripts/host.py inherited_lock
 # services/backend/src/storage/restore-fence.ts RESTORE_REPLAY_WAIT_MS, plus clock margin.
 REPLAY_WAIT_SECONDS = 600
 REPLAY_MARGIN_SECONDS = 30
@@ -54,8 +57,12 @@ def system_run(args):
                CONFIG_DIRECTORY='/etc/kamui', STATE_DIRECTORY='/var/lib/kamui')
     # A full backup grows with the database; everything else is short.
     timeout = 3600 if any('backup.sh' in str(a) for a in args) else 420
+    # While an upgrade preparation holds the host control lock, its own host.py and
+    # wallet-control.py calls inherit it; nobody else can take it.
+    held = os.environ.get(HELD_LOCK)
     try:
-        done = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
+        done = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env,
+                              pass_fds=(int(held),) if held else ())
     except subprocess.TimeoutExpired:
         return 124, '', ''
     return done.returncode, done.stdout, done.stderr
@@ -67,6 +74,47 @@ class Host:
         self.root, self.run, self.now = Path(root), run, now
 
     def at(self, absolute): return self.root/absolute.lstrip('/')
+
+    @contextmanager
+    def control_lock(self):
+        """The lifecycle lock scripts/host.py and wallet-control.py take, held across a whole step."""
+        state = self.at('/var/lib/kamui')
+        if state.is_symlink() or not state.is_dir(): raise Refused('STATE_DIRECTORY_REQUIRED')
+        fd = os.open(state/'.operator.lock', os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077: raise Refused('HOST_CONTROL_LOCK_INVALID')
+            try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError: raise Refused('HOST_CONTROL_BUSY') from None
+            os.set_inheritable(fd, True)
+            os.environ[HELD_LOCK] = str(fd)
+            self.lock_fd = fd
+            try: yield
+            finally:
+                os.environ.pop(HELD_LOCK, None); self.lock_fd = None
+        finally: os.close(fd)
+
+    def inherits_lock(self):
+        """Whether the installed wrappers accept the held lock (scripts/host.py inherited_lock)."""
+        try: return HELD_LOCK in self.at(LEAN+'/scripts/host.py').read_text()
+        except OSError: return False
+
+    @contextmanager
+    def lock_handoff(self):
+        """Around a host.py / wallet-control.py call made while holding the control lock.
+
+        Wrappers from this release inherit the lock. An older installed release (the first upgrade
+        away from it) cannot: the lock is released for that one call and taken back immediately
+        after, refusing if anybody else took it meanwhile. Callers re-check what they rely on."""
+        fd = getattr(self, 'lock_fd', None)
+        if fd is None or self.inherits_lock():
+            yield; return
+        fcntl.flock(fd, fcntl.LOCK_UN); os.environ.pop(HELD_LOCK, None)
+        try: yield
+        finally:
+            try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError: raise Refused('HOST_CONTROL_BUSY') from None
+            os.environ[HELD_LOCK] = str(fd)
 
     def boot(self):
         boot_id = self.at('/proc/sys/kernel/random/boot_id').read_text().strip()
@@ -277,6 +325,7 @@ BACKUP_SERVICES = ['kamui-backup@check.service', 'kamui-backup@full.service']
 RECORDS = '/var/lib/kamui-install'
 COMPOSE = ['docker', 'compose', '--env-file', '/etc/kamui/release.env', '-f', LEAN+'/backend/compose.yml']
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
+TIMERS_RECORD = RECORDS+'/backend-upgrade-timers.json'
 LABEL = re.compile(r'^[0-9]{8}-[0-9]{6}F$')
 
 
@@ -289,26 +338,54 @@ def installed_manifest(host, role):
     except Exception: raise Refused('INSTALLED_RECEIPT_UNREADABLE') from None
 
 
-def write_prepared(host, role, value):
-    """Root-only, 0600, atomically replaced: the installer reads it as a managed file."""
+def write_record(host, name, value):
+    """Root-only, 0600, atomically replaced: the installer reads these as managed files."""
     directory = host.at(RECORDS)
     info = directory.lstat()
     if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077: raise Refused('INSTALL_RECORDS_DIRECTORY_INVALID')
-    temporary = directory/('.'+role+'-upgrade-prepared.tmp')
+    temporary = directory/('.'+name+'.tmp')
     if temporary.is_symlink() or temporary.exists(): temporary.unlink()
     fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w') as output:
         output.write(json.dumps(value, sort_keys=True)+'\n'); output.flush(); os.fsync(output.fileno())
-    os.replace(temporary, directory/(role+'-upgrade-prepared.json'))
+    os.replace(temporary, directory/name)
+
+
+def write_prepared(host, role, value): write_record(host, role+'-upgrade-prepared.json', value)
+
+
+def recorded_timers(host):
+    """Timers an unfinished upgrade stopped, kept across refusals and retries until 15 finish."""
+    path = host.at(TIMERS_RECORD)
+    if not path.exists() and not path.is_symlink(): return []
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 4096: raise ValueError()
+        timers = json.loads(path.read_text())['timers']
+        if not isinstance(timers, list) or not set(timers) <= set(TIMERS): raise ValueError()
+        return [t for t in TIMERS if t in timers]
+    except Exception: raise Refused('UPGRADE_TIMERS_RECORD_INVALID') from None
+
+
+def record_timers(host, timers):
+    write_record(host, 'backend-upgrade-timers.json', {'timers': [t for t in TIMERS if t in timers]})
+
+
+def restore_timers(host):
+    """Start exactly the timers the upgrade stopped, then forget them."""
+    started = []
+    for timer in recorded_timers(host):
+        if host.unit(timer) != 'active':
+            if host.run(['systemctl', 'start', timer])[0]: raise Refused('BACKUP_TIMER_START_FAILED')
+            started.append(timer)
+    path = host.at(TIMERS_RECORD)
+    if path.exists(): path.unlink()
+    return started
 
 
 def no_containers(host, role):
     services = host.services(role)
     if any(row['state'] not in STOPPED for row in services.values()): raise Refused('CONTAINERS_STILL_RUNNING')
-
-
-def restart_timers(host, timers):
-    for timer in timers: host.run(['systemctl', 'start', timer])
 
 
 def newest_full_backup(host, since):
@@ -346,17 +423,30 @@ def prepare_backend(host, expected_boot, stopped_timers):
     # Refuse before changing anything if a recovery may still be in flight.
     jobs = recovery_jobs(host, host.services('backend'))
     if jobs and jobs['unfinished']: raise Refused('RECOVERY_JOBS_UNFINISHED', recoveryJobs=jobs)
-    for timer in [t for t in TIMERS if host.unit(t) == 'active']:
+    # Record what was running before stopping anything; a retried prepare adds to the earlier record.
+    active = [t for t in TIMERS if host.unit(t) == 'active']
+    record_timers(host, set(recorded_timers(host)) | set(active))
+    for timer in active:
         if host.run(['systemctl', 'stop', timer])[0]: raise Refused('BACKUP_TIMER_STOP_FAILED')
         stopped_timers.append(timer)
     # A running backup is a oneshot unit, reported as "activating" until it exits.
     if any(host.unit(service) not in {'inactive', 'failed'} for service in BACKUP_SERVICES):
-        restart_timers(host, stopped_timers); del stopped_timers[:]
+        restore_timers(host); del stopped_timers[:]
         raise Refused('BACKUP_IN_PROGRESS_RETRY_LATER')
+    # The unit's stop runs host.py down, which takes the control lock itself: stop it first.
     if host.unit(STACK) == 'active' and host.run(['systemctl', 'stop', STACK])[0]: raise Refused('STACK_STOP_FAILED')
+    # Then hold the lock from the writer check until the record is written, so no host.py up or
+    # gate change can slip in between the backup and the block. Child calls inherit it.
+    with host.control_lock(): return prepare_stopped_backend(host, boot_id, started, previous, stopped_timers)
+
+
+def prepare_stopped_backend(host, boot_id, started, previous, stopped_timers):
     if writers_running(host.services('backend')): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT')
-    if host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare'])[0]: raise Refused('POSTGRES_PREPARE_FAILED')
-    jobs = recovery_jobs(host, host.services('backend'))
+    with host.lock_handoff(): code = host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'prepare'])[0]
+    if code: raise Refused('POSTGRES_PREPARE_FAILED')
+    services = host.services('backend')
+    if writers_running(services): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT')
+    jobs = recovery_jobs(host, services)
     if jobs is None: raise Refused('RECOVERY_JOBS_UNREADABLE')
     if jobs['unfinished']: raise Refused('RECOVERY_JOBS_UNFINISHED', recoveryJobs=jobs)
     # The rollback point: a full backup taken now, with writers stopped, then checked.
@@ -366,10 +456,13 @@ def prepare_backend(host, expected_boot, stopped_timers):
         if code or '"status":"backup-complete"' not in last: raise Refused('BACKUP_'+kind.upper()+'_FAILED')
     label = newest_full_backup(host, started)
     # Writers stay out until the operator reopens them, exactly as after a reboot.
-    code, _, _ = host.run(['python3', '-B', LEAN+'/scripts/wallet-control.py', 'restore', 'block'])
+    # wallet-control refuses to block while a writer runs, so a writer started in an older release's
+    # brief handoff cannot slip past the block unnoticed.
+    with host.lock_handoff(): code, _, _ = host.run(['python3', '-B', LEAN+'/scripts/wallet-control.py', 'restore', 'block'])
     gate = read_gate(host)
     if code or gate['state'] != 'blocked' or gate['reason'] != 'restore': raise Refused('RESTORE_GATE_BLOCK_FAILED')
-    if host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'down'])[0]: raise Refused('STACK_DOWN_FAILED')
+    with host.lock_handoff(): code = host.run(['python3', '-B', LEAN+'/scripts/host.py', 'backend', 'down'])[0]
+    if code: raise Refused('STACK_DOWN_FAILED')
     no_containers(host, 'backend')
     prepare_id = str(uuid.uuid4())
     write_prepared(host, 'backend', {'schema': 'kamui.upgrade-prepared.v1', 'role': 'backend', 'prepareId': prepare_id, 'bootId': boot_id,
@@ -384,10 +477,11 @@ def upgrade_prepare_pepper(host, expected_boot):
     if boot_id != expected_boot: raise Refused('HOST_REBOOTED_SINCE_INSPECTION')
     previous = installed_manifest(host, 'pepper')
     if host.unit('kamui@pepper.service') == 'active' and host.run(['systemctl', 'stop', 'kamui@pepper.service'])[0]: raise Refused('STACK_STOP_FAILED')
-    no_containers(host, 'pepper')
-    prepare_id = str(uuid.uuid4())
-    write_prepared(host, 'pepper', {'schema': 'kamui.upgrade-prepared.v1', 'role': 'pepper', 'prepareId': prepare_id, 'bootId': boot_id,
-                                    'preparedAt': int(host.now()), 'previousManifestSha256': previous})
+    with host.control_lock():
+        no_containers(host, 'pepper')
+        prepare_id = str(uuid.uuid4())
+        write_prepared(host, 'pepper', {'schema': 'kamui.upgrade-prepared.v1', 'role': 'pepper', 'prepareId': prepare_id, 'bootId': boot_id,
+                                        'preparedAt': int(host.now()), 'previousManifestSha256': previous})
     return {'status': 'upgrade_prepared', 'role': 'pepper', 'prepareId': prepare_id}
 
 
@@ -405,11 +499,8 @@ def upgrade_finish(host, role):
         # stack restarts without a new attestation. start_stack refuses if the gate changes.
         start_stack(host, gate['generation'])
         services = host.services('backend')
-    started = []
-    for timer in TIMERS:
-        if host.unit(timer, 'is-enabled') == 'enabled' and host.unit(timer) != 'active':
-            if host.run(['systemctl', 'start', timer])[0]: raise Refused('BACKUP_TIMER_START_FAILED')
-            started.append(timer)
+    # Exactly the timers prepare stopped (enabled or not), never others the operator left stopped.
+    started = restore_timers(host)
     return {'status': 'upgrade_finished', 'role': 'backend', 'timersStarted': started,
             'services': {n: r['state'] for n, r in sorted(services.items())}}
 

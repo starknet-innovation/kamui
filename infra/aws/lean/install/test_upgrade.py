@@ -3,6 +3,8 @@
 Fake hosts, a fake installer runner and fake SSM calls only; no AWS, Docker, systemd or real host.
 """
 import contextlib
+import fcntl
+import os
 import importlib.util
 import io
 import json
@@ -12,7 +14,9 @@ import tempfile
 import unittest
 import uuid
 
+import common
 import test_host_install
+import test_install
 import test_reopen
 from test_reopen import BOOT, BTIME, FENCE, STACK, FakeHost, host_program
 
@@ -190,6 +194,75 @@ class PrepareTest(unittest.TestCase):
         self.assertEqual(sorted(result['timersStarted']), sorted(TIMERS))
         self.assertEqual(host_program.upgrade_finish(fake.host, 'backend')['timersStarted'], [])
 
+    def test_the_control_lock_is_held_from_the_writer_check_to_the_record(self, inherits=True):
+        fake = self.host()
+        if inherits:
+            script = fake.root/'opt/kamui/lean/scripts/host.py'; script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("HELD_LOCK = '"+host_program.HELD_LOCK+"'\n")
+        lock = fake.root/'var/lib/kamui/.operator.lock'
+        seen = []
+        original = fake.run
+        def observe(args):
+            if args[:2] == ['bash', '-c'] or (args[:2] == ['python3', '-B'] and args[2].endswith('/wallet-control.py')):
+                other = os.open(lock, os.O_WRONLY)
+                try: fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB); seen.append('free')
+                except BlockingIOError: seen.append('held')
+                finally: os.close(other)
+                seen.append(os.environ.get(host_program.HELD_LOCK) is not None)
+            return original(args)
+        fake.host.run = observe
+        host_program.upgrade_prepare_backend(fake.host, BOOT)
+        # Backup, check, block. An older installed release cannot inherit the lock, so it is handed
+        # over for the block alone; the backups always run under it.
+        self.assertEqual(seen, ['held', True]*3 if inherits else ['held', True, 'held', True, 'free', False])
+        self.assertNotIn(host_program.HELD_LOCK, os.environ)
+        other = os.open(lock, os.O_WRONLY)
+        try: fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally: os.close(other)
+
+    def test_an_older_installed_release_hands_the_lock_over_only_for_its_own_calls(self):
+        self.test_the_control_lock_is_held_from_the_writer_check_to_the_record(inherits=False)
+
+    def test_a_lock_taken_during_the_handoff_refuses(self):
+        fake = self.host()
+        lock, others = fake.root/'var/lib/kamui/.operator.lock', []
+        original = fake.run
+        def grab(args):
+            if args[:2] == ['python3', '-B'] and args[2].endswith('/wallet-control.py'):
+                other = os.open(lock, os.O_WRONLY); others.append(other); fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return original(args)
+        fake.host.run = grab
+        self.addCleanup(lambda: [os.close(o) for o in others])
+        with self.assertRaises(host_program.Refused) as caught: host_program.upgrade_prepare_backend(fake.host, BOOT)
+        self.assertEqual(caught.exception.code, 'HOST_CONTROL_BUSY')
+        self.assertFalse((fake.root/'var/lib/kamui-install/backend-upgrade-prepared.json').exists())
+
+    def test_a_busy_control_lock_refuses_before_the_backup(self):
+        fake = self.host()
+        lock = fake.root/'var/lib/kamui/.operator.lock'
+        other = os.open(lock, os.O_CREAT | os.O_WRONLY, 0o600); self.addCleanup(os.close, other)
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with self.assertRaises(host_program.Refused) as caught: host_program.upgrade_prepare_backend(fake.host, BOOT)
+        self.assertEqual(caught.exception.code, 'HOST_CONTROL_BUSY')
+        self.assertFalse(any(c[0] == 'backup' for c in fake.calls))
+        self.assertEqual(fake.gate()['state'], 'ready')
+
+    def test_finish_restores_exactly_the_timers_prepare_stopped_across_a_retry(self):
+        fake = self.host()
+        fake.enabled['kamui-backup-check.timer'] = 'disabled'   # active but not enabled: still restored
+        fake.units['kamui-backup-full.timer'] = 'inactive'      # enabled but stopped by the operator: left alone
+        fake.backup_fails = 'full'
+        with self.assertRaises(host_program.Refused): host_program.upgrade_prepare_backend(fake.host, BOOT)
+        fake.backup_fails = None
+        # The retry finds no active timer, yet still remembers the one the first attempt stopped.
+        result = host_program.upgrade_prepare_backend(fake.host, BOOT)
+        self.assertEqual(result['timersStopped'], [])
+        fake.clock += 700
+        quiet(host_program.reopen, fake.host, BOOT, fake.gate()['generation'], 'after-upgrade')
+        self.assertEqual(host_program.upgrade_finish(fake.host, 'backend')['timersStarted'], ['kamui-backup-check.timer'])
+        self.assertEqual(fake.units['kamui-backup-full.timer'], 'inactive')
+        self.assertFalse((fake.root/'var/lib/kamui-install/backend-upgrade-timers.json').exists())
+
     def test_pepper_finish_starts_the_stack(self):
         fake = self.host('pepper')
         host_program.upgrade_prepare_pepper(fake.host, BOOT)
@@ -311,6 +384,32 @@ class InstallerUpgradeTest(test_host_install.HostInstallTest):
         following['runner'] = UpgradeCommands(active={FENCE, 'kamui-monitor@backend.timer'})
         self.assertEqual(host.install(**following, upgrade_started=PREP, now=lambda: 1_000_000)['status'], 'host_upgraded_wallet_stopped')
 
+    def test_a_held_control_lock_refuses_and_changes_nothing(self):
+        root, receipt, generation, following, _ = self.started()
+        self.prepare(root, receipt, generation)
+        link_before = (root/'opt/kamui/lean').resolve()
+        other = os.open(root/'var/lib/kamui/.operator.lock', os.O_CREAT | os.O_WRONLY, 0o600); self.addCleanup(os.close, other)
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with self.assertRaisesRegex(ValueError, 'HOST_CONTROL_BUSY'): host.install(**following, upgrade_started=PREP, now=lambda: 1_000_000)
+        self.assertEqual((root/'opt/kamui/lean').resolve(), link_before)
+        self.assertTrue((root/'var/lib/kamui-install/backend-upgrade-prepared.json').exists())
+
+    def test_the_control_lock_is_held_while_replacing(self):
+        root, receipt, generation, following, _ = self.started()
+        self.prepare(root, receipt, generation)
+        lock, seen = root/'var/lib/kamui/.operator.lock', []
+        runner = following['runner']; original = runner.run
+        def observe(args, check=True):
+            if args == ['systemctl', 'daemon-reload']:
+                other = os.open(lock, os.O_WRONLY)
+                try: fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB); seen.append('free')
+                except BlockingIOError: seen.append('held')
+                finally: os.close(other)
+            return original(args, check)
+        runner.run = observe
+        host.install(**following, upgrade_started=PREP, now=lambda: 1_000_000)
+        self.assertEqual(seen, ['held'])
+
     def test_a_blocked_gate_alone_does_not_authorise_an_upgrade_without_the_record(self):
         root, receipt, generation, following, _ = self.started()
         with self.assertRaisesRegex(ValueError, 'UPGRADE_NOT_PREPARED'): host.install(**following, upgrade_started=PREP, now=lambda: 1_000_000)
@@ -382,6 +481,102 @@ class WorkstationTest(unittest.TestCase):
         tool.install()
         self.assertEqual(delivered, [{'upgrade': {'backend': PREP, 'pepper': PEPPER_PREP}}])
         self.assertEqual(tool.finish()['status'], 'PEPPER_STARTED_RUN_14_REOPEN_THEN_15_FINISH_AGAIN')
+
+
+class HostControlLockTest(unittest.TestCase):
+    """scripts/host.py accepts the lock only from the process tree that holds it."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        self.state = Path(temporary.name).resolve(); self.state.chmod(0o700)
+        spec = importlib.util.spec_from_file_location('upgrade_test_hostpy', Path(__file__).parents[1]/'scripts/host.py')
+        self.hostpy = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.hostpy)
+        self.addCleanup(os.environ.pop, self.hostpy.HELD_LOCK, None)
+
+    def held(self):
+        fd = os.open(self.state/'.operator.lock', os.O_CREAT | os.O_WRONLY, 0o600); self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); return fd
+
+    def test_the_holder_passes_it_down_and_nobody_else_can_take_it(self):
+        fd = self.held()
+        with self.assertRaisesRegex(ValueError, 'HOST_CONTROL_BUSY'):
+            with self.hostpy.control_lock(self.state): pass
+        os.environ[self.hostpy.HELD_LOCK] = str(fd)
+        with self.hostpy.control_lock(self.state): pass
+
+    def test_an_unrelated_or_unheld_descriptor_is_refused(self):
+        self.held()
+        other = os.open(self.state/'.operator.lock', os.O_WRONLY); self.addCleanup(os.close, other)
+        os.environ[self.hostpy.HELD_LOCK] = str(other)
+        with self.assertRaisesRegex(ValueError, 'HOST_CONTROL_BUSY'):
+            with self.hostpy.control_lock(self.state): pass
+        unrelated = os.open(self.state/'other', os.O_CREAT | os.O_WRONLY, 0o600); self.addCleanup(os.close, unrelated)
+        os.environ[self.hostpy.HELD_LOCK] = str(unrelated)
+        with self.assertRaisesRegex(ValueError, 'HOST_CONTROL_LOCK_INVALID'):
+            with self.hostpy.control_lock(self.state): pass
+
+
+class DriverUpgradeTest(unittest.TestCase):
+    def fixture(self):
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        return test_install.InstallationTest.fixture(self, temporary.name)
+
+    def test_preparation_gets_the_backup_budget_and_other_commands_keep_theirs(self):
+        _, aws, driver = self.fixture()
+        driver.command('backend', 'upgrade-prepare', 'i-0123456789abcdef0', 'prepare')
+        driver.command('backend', 'upgrade-finish', 'i-0123456789abcdef0', 'finish')
+        sent = [c[3]['Parameters']['executionTimeout'] for c in aws.calls if c[2] == 'send-command']
+        self.assertEqual(sent, [['7200'], ['1800']])
+
+    def test_a_failed_pull_is_sent_again_while_the_install_only_reconciles(self):
+        _, aws, driver = self.fixture()
+        answer, failures = aws.request, ['Failed']
+        def request(profile, service, operation, inputs):
+            reply = answer(profile, service, operation, inputs)
+            if operation == 'get-command-invocation' and failures and self.pulling: reply = {**reply, 'Status': failures.pop()}
+            return reply
+        aws.request = request
+        self.pulling = False
+        driver.command('backend', 'install', 'i-0123456789abcdef0', 'package')
+        self.pulling = True
+        with self.assertRaisesRegex(ValueError, 'INSTALL_COMMAND_FAILED'): driver.command('backend', 'pull', 'i-0123456789abcdef0', 'images')
+        driver.command('backend', 'install', 'i-0123456789abcdef0', 'package')
+        driver.command('backend', 'pull', 'i-0123456789abcdef0', 'images')
+        comments = [c[3]['Comment'] for c in aws.calls if c[2] == 'send-command']
+        self.assertEqual([c.split('-')[1] for c in comments], ['install', 'pull', 'pull'])
+
+
+class DeliverUpgradeTest(unittest.TestCase):
+    def test_each_host_installs_its_package_then_pulls_in_a_separate_command(self):
+        install = test_reopen.load('install')
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name); (root/'installation/release').mkdir(parents=True, mode=0o700)
+        common.write_private(root/'installation/release/release.json', {'releaseBucketName': 'fixture-release-bucket'})
+        artifact = {'path': str(root/'fixture'), 'sha256': 'a'*64}
+        roles = {role: {'archive': artifact, 'manifest': artifact} for role in ['backend', 'pepper']}
+        install.package = lambda root, manifest: {'installer': artifact, 'puller': artifact, 'compose': artifact, 'roles': roles}
+        sent = []
+        class Driver:
+            config = {'backend': {'aws_profile': 'p', 'expected_account': '1'}}
+            def target(self, role): return {'InstanceId': 'i-0123456789abcdef0'}
+            def command(self, role, label, instance, command): sent.append((role, label, command))
+        class Aws:
+            def put_public_file(self, *args): pass
+        install.deliver(root, Aws(), Driver(), upgrade={'backend': PREP, 'pepper': PEPPER_PREP})
+        self.assertEqual([(r, l) for r, l, _ in sent], [('backend', 'install'), ('backend', 'pull'), ('pepper', 'install'), ('pepper', 'pull')])
+        package, images = sent[0][2], sent[1][2]
+        self.assertIn('--upgrade-started '+PREP, package); self.assertNotIn('pull-images.py" --role', package)
+        self.assertIn('--check', images.split('python3 "$work/pull-images.py"')[0]); self.assertNotIn('--upgrade-started', images)
+        self.assertIn('pull-images.py" --role', images); self.assertNotIn('docker-auth" --check', images)
+        self.assertIn('--upgrade-started '+PEPPER_PREP, sent[2][2])
+
+
+class FixedCodeTest(unittest.TestCase):
+    def test_codes_naming_a_script_number_reach_the_operator(self):
+        reopen = test_reopen.load('reopen')
+        line = host_program.RESULT+json.dumps({'status': 'refused', 'code': 'BOOT_FENCE_NOT_CURRENT_RUN_14_FENCE'})
+        self.assertEqual(reopen.parse(line)['code'], 'BOOT_FENCE_NOT_CURRENT_RUN_14_FENCE')
+        for name in ['upgrade.py', 'install.py', 'reopen.py', 'host_install.py']:
+            self.assertIn("'[A-Z0-9_]{3,100}'", (Path(__file__).parent/name).read_text(), name)
 
 
 class BootstrapTest(unittest.TestCase):

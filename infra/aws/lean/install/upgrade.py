@@ -123,5 +123,5 @@ def main():
 if __name__ == '__main__':
     try: main()
     except Exception as error:
-        code = str(error) if isinstance(error, (ValueError, AwsError)) and re.fullmatch('[A-Z_]{3,100}', str(error)) else 'UPGRADE_STOPPED_PRIVATE_EVIDENCE_RETAINED'
+        code = str(error) if isinstance(error, (ValueError, AwsError)) and re.fullmatch('[A-Z0-9_]{3,100}', str(error)) else 'UPGRADE_STOPPED_PRIVATE_EVIDENCE_RETAINED'
         print(code); raise SystemExit(1)

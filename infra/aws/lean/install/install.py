@@ -201,7 +201,11 @@ def supersede(root):
             'walletStarted': False}
 
 
-def bootstrap(role, bucket, artifacts, verify=False, replace=False, upgrade=False):
+def bootstrap(role, bucket, artifacts, verify=False, replace=False, upgrade=False, stage='all'):
+    """stage: 'all' installs and pulls; for an upgrade, 'package' installs only and 'images' checks the
+    installed package is this release, then pulls its images (a separately retryable command)."""
+    if stage not in {'all', 'package', 'images'} or (stage == 'images' and (verify or replace or upgrade)):
+        raise ValueError('INSTALL_BOOTSTRAP_STAGE_INVALID')
     if role not in ROLES or not re.fullmatch('[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]', bucket):
         raise ValueError('INSTALL_BOOTSTRAP_INPUT_INVALID')
     if verify and (replace or upgrade): raise ValueError('INSTALL_VERIFY_CANNOT_REPLACE')
@@ -230,14 +234,14 @@ def bootstrap(role, bucket, artifacts, verify=False, replace=False, upgrade=Fals
                   "printf '%s  %s\\n' "+q(digest)+' "$work/'+name+'" | sha256sum -c - >/dev/null']
     command = 'python3 "$work/host-install.py" --role '+q(role)+' --archive "$work/'+role+'.tar.gz" --manifest "$work/'+role+'-manifest.json" --manifest-sha256 '+q(artifacts['roles'][role]['manifest']['sha256'])
     command += ' --compose-binary "$work/compose-linux-x86_64" --compose-sha256 '+q(COMPOSE_SHA)
-    if verify: command += ' --check'
+    if verify or stage == 'images': command += ' --check'
     # Only after an explicit supersede; the host still refuses a started wallet or any wallet state.
     if replace: command += ' --replace-unstarted'
     # Only through `15 install`, after `15 prepare` stopped, backed up and fenced this host.
     if upgrade: command += ' --upgrade-started '+q(upgrade)
     image_command = 'python3 "$work/pull-images.py" --role '+q(role)+' --manifest "$work/'+role+'-manifest.json" --manifest-sha256 '+q(artifacts['roles'][role]['manifest']['sha256'])+' --docker-config "$work/docker-auth"'
     if verify: image_command += ' --check'
-    child += [command, image_command]
+    child += [command] if stage == 'package' else [command, image_command]
     # A separate shell is essential: `set -e` inside `( ... ) || handler`
     # can be ignored by POSIX shells, permitting execution after a bad checksum.
     lines += ['if /bin/sh -eu -c '+q('\n'.join(child))+' kamui-public-install "$work" >>"$log" 2>&1; then',
@@ -262,7 +266,13 @@ def deliver(root, aws, driver, verify=False, upgrade=None):
     replace = not verify and not upgrade and bool(superseded(root))
     for role in ROLES:
         target = driver.target(role)
-        driver.command(role, 'verify' if verify else 'install', target['InstanceId'], bootstrap(role, bucket, artifacts, verify, replace, (upgrade or {}).get(role)))
+        if upgrade:
+            # The install is sent exactly once (a rerun only reconciles it). The image pull is its
+            # own command: after a known failure a rerun sends it again, after verifying the package.
+            driver.command(role, 'install', target['InstanceId'], bootstrap(role, bucket, artifacts, upgrade=upgrade[role], stage='package'))
+            driver.command(role, 'pull', target['InstanceId'], bootstrap(role, bucket, artifacts, stage='images'))
+            continue
+        driver.command(role, 'verify' if verify else 'install', target['InstanceId'], bootstrap(role, bucket, artifacts, verify, replace))
     return {'publicPackageInstalled': True, 'verificationRequested': verify, 'runtimeDelivered': False, 'walletStarted': False}
 
 
@@ -298,5 +308,5 @@ def main():
 if __name__ == '__main__':
     try: main()
     except Exception as error:
-        code = str(error) if isinstance(error, (ValueError, AwsError)) and re.fullmatch('[A-Z_]{3,100}', str(error)) else 'INSTALL_STOPPED_PRIVATE_EVIDENCE_RETAINED'
+        code = str(error) if isinstance(error, (ValueError, AwsError)) and re.fullmatch('[A-Z0-9_]{3,100}', str(error)) else 'INSTALL_STOPPED_PRIVATE_EVIDENCE_RETAINED'
         print(code); raise SystemExit(1)
