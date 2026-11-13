@@ -29,7 +29,7 @@ EXTRA = {('ecr', 'describe-images'), ('ecr', 'describe-repositories'), ('ecr', '
          ('secretsmanager', 'describe-secret')}
 # Reboot tooling (reopen.py). Each run observes the host again, like 'verify': the host
 # programs are idempotent and re-check everything, so only an uncertain send is reconciled.
-REBOOT_LABELS = {'inspect', 'fence', 'reopen', 'enable-boot'}
+REBOOT_LABELS = {'inspect', 'fence', 'reopen', 'enable-boot', 'reload-runtime'}
 SECRET_ARN = re.compile(r'arn:aws:secretsmanager:eu-west-1:[0-9]{12}:secret:kamui-sepolia/(backend|pepper)/[a-z-]+-[A-Za-z0-9]{6}')
 
 

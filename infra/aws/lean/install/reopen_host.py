@@ -21,7 +21,7 @@ RESULT = 'KAMUI_REOPEN_RESULT '
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 BOOT_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 REF = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$')
-CODE = re.compile(r'^[A-Z_]{3,60}$')
+CODE = re.compile(r'^[A-Z0-9_]{3,60}$')
 # services/backend/src/storage/restore-fence.ts RESTORE_REPLAY_WAIT_MS, plus clock margin.
 REPLAY_WAIT_SECONDS = 600
 REPLAY_MARGIN_SECONDS = 30
@@ -267,6 +267,22 @@ def enable_boot(host, role):
     return {'status': 'enabled', 'role': 'backend', 'unit': FENCE, 'stackEnabled': host.unit(STACK, 'is-enabled')}
 
 
+def reload_runtime(host):
+    """Restart an open backend so it fetches its runtime files again (kamui-secrets@ runs before every start).
+
+    Only an already open backend with no recovery in flight: this never opens writes."""
+    gate = read_gate(host)
+    if gate['state'] != 'ready': raise Refused('RESTORE_GATE_NOT_READY_RUN_14_REOPEN')
+    services = host.services('backend')
+    if host.unit(STACK) != 'active' or not healthy_backend(services): raise Refused('BACKEND_NOT_RUNNING_HEALTHY')
+    jobs = recovery_jobs(host, services)
+    if jobs is None: raise Refused('RECOVERY_JOBS_UNREADABLE')
+    if jobs['unfinished']: raise Refused('RECOVERY_JOBS_UNFINISHED', recoveryJobs=jobs)
+    if host.run(['systemctl', 'stop', STACK])[0]: raise Refused('STACK_STOP_FAILED')
+    if writers_running(host.services('backend')): raise Refused('WRITERS_RUNNING_OUTSIDE_STACK_UNIT')
+    return {'status': 'runtime_reloaded', 'role': 'backend', 'services': start_stack(host, gate['generation'])}
+
+
 def main(argv, host=None):
     host = host or Host()
     try:
@@ -277,6 +293,7 @@ def main(argv, host=None):
         elif action == 'fence' and len(args) == 1: result = fence(host, args[0])
         elif action == 'reopen' and len(args) == 3: result = reopen(host, *args)
         elif action == 'enable-boot' and len(args) == 1 and args[0] in {'backend', 'pepper'}: result = enable_boot(host, args[0])
+        elif action == 'reload-runtime' and args == ['backend']: result = reload_runtime(host)
         else: raise Refused('HOST_ACTION_INVALID')
     except Refused as error:
         result = {'status': 'refused', 'code': error.code, **error.detail}

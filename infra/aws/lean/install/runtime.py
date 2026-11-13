@@ -82,6 +82,8 @@ DERIVED = {'backend.public.env', 'keychain.public.env', 'watcher.public.env', 'b
 FRI_MAX = 2**256 - 1
 FUNDING_LIMIT_KEYS = {'periodSeconds', 'txPerPeriod', 'perAccountPerPeriod', 'maxFeePerTx', 'maxFeePerPeriod', 'perAccountMaxFeePerPeriod'}
 FUNDING_OPERATIONS = {'sponsor', 'deployment', 'recovery', 'wallet'}
+APP_KEY = re.compile(r'[A-Za-z0-9_-]{16,64}')  # services/backend/src/services/sponsor/funding.ts keyPattern
+EMPTY_SHA256 = hashlib.sha256(b'').hexdigest()
 DECISIONS = 'runtime-decisions.json'
 WEBHOOK = re.compile(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%!*'()+,;=:@/-]*)?(?:\?[A-Za-z0-9._~%!*'()+,;=:@/?&-]*)?")
 
@@ -161,9 +163,16 @@ def validate_funding_policy(policy):
     limit(policy['global'])
     if not isinstance(policy['operations'], dict) or set(policy['operations']) != FUNDING_OPERATIONS: raise ValueError('RUNTIME_FUNDING_POLICY_INVALID')
     for operation in policy['operations'].values(): limit(operation)
-    # Sponsored apps carry bearer-credential hashes and external paymasters are not bounded by our
-    # signed fees; both need their own review before they can be granted through this file.
-    if policy['apps'] != {}: raise ValueError('RUNTIME_FUNDING_APPS_REQUIRE_REVIEW')
+    # Approved apps (setup/16-register-sponsored-app.sh): a public key and the SHA-256 of a server
+    # credential that never enters this file, as services/backend funding.ts parses them.
+    if not isinstance(policy['apps'], dict) or len(policy['apps']) > 20: raise ValueError('RUNTIME_FUNDING_POLICY_INVALID')
+    for key, app in policy['apps'].items():
+        if not APP_KEY.fullmatch(key) or not isinstance(app, dict) or set(app) != FUNDING_LIMIT_KEYS | {'credentialHash'}:
+            raise ValueError('RUNTIME_FUNDING_APP_INVALID')
+        if not isinstance(app['credentialHash'], str) or not re.fullmatch(r'[0-9a-f]{64}', app['credentialHash']) or app['credentialHash'] == EMPTY_SHA256:
+            raise ValueError('RUNTIME_FUNDING_APP_INVALID')
+        limit({k: v for k, v in app.items() if k != 'credentialHash'})
+    # External paymasters are not bounded by our signed fees; they need their own review.
     if policy['allowExternalPaymaster'] is not False: raise ValueError('RUNTIME_EXTERNAL_PAYMASTER_REQUIRES_REVIEW')
 
 

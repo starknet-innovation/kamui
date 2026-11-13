@@ -145,6 +145,11 @@ class RuntimeTests(unittest.TestCase):
 if __name__=='__main__':unittest.main()
 
 
+def approved_app(**override):
+    return {'periodSeconds': 3600, 'txPerPeriod': 10, 'perAccountPerPeriod': 2, 'maxFeePerTx': '1000',
+            'maxFeePerPeriod': '10000', 'perAccountMaxFeePerPeriod': '2000', 'credentialHash': 'c'*64, **override}
+
+
 class DecisionsTests(unittest.TestCase):
     HOOK = 'https://hooks.example.invalid/services/T000/B000/fixture-token'
 
@@ -248,9 +253,21 @@ class FundingDecisionsTests(DecisionsTests):
         self.assertEqual(policy['global']['txPerPeriod'], 0)
         self.assertIn('DEPLOYS_PER_HOUR=0\n', (backend/'backend.public.env').read_text())
 
+    def test_an_approved_app_reaches_the_policy_with_only_its_credential_hash(self):
+        root, backend = self.fixture()
+        policy = open_policy(apps={'app-key-0123456789ab': approved_app()})
+        self.decide(root, {'version': 1, 'funding': {'deploysPerHour': 10, 'policy': policy}})
+        runtime.prepare(root, metadata())
+        self.assertEqual(json.loads((backend/'funding-policy.json').read_text())['apps'], policy['apps'])
+
     def test_apps_external_paymasters_and_inconsistent_caps_are_refused(self):
         cases = [
-            (open_policy(apps={'app-key-0123456789ab': {}}), 'RUNTIME_FUNDING_APPS_REQUIRE_REVIEW'),
+            (open_policy(apps={'app-key-0123456789ab': {}}), 'RUNTIME_FUNDING_APP_INVALID'),
+            (open_policy(apps={'short': approved_app()}), 'RUNTIME_FUNDING_APP_INVALID'),
+            (open_policy(apps={'app-key-0123456789ab': approved_app(credentialHash='A'*64)}), 'RUNTIME_FUNDING_APP_INVALID'),
+            (open_policy(apps={'app-key-0123456789ab': approved_app(credentialHash=runtime.EMPTY_SHA256)}), 'RUNTIME_FUNDING_APP_INVALID'),
+            (open_policy(apps={'app-key-0123456789ab': approved_app(token='never-here')}), 'RUNTIME_FUNDING_APP_INVALID'),
+            (open_policy(apps={'app-key-0123456789ab': approved_app(maxFeePerTx='2000000000000000000000')}), 'RUNTIME_FUNDING_POLICY_INVALID'),
             (open_policy(external=True), 'RUNTIME_EXTERNAL_PAYMASTER_REQUIRES_REVIEW'),
             (open_policy(fee='2000000000000000000000'), 'RUNTIME_FUNDING_POLICY_INVALID'),
             (open_policy(fee='0x10'), 'RUNTIME_FUNDING_POLICY_INVALID'),
