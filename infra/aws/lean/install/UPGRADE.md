@@ -13,10 +13,10 @@ hosts that hold real data. It is tested offline only until its first live run.
 - **State untouched.** The installer replaces the package, units and image list; it never touches
   `/var/lib/kamui` (database, restore gate, Caddy certificates) or `/etc/kamui` (secrets).
 - **Only a prepared host.** `--upgrade-started` is accepted only with the record `15 prepare` leaves:
-  from this boot, at most an hour old, written for exactly the installed release, and on the backend
-  naming the generation of the blocked gate. The installer consumes the record, so it cannot
-  authorise a second upgrade. Nothing may be running except the backend's one-shot boot fence.
-  Units may stay enabled.
+  carrying the id of this run's preparation, from this boot, at most an hour old, written for exactly
+  the installed release, and on the backend naming the generation of the still-blocked gate. The
+  installer consumes the record, so it cannot authorise a second upgrade. Nothing may be running
+  except the backend's one-shot boot fence and the read-only monitor timers. Units may stay enabled.
 
 ## Steps
 
@@ -25,7 +25,7 @@ From `infra/aws/lean/setup` on a clean checkout of the source you are releasing:
 | Step | What happens | Downtime |
 |---|---|---|
 | `11-supersede-unstarted-release.sh`, `07`, `08`, `13` | Build the new release locally, as for any release. `13` only if runtime files changed. | none |
-| `15-upgrade-started-release.sh prepare` | Asks you to type `UPGRADE`. Pepper: stops its stack. Backend: refuses if a recovery job is unfinished; stops the backup timers and the stack; starts PostgreSQL alone; full backup and check; blocks the gate; stops PostgreSQL; records the preparation. | starts |
+| `15-upgrade-started-release.sh prepare` | Asks you to type `UPGRADE`. Backend first: refuses if a recovery job is unfinished or a backup is running; stops the backup timers and the stack; starts PostgreSQL alone; full backup and check; blocks the gate; stops PostgreSQL; records the preparation under a new id. Then pepper: stops its stack and records its own id. | starts |
 | `15-upgrade-started-release.sh install` | `09` in upgrade mode on both hosts: new package and images. Run within an hour of `prepare`. | |
 | `10-verify-installation.sh` | Verifies both hosts. | |
 | `15-upgrade-started-release.sh finish` | Starts the pepper stack. Reports that the backend awaits reopening. | pepper back |
@@ -36,14 +36,20 @@ Expect at least 10 minutes with backend writes closed, plus the image pull.
 
 ## If something stops halfway
 
-- **`prepare` refused before the backup:** nothing changed except, possibly, stopped backup timers
-  (listed as `BACKUP_TIMERS_LEFT_STOPPED`). If the stack was stopped, `14 reopen` starts it again; the
-  gate is still open.
+`prepare` runs the backend first; if the backend refuses, pepper has not been touched.
+
+- **`prepare` refused before blocking the gate** (a backup was already running, the backup or its
+  check failed, no fresh backup was found): the gate is still open. Possibly stopped are the backup
+  timers (listed as `BACKUP_TIMERS_LEFT_STOPPED`) and the backend stack. `15 finish` starts the
+  stack again, restarts those timers and starts pepper. Then retry `prepare` when the cause is fixed.
 - **`prepare` refused after blocking the gate:** the stack is down and writes are closed. Fix the
-  cause and rerun `prepare`, or abandon the upgrade with `14 reopen` (the old release is still
-  installed).
-- **`install` refused:** the old release is still installed; the refusal code says why (for example
-  `UPGRADE_PREPARATION_STALE_RUN_15_PREPARE_AGAIN`). Rerun `prepare`, then `install`.
+  cause and rerun `prepare`, or abandon the upgrade with `14 reopen` then `15 finish` (the old
+  release is still installed).
+- **`install` refused:** every check that can refuse runs before the installer changes anything
+  visible, so the old release is still installed and linked. The code says why (for example
+  `UPGRADE_PREPARATION_STALE_RUN_15_PREPARE_AGAIN`, or `INSTALLED_FILE_CHANGED_REFUSE_REPLACE` for a
+  unit edited on the host). Each preparation authorises exactly one install: rerun `prepare`, then
+  `install`. To abandon instead, `14 reopen` then `15 finish`.
 - **The new release does not start:** the database may already carry the new release's schema. Roll
   back by upgrading again to the previous source revision with this same procedure, and if the
   schema is incompatible, restore the backup `prepare` reported (see `backup/README.md`, "Restore

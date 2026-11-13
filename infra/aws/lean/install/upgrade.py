@@ -5,8 +5,8 @@ Once a wallet has started, the host installer refuses a new release unless this 
 prepared the host. Order, from infra/aws/lean/setup on a clean checkout of the release source:
 
   11, then 07, 08 and 13 as for any release     build the new release locally
-  15 prepare                                    stop both stacks; backend: fresh full backup,
-                                                restore gate blocked (downtime starts)
+  15 prepare                                    backend first: fresh full backup, restore gate
+                                                blocked; then pepper stopped (downtime starts)
   15 install                                    09 with --upgrade-started on both hosts
   10                                            verify
   15 finish                                     start pepper
@@ -24,7 +24,7 @@ from pathlib import Path
 import re
 import sys
 
-from common import Aws, AwsError, Driver, private_dir, read_private
+from common import Aws, AwsError, Driver, private_dir, read_private, write_private
 import install
 from reopen import Reopen
 
@@ -40,6 +40,7 @@ class Upgrade(Reopen):
     def __init__(self, root, driver, aws=None, deliver=install.deliver, confirm=ask, out=print, **kwargs):
         super().__init__(root, driver, confirm=confirm, out=out, **kwargs)
         self.root, self.aws, self.deliver = Path(root), aws, deliver
+        self.prepared_path = private_dir(private_dir(self.root/'installation')/'upgrade')/'prepared.json'
 
     def local_release_ready(self):
         """A superseded release and a newly built one: 11 then 07 have run."""
@@ -63,19 +64,31 @@ class Upgrade(Reopen):
         self.out('  The backend takes a fresh full backup first: it is the rollback point.')
         if self.confirm('Type '+CONFIRMATION+' to stop the hosts and prepare the upgrade: ').strip() != CONFIRMATION:
             raise ValueError('UPGRADE_NOT_CONFIRMED')
-        results = {}
-        for role, state in [('pepper', pepper), ('backend', backend)]:
+        # A previous run's ids must never reach this run's install.
+        if self.prepared_path.exists(): self.prepared_path.unlink()
+        results, ids = {}, {}
+        # Backend first: if it refuses, pepper has not been touched.
+        for role, state in [('backend', backend), ('pepper', pepper)]:
             result = self.call(role, 'upgrade-prepare', 'upgrade-prepare', role, state['bootId'])
             self.evidence('upgrade-prepare-'+role, result)
             if result['status'] == 'refused':
                 if result.get('timersStopped'): self.out('BACKUP_TIMERS_LEFT_STOPPED '+' '.join(result['timersStopped']))
+                self.out('RECOVER_WITH_15_FINISH_OR_SEE_UPGRADE_MD')
                 raise ValueError(('UPGRADE_PREPARE_'+role.upper()+'_'+result['code'])[:100])
+            if not re.fullmatch(r'[0-9a-f-]{36}', str(result.get('prepareId'))): raise ValueError('UPGRADE_PREPARE_ID_MISSING')
+            ids[role] = result['prepareId']
             results[role] = {k: result[k] for k in ['backupLabel', 'timersStopped'] if k in result}
+        write_private(self.prepared_path, {'release': revision, 'prepareIds': ids})
         return {'status': 'UPGRADE_PREPARED_RUN_15_INSTALL_WITHIN_ONE_HOUR', 'release': revision[:12], **results}
 
     def install(self):
-        self.local_release_ready()
-        result = self.deliver(self.root, self.aws, self.driver, upgrade=True)
+        revision = self.local_release_ready()
+        if not self.prepared_path.exists(): raise ValueError('UPGRADE_NOT_PREPARED_RUN_15_PREPARE')
+        prepared = json.loads(read_private(self.prepared_path))
+        if prepared.get('release') != revision or set(prepared.get('prepareIds', {})) != {'backend', 'pepper'}:
+            raise ValueError('UPGRADE_PREPARED_FOR_ANOTHER_RELEASE_RERUN_15_PREPARE')
+        # Each prepare yields new ids, so a retry after any refusal is a new, bound install command.
+        result = self.deliver(self.root, self.aws, self.driver, upgrade=prepared['prepareIds'])
         return {'status': 'UPGRADE_INSTALLED_RUN_10_THEN_15_FINISH', **result}
 
     def finish(self):

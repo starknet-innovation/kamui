@@ -206,6 +206,8 @@ def bootstrap(role, bucket, artifacts, verify=False, replace=False, upgrade=Fals
         raise ValueError('INSTALL_BOOTSTRAP_INPUT_INVALID')
     if verify and (replace or upgrade): raise ValueError('INSTALL_VERIFY_CANNOT_REPLACE')
     if replace and upgrade: raise ValueError('INSTALL_MODE_CONFLICT')
+    if upgrade and not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', str(upgrade)):
+        raise ValueError('INSTALL_UPGRADE_PREPARE_ID_INVALID')
     q = shlex.quote
     selected = {'host-install.py': artifacts['installer'], 'pull-images.py': artifacts['puller'], 'compose-linux-x86_64': artifacts['compose'],
                 role+'.tar.gz': artifacts['roles'][role]['archive'], role+'-manifest.json': artifacts['roles'][role]['manifest']}
@@ -232,7 +234,7 @@ def bootstrap(role, bucket, artifacts, verify=False, replace=False, upgrade=Fals
     # Only after an explicit supersede; the host still refuses a started wallet or any wallet state.
     if replace: command += ' --replace-unstarted'
     # Only through `15 install`, after `15 prepare` stopped, backed up and fenced this host.
-    if upgrade: command += ' --upgrade-started'
+    if upgrade: command += ' --upgrade-started '+q(upgrade)
     image_command = 'python3 "$work/pull-images.py" --role '+q(role)+' --manifest "$work/'+role+'-manifest.json" --manifest-sha256 '+q(artifacts['roles'][role]['manifest']['sha256'])+' --docker-config "$work/docker-auth"'
     if verify: image_command += ' --check'
     child += [command, image_command]
@@ -244,7 +246,8 @@ def bootstrap(role, bucket, artifacts, verify=False, replace=False, upgrade=Fals
     return '\n'.join(lines)+'\n'
 
 
-def deliver(root, aws, driver, verify=False, upgrade=False):
+def deliver(root, aws, driver, verify=False, upgrade=None):
+    """upgrade: {role: prepare id} from `15 prepare`, or None."""
     manifest = json.loads(read_private(Path(root)/'installation/release/release.json'))
     artifacts = package(root, manifest)
     bucket = manifest['releaseBucketName']; config = driver.config
@@ -259,7 +262,7 @@ def deliver(root, aws, driver, verify=False, upgrade=False):
     replace = not verify and not upgrade and bool(superseded(root))
     for role in ROLES:
         target = driver.target(role)
-        driver.command(role, 'verify' if verify else 'install', target['InstanceId'], bootstrap(role, bucket, artifacts, verify, replace, upgrade))
+        driver.command(role, 'verify' if verify else 'install', target['InstanceId'], bootstrap(role, bucket, artifacts, verify, replace, (upgrade or {}).get(role)))
     return {'publicPackageInstalled': True, 'verificationRequested': verify, 'runtimeDelivered': False, 'walletStarted': False}
 
 
