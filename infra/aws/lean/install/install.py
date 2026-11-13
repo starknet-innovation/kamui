@@ -143,7 +143,8 @@ def bootstrap(role, bucket, artifacts, verify=False):
     selected = {'host-install.py': artifacts['installer'], 'pull-images.py': artifacts['puller'], 'compose-linux-x86_64': artifacts['compose'],
                 role+'.tar.gz': artifacts['roles'][role]['archive'], role+'-manifest.json': artifacts['roles'][role]['manifest']}
     lines = ['set -eu', 'umask 077', '[ "$(id -u)" = 0 ]',
-             "python3 -c \"import platform; v=platform.freedesktop_os_release(); assert v.get('ID')=='amzn' and v.get('VERSION_ID')=='2023' and platform.machine()=='x86_64'\"",
+             # AL2023 ships Python 3.9; platform.freedesktop_os_release() needs 3.10.
+             "python3 -c \"import platform,shlex; v={k:(shlex.split(x) or [''])[0] for k,_,x in (l.partition('=') for l in open('/etc/os-release'))}; assert v.get('ID')=='amzn' and v.get('VERSION_ID')=='2023' and platform.machine()=='x86_64'\"",
              'log=/var/log/kamui-public-install-'+role+'-'+artifacts['roles'][role]['manifest']['sha256'][:16]+'.log',
              '[ ! -L "$log" ]', 'touch "$log"', 'chmod 600 "$log"',
              'work=$(mktemp -d /var/tmp/kamui-public-install.XXXXXX)', 'trap \'rm -rf "$work"\' EXIT']
