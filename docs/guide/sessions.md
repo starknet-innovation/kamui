@@ -26,6 +26,8 @@ type SpendingLimit = {
 
 The keychain shows the user every contract and function, the expiry, the call and fee caps, and each spending limit with the token's name and exact amount. It also tells them the session can sign messages as their account while it lasts.
 
+Every request carries this full scope, and a person approves every session in the keychain. There are no session presets (reviewed policies an app refers to by name) and no headless sessions today. A bot or server gets its session through one browser approval: see [Node.js](/examples/node).
+
 ## Rules the keychain enforces
 
 The keychain refuses these requests whatever the user clicks:

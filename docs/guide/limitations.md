@@ -22,6 +22,8 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 - **One-off approvals fail on hosted Sepolia.** The keychain's `/execute` page posts the user's transaction to the sponsor endpoint without app credentials, and the hosted backend refuses it with `APP_AUTH_REQUIRED`.
 - **No message signing API.** Sessions can sign SNIP-12 messages as the account on chain, but the SDK has no helper for it and the keychain has no `signMessage` request.
 - **No native SDKs** and no mobile support. See [Native](/native/overview).
+- **No headless mode.** Every session needs a person to approve it in the keychain. There are no app-managed owner keys. A bot or server gets its session through one browser approval and a localhost round trip, see [Node.js](/examples/node). Whether Kamui will add a headless mode has not been decided.
+- **No session presets.** Every connect request carries its full scope: contracts, functions and spending limits. An app cannot refer to a reviewed set of policies by name. See [Sessions](/guide/sessions#what-you-ask-for). Whether Kamui will add presets has not been decided.
 
 ### Sponsorship
 

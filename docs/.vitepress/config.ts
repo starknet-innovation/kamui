@@ -10,8 +10,8 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: true,
   // docs/legal is the beta's terms and privacy notice, not developer docs; snippets/ are included
-  // into pages as snippets.
-  srcExclude: ['legal/**', 'snippets/**', 'README.md'],
+  // into pages as snippets; decisions/ holds internal proposals awaiting a team decision.
+  srcExclude: ['legal/**', 'snippets/**', 'decisions/**', 'README.md'],
   head: [['meta', { name: 'theme-color', content: '#e2502f' }]],
   themeConfig: {
     nav: [
