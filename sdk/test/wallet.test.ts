@@ -1,8 +1,9 @@
 // The Kamui wallet object: connecting across a full-page redirect, resuming on the next page
 // load, and what it refuses to send. The page, the keychain and the node are faked in memory.
 import { describe, expect, test } from 'bun:test';
-import { KamuiWallet, KamuiWalletError, callsOutsideSession, injectKamuiWallet, loadConnection, type KamuiWalletOptions } from '../src';
-import { ACCOUNT, GAME, KEYCHAIN, SEPOLIA, TOKEN, TX, fakeNode, keychainAnswers, sessionRequest, world } from './wallet-helpers';
+import { hash, type TypedData } from 'starknet';
+import { KamuiWallet, KamuiWalletError, callsOutsideSession, injectKamuiWallet, loadConnection, sessionSignTypedData, type KamuiWalletOptions, type SessionEnd } from '../src';
+import { ACCOUNT, FUTURE, GAME, KEYCHAIN, SEPOLIA, TOKEN, TX, fakeNode, keychainAnswers, sessionRequest, signInMessage, world } from './wallet-helpers';
 
 const move = { contractAddress: GAME, entrypoint: 'move', calldata: [] };
 
@@ -386,7 +387,7 @@ describe('wallet API', () => {
 
   test('what a session cannot do is refused by name', async () => {
     const { wallet } = await connected();
-    for (const type of ['wallet_signTypedData', 'wallet_addDeclareTransaction', 'wallet_watchAsset']) {
+    for (const type of ['wallet_addDeclareTransaction', 'wallet_watchAsset', 'wallet_deploymentData']) {
       const error = await refusal(() => wallet.request({ type }));
       expect(error.code).toBe('UNSUPPORTED');
       expect(error.message).toContain(type);
@@ -412,5 +413,124 @@ describe('wallet API', () => {
     expect(target.starknet_kamui).toBe(wallet);
     expect(wallet).toMatchObject({ id: 'kamui', name: 'Kamui', version: '1' });
     expect(wallet.icon).toStartWith('data:image/svg+xml;base64,');
+  });
+});
+
+describe('signing messages', () => {
+  test('a message is signed with the session key, in the format the account accepts', async () => {
+    const { wallet } = await connected();
+    const signature = wallet.signTypedData(signInMessage());
+    const { session } = wallet.connection!;
+    expect(signature).toEqual(sessionSignTypedData(wallet.connection!, signInMessage()));
+    expect(signature).toHaveLength(4);
+    expect(signature[0]).toBe(session.publicKey);
+    expect(BigInt(signature[3]!)).toBe(BigInt(FUTURE));
+    expect(await wallet.request({ type: 'wallet_signTypedData', params: signInMessage() })).toEqual(signature);
+  });
+
+  test('a message for another chain is refused', async () => {
+    const { wallet } = await connected();
+    const error = await refusal(async () => wallet.signTypedData(signInMessage('SN_MAIN')));
+    expect(error.code).toBe('UNSUPPORTED');
+    expect(error.message).toContain('SN_MAIN');
+    // The chain may be written as its felt.
+    expect(wallet.signTypedData(signInMessage(SEPOLIA))).toHaveLength(4);
+  });
+
+  test('a message that cannot be hashed is refused, not thrown raw', async () => {
+    const { wallet } = await connected();
+    const broken = { ...signInMessage(), primaryType: 'Missing' } as TypedData;
+    const error = await refusal(async () => wallet.signTypedData(broken));
+    expect(error.code).toBe('UNSUPPORTED');
+    expect(error.message).toContain('cannot be signed');
+  });
+
+  test('nothing is signed without a session or after its deadline', async () => {
+    const w = world();
+    const none = new KamuiWallet(w.options);
+    await none.resume();
+    expect((await refusal(async () => none.signTypedData(signInMessage()))).code).toBe('NOT_CONNECTED');
+
+    const c = await connected();
+    const stored = loadConnection(c.store)!;
+    stored.session.validUntil = Math.floor(Date.now() / 1000) - 1;
+    c.store.setItem('kamui.connection', JSON.stringify(stored));
+    c.node.state.validUntil = stored.session.validUntil;
+    const later = new KamuiWallet(c.options);
+    // The stored session is past its deadline, so the page load finds it dead already.
+    expect(await later.resume()).toBeNull();
+    expect((await refusal(async () => later.signTypedData(signInMessage()))).code).toBe('NOT_CONNECTED');
+  });
+});
+
+describe('watching the session', () => {
+  const revoked = (key: string, block: number) => ({ keys: [hash.getSelectorFromName('SessionKeyRevoked'), key], data: [], block_number: block });
+
+  test('a revoked session disconnects the wallet and says why', async () => {
+    const { wallet, node, store } = await connected();
+    const ends: SessionEnd[] = [];
+    const accounts: string[][] = [];
+    wallet.on('accountsChanged', (list: string[]) => accounts.push(list));
+    const stop = wallet.watch((end) => ends.push(end), { pollIntervalMs: 5 });
+    await Bun.sleep(20);
+    expect(ends).toEqual([]);
+
+    node.state.events.push(revoked(wallet.connection!.session.publicKey, 101));
+    node.state.block = 101;
+    await Bun.sleep(30);
+    expect(ends.map((end) => end.reason)).toEqual(['revoked']);
+    expect(accounts).toEqual([[]]);
+    expect(wallet.connection).toBeNull();
+    expect(wallet.lastEnd?.reason).toBe('revoked');
+    expect(loadConnection(store)).toBeNull();
+    stop();
+  });
+
+  test('a session already gone when the watch starts is reported', async () => {
+    const { wallet, node } = await connected();
+    node.state.alive = false;
+    const ends: SessionEnd[] = [];
+    wallet.watch((end) => ends.push(end), { pollIntervalMs: 5 });
+    await Bun.sleep(20);
+    expect(ends.map((end) => end.reason)).toEqual(['gone']);
+    expect(wallet.connection).toBeNull();
+  });
+
+  test('a renewal stored by another tab is carried on with, not reported', async () => {
+    const { wallet, node, store } = await connected();
+    const ends: SessionEnd[] = [];
+    const stop = wallet.watch((end) => ends.push(end), { pollIntervalMs: 5 });
+    await Bun.sleep(20);
+
+    // Another tab renewed the session under the same key: a later deadline, on chain and in storage.
+    const renewed = loadConnection(store)!;
+    renewed.session.validUntil = FUTURE + 3600;
+    store.setItem('kamui.connection', JSON.stringify(renewed));
+    node.state.validUntil = FUTURE + 3600;
+    node.state.events.push({
+      keys: [hash.getSelectorFromName('SessionKeySet'), renewed.session.publicKey],
+      data: [`0x${(FUTURE + 3600).toString(16)}`, '0x3', '0x0', '0x1', '0x1', '0x2'],
+      block_number: 101,
+    });
+    node.state.block = 101;
+    await Bun.sleep(30);
+    expect(ends).toEqual([]);
+    expect(wallet.connection?.session.validUntil).toBe(FUTURE + 3600);
+    stop();
+  });
+
+  test('a stopped watch reports nothing, and disconnecting stops caring', async () => {
+    const { wallet, node } = await connected();
+    const ends: SessionEnd[] = [];
+    const stop = wallet.watch((end) => ends.push(end), { pollIntervalMs: 5 });
+    await Bun.sleep(10);
+    stop();
+    node.state.alive = false;
+    node.state.events.push(revoked(wallet.connection!.session.publicKey, 101));
+    node.state.block = 101;
+    await Bun.sleep(20);
+    expect(ends).toEqual([]);
+    expect(wallet.connection).not.toBeNull();
+    expect(() => new KamuiWallet(world().options).watch()).toThrow(KamuiWalletError);
   });
 });

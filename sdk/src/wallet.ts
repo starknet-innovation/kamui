@@ -10,8 +10,9 @@
 //     sent without asking; anything else is refused with a `KamuiWalletError`, never silently
 //     turned into a prompt.
 //
-// No React and no wallet library in here. The starknet-react connector is ./starknet-react.
-import type { Call, ProviderInterface } from 'starknet';
+// No React and no wallet library in here. The wallet-standard adapter for Starknet Start is
+// ./starknet-start.
+import type { Call, ProviderInterface, TypedData } from 'starknet';
 import {
   beginConnect,
   beginExecute,
@@ -29,8 +30,10 @@ import {
   type Connection,
   type KeyValueStore,
 } from './keychain';
+import { sessionSignTypedData, typedDataFelt } from './messages';
 import { SessionAccount, SessionSigner, createSessionAccount } from './sessionAccount';
 import { sameFelt } from './utils';
+import { renewedConnection, watchSession, type SessionEnd, type WatchSessionOptions } from './watch';
 
 export const KAMUI_WALLET_ID = 'kamui';
 
@@ -50,7 +53,7 @@ export type KamuiWalletErrorCode =
   | 'SESSION_EXHAUSTED'
   /** The session is past its `validUntil`. Connect again for a new one. */
   | 'SESSION_EXPIRED'
-  /** A wallet request a session cannot serve (signing messages, declaring, another chain). */
+  /** A wallet request a session cannot serve (declaring, deploying, another chain, a message for another chain). */
   | 'UNSUPPORTED';
 
 /** Why the wallet refused, as a `code` to branch on. `name` is always `KamuiWalletError`. */
@@ -135,6 +138,7 @@ export class KamuiWallet {
   private resuming: Promise<Connection | null> | undefined;
   private resumeError: string | null = null;
   private approved: string | null = null;
+  private ended: SessionEnd | null = null;
   /** Sponsored calls go one at a time, so two of them never sign the same nonce. */
   private queue: Promise<unknown> = Promise.resolve();
   private readonly listeners: Record<WalletEvent, Set<WalletListener>> = { accountsChanged: new Set(), networkChanged: new Set() };
@@ -169,6 +173,11 @@ export class KamuiWallet {
   /** Why the last trip to the keychain did not succeed, e.g. "keychain: denied by the user". */
   get error(): string | null {
     return this.resumeError;
+  }
+
+  /** How the watched session ended (`watch`), until the wallet is disconnected. */
+  get lastEnd(): SessionEnd | null {
+    return this.ended;
   }
 
   /** Hash of the transaction the user approved in the keychain just before this page load. */
@@ -250,9 +259,14 @@ export class KamuiWallet {
 
   /** Forgets the session key. The session itself stays on the account until it expires or the user revokes it. */
   disconnect(): void {
+    this.drop(null);
+  }
+
+  private drop(end: SessionEnd | null): void {
     if (this.available()) forgetConnection(this.store);
     this.current = null;
     this.resuming = Promise.resolve(null);
+    this.ended = end;
     this.emit('accountsChanged', []);
   }
 
@@ -325,6 +339,63 @@ export class KamuiWallet {
   }
 
   /**
+   * Signs a SNIP-12 message as the account, with the session key: `[session_pubkey, r, s,
+   * valid_until]`. No prompt and no trip to the keychain. The account accepts it
+   * (`is_valid_signature`) for as long as the session lives. Refused with `SESSION_EXPIRED` once
+   * the session is past its deadline, and with `UNSUPPORTED` for a message whose domain names
+   * another chain or that cannot be hashed.
+   */
+  signTypedData(data: TypedData): string[] {
+    const connection = this.connected();
+    if (connection.session.validUntil <= Math.floor(Date.now() / 1000)) {
+      throw new KamuiWalletError('SESSION_EXPIRED', 'kamui: this session has expired: connect again');
+    }
+    const chain = (data as { domain?: { chainId?: unknown } } | undefined)?.domain?.chainId;
+    if (chain !== undefined && typedDataFelt(chain) !== BigInt(connection.chainId)) {
+      throw new KamuiWalletError('UNSUPPORTED', `kamui: the message is for chain ${String(chain)}, the session is on ${connection.chainId}`);
+    }
+    try {
+      return sessionSignTypedData(connection, data);
+    } catch (error) {
+      throw new KamuiWalletError('UNSUPPORTED', `kamui: this message cannot be signed: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Calls `onEnded` once, when the live session ends (expired, revoked, devices changed). The
+   * wallet disconnects first, so listeners see the account go, and keeps the reason in `lastEnd`. See `watchSession` for how it learns
+   * that and for `options`. A renewal stored by this app, in this tab or another, is not an end:
+   * the wallet carries on with the renewed session. Returns a function that stops watching.
+   */
+  watch(onEnded: (end: SessionEnd) => void = () => {}, options: WatchSessionOptions = {}): () => void {
+    let stopped = false;
+    let stop = () => {};
+    const start = (connection: Connection) => {
+      stop = watchSession(
+        connection,
+        this.options.provider,
+        (end) => {
+          if (stopped || this.current !== connection) return;
+          const renewed = end.reason === 'replaced' ? renewedConnection(connection, this.store) : null;
+          if (renewed) {
+            this.current = renewed;
+            this.resuming = Promise.resolve(renewed);
+            return start(renewed);
+          }
+          this.drop(end);
+          onEnded(end);
+        },
+        options,
+      );
+    };
+    start(this.connected());
+    return () => {
+      stopped = true;
+      stop();
+    };
+  }
+
+  /**
    * Sends the user to the keychain to approve one transaction with the account's full
    * authority: the way to make a call the session does not cover. Leaves the page and never
    * settles; after the user is back, `resume()` puts the transaction hash in `lastApproved`.
@@ -380,6 +451,8 @@ export class KamuiWallet {
         const calls = (params.calls ?? []) as WalletApiCall[];
         return this.execute(calls.map((c) => ({ contractAddress: c.contract_address, entrypoint: c.entry_point, calldata: c.calldata ?? [] })));
       }
+      case 'wallet_signTypedData':
+        return this.signTypedData(call.params as TypedData);
       case 'wallet_supportedWalletApi':
         return ['0.7'];
       default:

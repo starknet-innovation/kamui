@@ -52,5 +52,5 @@ While the popup is open, the keychain (and an issuer that does not isolate its p
 - **A keychain older than this feature** does not announce the trip to the issuer, so a sign-in there can be mistaken for a closed popup.
 - **Mobile browsers** open a "popup" as a new tab. The flow is the same, but in-app browsers (webviews) often block new windows altogether, and you get the redirect.
 - **Tested in Chromium only**, against a fake issuer. The browser tests cover Chrome, including an issuer that isolates its pages. Firefox, Safari and the real Google sign-in have not been exercised in popup mode.
-- **The wallet interface does not use it.** `KamuiWallet` and the starknet-react connector still redirect.
+- **The wallet interface does not use it.** `KamuiWallet` and the Starknet Start wallet (`KamuiStandardWallet`) still redirect.
 - **No iframe mode.** Embedding the keychain needs the Storage Access API and a keychain that allows framing; it does not exist.
