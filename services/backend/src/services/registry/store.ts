@@ -23,6 +23,10 @@ export const MAX_SESSIONS_PER_ACCOUNT = 50;
 
 const JOURNAL_MODES = ['DELETE', 'TRUNCATE', 'WAL'];
 
+/** Says whether a path sits on a network filesystem (NFS, EFS). Injectable so tests can fake the volume type. */
+export type VolumeProbe = (path: string) => boolean;
+export type RegistryStoreOptions = { isNetworkVolume?: VolumeProbe };
+
 /** Stores may be synchronous locally or asynchronous over PostgreSQL. */
 export type Awaitable<T> = T | Promise<T>;
 export interface RegistryStorage {
@@ -45,8 +49,15 @@ export class RegistryStore implements RegistryStorage {
    * shared memory between the processes that open the file, which a network volume (NFS, EFS)
    * does not give; on such a volume use DELETE and exactly one api process. WAL is only for a
    * local disk (REGISTRY_JOURNAL_MODE=WAL).
+   *
+   * `options.isNetworkVolume` is a test seam for the volume type; the constructor does not consult it yet.
    */
-  constructor(path: string = DEFAULT_REGISTRY_DB, readonly maxPerAccount = MAX_SESSIONS_PER_ACCOUNT, journalMode = 'DELETE') {
+  constructor(
+    path: string = DEFAULT_REGISTRY_DB,
+    readonly maxPerAccount = MAX_SESSIONS_PER_ACCOUNT,
+    journalMode = 'DELETE',
+    readonly options: RegistryStoreOptions = {},
+  ) {
     if (!JOURNAL_MODES.includes(journalMode.toUpperCase())) throw new Error(`REGISTRY_JOURNAL_MODE must be one of ${JOURNAL_MODES.join(', ')}`);
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path, { create: true, strict: true });
