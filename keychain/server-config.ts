@@ -22,7 +22,13 @@ export function keychainOrigin(settings: { port: number; publicOrigin?: string }
   return { origin: url.origin, redirectUri: `${url.origin}/callback` };
 }
 
-const publicPosts = new Set(['/recover/status', '/deploy/authenticated', '/relay', '/sponsor', '/wallet/sponsor', '/registry/sessions', '/registry/sessions/list', '/registry/sessions/remove']);
+/** Routes an approved app's server calls with its own sponsor credential: the sponsored call, its usage, and replacing or ending the credential. */
+const sponsorCredentialPosts = new Set(['/sponsor', '/sponsor/usage', '/sponsor/token/rotate', '/sponsor/token/revoke']);
+/** Whether the caller's `x-kamui-sponsor-token` is passed on to this backend route. Exact paths, POST only. */
+export function forwardsSponsorCredential(path: string, method: string): boolean {
+  return method === 'POST' && sponsorCredentialPosts.has(path);
+}
+const publicPosts = new Set(['/recover/status', '/deploy/authenticated', '/relay', ...sponsorCredentialPosts, '/wallet/sponsor', '/registry/sessions', '/registry/sessions/list', '/registry/sessions/remove']);
 /** Explicit routes only: never expose metrics, operator commands, or legacy proving. */
 export function apiProxyAllowed(path: string, method: string): boolean {
   return method === 'POST' ? publicPosts.has(path) : method === 'GET' && (path === '/live' || path === '/health/api');

@@ -1,6 +1,6 @@
 // Durable paid-attempt accounting. No automatic refunds: a failed response may hide a send.
 import type { SQL } from 'bun';
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { HttpError } from '../../http';
 
@@ -33,8 +33,31 @@ export type FundingDebit = {
   external?: boolean;
 };
 export interface FundingController {
-  authorizeApp(appKey: string | null | undefined, credential: string | null | undefined): void;
+  authorizeApp(appKey: string | null | undefined, credential: string | null | undefined): void | Promise<void>;
   debit(request: FundingDebit): Promise<void>;
+}
+/** One scope's paid attempts in the current period. Fees are fri as decimal strings. */
+export type UsageCount = { tx: number; fee: string; txRemaining: number; feeRemaining: string };
+/** What an approved app may read about itself. Never another app's rows, nor the shared totals. */
+export type AppUsage = {
+  limits: { periodSeconds: number; txPerPeriod: number; perAccountPerPeriod: number; maxFeePerTx: string; maxFeePerPeriod: string; perAccountMaxFeePerPeriod: string };
+  /** Paid attempts debited to this app in the last `periodSeconds`. */
+  usage: UsageCount;
+  /** This app's debits for one account, when the request names one. */
+  account?: UsageCount & { address: string };
+  /** The operator's pause. It stops every app's paid work. */
+  paused: boolean;
+  /** Milliseconds since the epoch of the app's last self-serve rotation, or null. */
+  credentialRotatedAt: number | null;
+};
+/** Self-serve operations, each authenticated with the app's current sponsor credential. */
+export interface SponsorSelfService {
+  authorizeApp(appKey: string | null | undefined, credential: string | null | undefined): void | Promise<void>;
+  appUsage(appKey: string | null | undefined, credential: string | null | undefined, account?: string): Promise<AppUsage>;
+  /** Replaces the credential. The new one is returned once and only its SHA-256 is stored. */
+  rotateAppCredential(appKey: string | null | undefined, credential: string | null | undefined): Promise<{ token: string; rotatedAt: number }>;
+  /** Ends the credential with no replacement. Only the operator can issue the next one. */
+  revokeAppCredential(appKey: string | null | undefined, credential: string | null | undefined): Promise<{ revokedAt: number }>;
 }
 export const FUNDING_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS funding_control (
@@ -54,6 +77,12 @@ CREATE TABLE IF NOT EXISTS funding_debits (
 CREATE INDEX IF NOT EXISTS funding_debits_time ON funding_debits(created_at);
 CREATE INDEX IF NOT EXISTS funding_debits_account ON funding_debits(account, created_at);
 CREATE INDEX IF NOT EXISTS funding_debits_app ON funding_debits(app, created_at);
+CREATE TABLE IF NOT EXISTS funding_app_credentials (
+  app TEXT PRIMARY KEY CHECK (app ~ '^[0-9a-f]{64}$'),
+  credential_hash TEXT CHECK (credential_hash ~ '^[0-9a-f]{64}$'),
+  policy_hash TEXT NOT NULL CHECK (policy_hash ~ '^[0-9a-f]{64}$'),
+  rotated_at BIGINT NOT NULL
+);
 `;
 /** Run inside the shared versioned schema transaction for pre-wallet databases. */
 export const FUNDING_V3_MIGRATION_SQL = `
@@ -99,32 +128,118 @@ export function loadFundingPolicy(path?: string): FundingPolicy {
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const accountingLock = (sql: SQL) => sql`SELECT pg_advisory_xact_lock(1262570837, 3)`;
 
-export class PostgresFunding implements FundingController {
+const accountPattern = /^0x[0-9a-fA-F]{1,64}$/;
+const remaining = (cap: bigint, used: bigint) => (used >= cap ? 0n : cap - used);
+const counted = (n: unknown, fee: unknown, txCap: number, feeCap: bigint): UsageCount => ({
+  tx: Number(n), fee: BigInt(fee as string).toString(),
+  txRemaining: Number(remaining(BigInt(txCap), BigInt(n as string))), feeRemaining: remaining(feeCap, BigInt(fee as string)).toString(),
+});
+
+/**
+ * App credentials. The policy file holds the SHA-256 the operator issued. An app that rotates or
+ * revokes its own credential writes a row to `funding_app_credentials`, which then replaces the
+ * policy's hash (a NULL hash: revoked, nothing authenticates). The row names the policy hash it
+ * replaced, so an operator who issues a new credential in the policy takes precedence again:
+ * that is the way back for an app that lost its token or revoked it.
+ */
+export class PostgresFunding implements FundingController, SponsorSelfService {
   constructor(private readonly sql: SQL, private readonly policy: FundingPolicy, private readonly now = Date.now) {}
 
-  authorizeApp(appKey: string | null | undefined, credential: string | null | undefined): void {
-    const app = appKey && keyPattern.test(appKey) ? this.policy.apps[appKey] : undefined;
+  private app(appKey: string | null | undefined): FundingApp | undefined {
+    return appKey && keyPattern.test(appKey) && Object.hasOwn(this.policy.apps, appKey) ? this.policy.apps[appKey] : undefined;
+  }
+
+  private clock(): number {
+    const now = this.now();
+    if (!Number.isSafeInteger(now) || now < 0) throw new Error('FUNDING_CLOCK_INVALID');
+    return now;
+  }
+
+  /** The stored self-serve row, if it still replaces the policy's hash. */
+  private async override(sql: SQL, appKey: string, app: FundingApp): Promise<{ hash: string | null; rotatedAt: number } | undefined> {
+    const [row] = await sql`SELECT credential_hash, policy_hash, rotated_at FROM funding_app_credentials WHERE app = ${digest(appKey)}`;
+    return row && row.policy_hash === app.credentialHash ? { hash: row.credential_hash ?? null, rotatedAt: Number(row.rotated_at) } : undefined;
+  }
+
+  /** Refuses unless `credential` is the app's current one. Returns the app's policy entry. */
+  private async authorized(sql: SQL, appKey: string | null | undefined, credential: string | null | undefined): Promise<FundingApp> {
+    const app = this.app(appKey);
     // Hash before comparison; never retain or log the bearer. The app key is only an ID.
     const validCredential = typeof credential === 'string' && credential.length > 0 && credential.length <= 4096;
     const provided = digest(validCredential ? credential : '');
-    const expected = app?.credentialHash ?? '0'.repeat(64);
-    const matches = timingSafeEqual(Buffer.from(provided, 'hex'), Buffer.from(expected, 'hex'));
-    if (!app || !validCredential || !matches) throw new HttpError(403, 'APP_AUTH_REQUIRED');
+    // The database is read only for a registered app and a well-formed credential.
+    const stored = app && validCredential ? await this.override(sql, appKey!, app) : undefined;
+    const expected = stored ? stored.hash : app?.credentialHash;
+    const matches = timingSafeEqual(Buffer.from(provided, 'hex'), Buffer.from(expected ?? '0'.repeat(64), 'hex'));
+    if (!app || !validCredential || !expected || !matches) throw new HttpError(403, 'APP_AUTH_REQUIRED');
+    return app;
+  }
+
+  async authorizeApp(appKey: string | null | undefined, credential: string | null | undefined): Promise<void> {
+    await this.authorized(this.sql, appKey, credential);
+  }
+
+  async appUsage(appKey: string | null | undefined, credential: string | null | undefined, account?: string): Promise<AppUsage> {
+    if (account !== undefined && (typeof account !== 'string' || !accountPattern.test(account))) throw new HttpError(400, 'BAD_ACCOUNT');
+    const now = this.clock();
+    await this.authorized(this.sql, appKey, credential);
+    return await this.sql.begin(async tx => {
+      const app = await this.authorized(tx, appKey, credential);
+      // Every debit read below is filtered by this app's own identifier.
+      const id = digest(appKey!);
+      const address = account === undefined ? null : '0x' + BigInt(account).toString(16);
+      const cutoff = now - app.periodSeconds * 1000;
+      const [counts] = await tx`SELECT COUNT(*) AS n, COALESCE(SUM(fee), 0)::text AS fee, COUNT(*) FILTER (WHERE account = ${address}) AS account_n, COALESCE(SUM(fee) FILTER (WHERE account = ${address}), 0)::text AS account_fee FROM funding_debits WHERE created_at > ${cutoff} AND app = ${id}`;
+      const [control] = await tx`SELECT paused FROM funding_control WHERE key = 'global'`;
+      const stored = await this.override(tx, appKey!, app);
+      return {
+        limits: { periodSeconds: app.periodSeconds, txPerPeriod: app.txPerPeriod, perAccountPerPeriod: app.perAccountPerPeriod, maxFeePerTx: app.maxFeePerTx.toString(),
+          maxFeePerPeriod: app.maxFeePerPeriod.toString(), perAccountMaxFeePerPeriod: app.perAccountMaxFeePerPeriod.toString() },
+        usage: counted(counts.n, counts.fee, app.txPerPeriod, app.maxFeePerPeriod),
+        ...(address === null ? {} : { account: { address, ...counted(counts.account_n, counts.account_fee, app.perAccountPerPeriod, app.perAccountMaxFeePerPeriod) } }),
+        paused: !control || control.paused,
+        credentialRotatedAt: stored ? stored.rotatedAt : null,
+      };
+    });
+  }
+
+  /** Checks the current credential and replaces it in one transaction, so two callers holding the same credential cannot both succeed. */
+  private async replaceCredential(appKey: string | null | undefined, credential: string | null | undefined, next: string | null): Promise<number> {
+    const now = this.clock();
+    // Refused callers never open a transaction or take the accounting lock; the check is repeated under it.
+    await this.authorized(this.sql, appKey, credential);
+    await this.sql.begin(async tx => {
+      await accountingLock(tx);
+      const app = await this.authorized(tx, appKey, credential);
+      await tx`INSERT INTO funding_app_credentials (app, credential_hash, policy_hash, rotated_at) VALUES (${digest(appKey!)}, ${next}, ${app.credentialHash}, ${now})
+        ON CONFLICT (app) DO UPDATE SET credential_hash = EXCLUDED.credential_hash, policy_hash = EXCLUDED.policy_hash, rotated_at = EXCLUDED.rotated_at`;
+    });
+    return now;
+  }
+
+  async rotateAppCredential(appKey: string | null | undefined, credential: string | null | undefined): Promise<{ token: string; rotatedAt: number }> {
+    // 48 random bytes, 64 URL-safe characters: the shape the operator's registration issues.
+    const token = randomBytes(48).toString('base64url');
+    return { token, rotatedAt: await this.replaceCredential(appKey, credential, digest(token)) };
+  }
+
+  async revokeAppCredential(appKey: string | null | undefined, credential: string | null | undefined): Promise<{ revokedAt: number }> {
+    return { revokedAt: await this.replaceCredential(appKey, credential, null) };
   }
 
   async debit(request: FundingDebit): Promise<void> {
     if (!['sponsor', 'deployment', 'recovery', 'wallet'].includes(request.kind)) throw new Error('FUNDING_KIND_INVALID');
     if (typeof request.account !== 'string' || !/^0x[0-9a-fA-F]{1,64}$/.test(request.account) || typeof request.maxFee !== 'bigint' || request.maxFee < 0n || request.maxFee > FRI_MAX) throw new Error('FUNDING_DEBIT_INVALID');
-    if (request.kind === 'sponsor') this.authorizeApp(request.appKey, request.credential);
     if (request.external && !this.policy.allowExternalPaymaster) throw new HttpError(403, 'EXTERNAL_SPENDING_CONTROLS_REQUIRED');
     const account = '0x' + BigInt(request.account).toString(16);
     const app = request.kind === 'sponsor' ? digest(request.appKey!) : null;
     if (request.id && !/^0x[0-9a-fA-F]{1,64}$/.test(request.id)) throw new Error('FUNDING_DEBIT_ID_INVALID');
     const id = request.id ? (request.kind === 'wallet' ? 'wallet:' : 'tx:') + BigInt(request.id).toString(16) : 'attempt:' + randomUUID();
-    const now = this.now();
-    if (!Number.isSafeInteger(now) || now < 0) throw new Error('FUNDING_CLOCK_INVALID');
+    const now = this.clock();
     await this.sql.begin(async tx => {
       await accountingLock(tx);
+      // Under the lock a rotation also takes: a credential replaced meanwhile pays for nothing.
+      if (request.kind === 'sponsor') await this.authorized(tx, request.appKey, request.credential);
       const [control] = await tx`SELECT paused FROM funding_control WHERE key = 'global'`;
       if (!control || control.paused) throw new HttpError(503, 'SPENDING_PAUSED');
       if ((await tx`SELECT 1 FROM funding_debits WHERE id = ${id}`).length) throw new HttpError(409, 'FUNDING_ALREADY_DEBITED');

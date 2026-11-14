@@ -72,6 +72,17 @@ test('public proxy admits only reviewed API methods and exact paths', async () =
   }
   expect(apiProxyAllowed('/relay', 'GET')).toBe(false);
   expect(apiProxyAllowed('/relay', 'PUT')).toBe(false);
+  const { forwardsSponsorCredential } = await import('./server-config');
+  for (const path of ['/sponsor', '/sponsor/usage', '/sponsor/token/rotate', '/sponsor/token/revoke']) {
+    expect(apiProxyAllowed(path, 'POST')).toBe(true);
+    expect(apiProxyAllowed(path, 'GET')).toBe(false);
+    expect(forwardsSponsorCredential(path, 'POST')).toBe(true);
+    expect(forwardsSponsorCredential(path, 'GET')).toBe(false);
+  }
+  for (const path of ['/sponsor/token', '/sponsor/usage/', '/sponsor/token/rotate/x', '/wallet/sponsor', '/registry/sessions/list', '/relay', '/health/api']) {
+    expect(forwardsSponsorCredential(path, 'POST')).toBe(false);
+  }
+  expect(apiProxyAllowed('/sponsor/token', 'POST')).toBe(false);
   for (const value of [undefined, 'http://rpc.example', 'https://user:pass@rpc.example', 'https://rpc.example?api_key=example']) {
     expect(() => publicHttpsUrl(value, 'PUBLIC_RPC_URL')).toThrow('PUBLIC_RPC_URL_INVALID');
   }
@@ -79,6 +90,7 @@ test('public proxy admits only reviewed API methods and exact paths', async () =
 
 test('proxy forwards a caller sponsor credential only to sponsor and strips upstream secret headers', async () => {
   const seen: (string | null)[] = [];
+  const cacheControl: (string | null)[] = [];
   const backend = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
     seen.push(request.headers.get('x-kamui-sponsor-token'));
     return Response.json({ ok: true }, { headers: { 'x-kamui-sponsor-token': 'must-not-reflect', 'set-cookie': 'must-not-forward' } });
@@ -95,14 +107,16 @@ test('proxy forwards a caller sponsor credential only to sponsor and strips upst
       await Bun.sleep(20);
     }
     if(!ready) throw Error('TEST_KEYCHAIN_UNAVAILABLE');
-    for (const path of ['/api/sponsor','/api/wallet/sponsor','/api/registry/sessions/list']) {
+    for (const path of ['/api/sponsor','/api/wallet/sponsor','/api/registry/sessions/list','/api/sponsor/usage','/api/sponsor/token/rotate','/api/sponsor/token/revoke']) {
       const response=await fetch(`http://127.0.0.1:${port}${path}`, { method:'POST', headers:{'x-kamui-sponsor-token':'fixture-server-token'},body:'{}' });
       expect(response.status).toBe(200);
       expect(response.headers.get('x-kamui-sponsor-token')).toBeNull();
       expect(response.headers.get('set-cookie')).toBeNull();
+      cacheControl.push(response.headers.get('cache-control'));
       expect(await response.json()).toEqual({ok:true});
     }
-    expect(seen).toEqual(['fixture-server-token',null,null]);
+    expect(seen).toEqual(['fixture-server-token',null,null,'fixture-server-token','fixture-server-token','fixture-server-token']);
+    expect(cacheControl).toEqual(Array(6).fill('no-store'));
     expect((await fetch(`http://127.0.0.1:${port}/api/metrics`)).status).toBe(404);
   } finally { child.kill(); await child.exited; backend.stop(true); }
 },10_000);

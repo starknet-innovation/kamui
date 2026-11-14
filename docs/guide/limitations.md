@@ -25,7 +25,7 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 
 ### Sponsorship
 
-- **Approval is manual.** Ask the Kamui team for an app key and token. There is no dashboard, usage view or self-serve rotation.
+- **Approval is manual.** Ask the Kamui team for an app key and token; where to ask is [not published yet](/guide/sponsorship#getting-approved). Your server can read its [usage](/guide/sponsorship#usage-and-limits) and [rotate its token](/guide/sponsorship#rotating-or-revoking-your-token) itself. There is no dashboard, and a larger budget or a token lost during rotation still needs the team.
 - **Every sponsored call needs your server**, because the credential cannot be in the browser.
 
 ### Users

@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 //   services/backend/.env.local       RPC_URL, AUTHORIZED_GOOGLE_RECOVERY_CLIENT_ID,
 //                                     AUTHORIZED_APPLE_RECOVERY_CLIENT_ID (optional)
 //   services/backend/deployments.env  KAMUI_ACCOUNT_CLASS_HASH
-import { keychainOrigin, apiProxyAllowed, publicHttpsUrl } from './server-config';
+import { keychainOrigin, apiProxyAllowed, forwardsSponsorCredential, publicHttpsUrl } from './server-config';
 
 const ROOT = `${import.meta.dir}/..`;
 const production = process.env.NODE_ENV === 'production';
@@ -118,9 +118,10 @@ function proxyHeaders(request: Request, clientAddress: string | undefined): Reco
   if (forwarded) headers['x-forwarded-for'] = forwarded;
   const appKey = request.headers.get('x-kamui-app-key');
   if (appKey) headers['x-kamui-app-key'] = appKey;
-  // Approved app servers may pass their own credential through this one route.
-  // Never load/inject a wallet credential or forward it to unrelated API routes.
-  if (request.method === 'POST' && new URL(request.url).pathname === '/api/sponsor') {
+  // Approved app servers may pass their own credential through the sponsor route and its
+  // self-serve routes (usage, rotate, revoke). Never load/inject a wallet credential or
+  // forward it to unrelated API routes.
+  if (forwardsSponsorCredential(new URL(request.url).pathname.slice(4), request.method)) {
     const sponsorToken = request.headers.get('x-kamui-sponsor-token');
     if (sponsorToken) headers['x-kamui-sponsor-token'] = sponsorToken;
   }
