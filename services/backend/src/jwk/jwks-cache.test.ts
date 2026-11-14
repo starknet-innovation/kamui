@@ -101,3 +101,41 @@ describe('issuer key cache', () => {
     expect(state.fetches).toBe(0);
   });
 });
+
+describe('cache transitions', () => {
+  test('a request that arrives while a fetch is in flight joins it instead of starting another', async () => {
+    let now = 0;
+    let fetches = 0;
+    let release!: () => void;
+    const answered = new Promise<void>((resolve) => (release = resolve));
+    const send = async () => {
+      fetches += 1;
+      await answered;
+      return Response.json({ keys: [TEST_JWK] });
+    };
+    const cache = new JwksCache({ send, now: () => now, timeoutMs: 1_000 });
+    const first = cache.keys(GOOGLE, TEST_JWK.kid);
+    now += 50; // later, but before the fetch's deadline
+    const second = cache.keys(GOOGLE, 'another-kid');
+    expect(fetches).toBe(1);
+    release();
+    expect(await first).toEqual([TEST_JWK]);
+    expect(await second).toEqual([TEST_JWK]);
+    expect(fetches).toBe(1);
+  });
+
+  test('a fetch that times out is a failure: requests during the backoff fail without a fetch, and the first one after it asks again', async () => {
+    let now = 0;
+    const { state, send } = issuer();
+    state.hang = true;
+    const cache = new JwksCache({ send, now: () => now, timeoutMs: 20 });
+    expect(await status(cache.keys(GOOGLE, 'k'))).toBe('502 JWKS_UNAVAILABLE');
+    now += 9_999;
+    expect(await status(cache.keys(GOOGLE, 'k'))).toBe('502 JWKS_UNAVAILABLE');
+    expect(state.fetches).toBe(1);
+    state.hang = false;
+    now += 1;
+    expect(await status(cache.keys(GOOGLE, 'k'))).toBe('ok');
+    expect(state.fetches).toBe(2);
+  });
+});
