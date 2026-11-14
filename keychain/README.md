@@ -14,6 +14,8 @@ For anything a session does not cover, the app sends the user to `/execute` with
 
 Why the keychain does not send it: the backend's `/sponsor` pays only for an approved app whose server presents its credential, and a credential must never be in a browser. The keychain is a public page and holds none, and its `/api` proxy injects none. Its own budget (`/wallet/sponsor`) covers only the account's management calls, never calls a site chose. So the app that asked pays.
 
+To have the user sign a message (SNIP-12 typed data) outside a session, for example to sign in, the app sends them to `/sign`. The keychain shows the requesting origin, the message's domain and every value of the message with its type, and on approval signs it with the device key and returns the signature. It refuses a message that is really a transaction (an outside execution), one for another network, and one whose values its types do not declare.
+
 The session's private key never leaves the app, and the device key never leaves the keychain.
 
 Why redirects and not an iframe or a popup: browsers isolate storage inside third-party iframes, so one keychain shared by every app does not work in an iframe without extra browser permissions; and a popup can lose its link to the app while it visits the issuer. Redirects have neither problem. The cost is that the app's page reloads when the user connects.
@@ -74,6 +76,7 @@ The same holds when the registry answers but refuses the record. A full registry
 |---|---|
 | `/connect` | Receives an app's request for a session, then sign-in if needed, then the approval screen. |
 | `/execute` | Receives an app's request for one transaction, then sign-in if needed, then the approval screen. |
+| `/sign` | Receives an app's request to sign one message, then sign-in if needed, then the approval screen. |
 | `/callback` | Where the issuer returns after a sign-in. |
 | `/` | Sign-in, with Google or Apple and optionally a recovery file. Then the account: device keys with removal, sessions with revocation, the recovery file, and "forget this device". |
 
@@ -91,11 +94,12 @@ bun run server.ts      # http://localhost:5173
 
 ## Tested
 
-- **The protocol,** its refusals and the app-side helpers: 25 tests in `../sdk/test/keychain.test.ts`.
-- **The pages and key storage, in three browsers:** 75 UI tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 225 runs in all, plus an opt-in real Worker runtime test. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
+- **The protocol,** its refusals and the app-side helpers: 35 tests in `../sdk/test/keychain.test.ts`.
+- **The pages and key storage, in three browsers:** 82 UI tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 246 runs in all, plus an opt-in real Worker runtime test. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
   - sign-in with Google and with Apple, polling a slow recovery through a dropped connection, a remembered device, a stale sign-in page, a key removed elsewhere, an error from the issuer, and no Apple button without an Apple client id;
   - sign-in with a recovery file: the pepper service never contacted, the file a device downloads signing another device in, how the file is stored during the trip, and files refused for another user, network, class, application or issuer, or for not being a recovery file;
   - how the key is stored, and forgetting the device;
+  - approving and denying a signed message: the origin, domain and every value shown, markup shown as text, an owner signature the fake account verifies, and the messages the keychain refuses (an outside execution, another network, another site);
   - approving and denying a session or a single transaction, an approved transaction handed back signed and unsent and then paid for by the app's server when the backend requires an approved app's credential (and refused when the app has none), the requests the keychain refuses, how token calls and amounts are described for known, unverified and unidentified tokens, an app name containing markup;
   - the session list: a session recorded at approval with an owner signature the fake registry verifies, revocation sending exactly `revoke_session_key` for that key, "Revoke all sessions" with a registry that is down or empty, a registry that is down or full at approval, keys formatted differently from the account's, a record whose session does not exist or has expired, markup in a recorded origin or name, malformed records, and a record that disagrees with the account;
   - removing a device, the recovery file download, and the content security policy.

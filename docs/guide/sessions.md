@@ -71,6 +71,88 @@ if (!(await isConnectionAlive(connection, provider))) {
 }
 ```
 
+### Being told when it ends
+
+You do not need to ask the account before every call. `watchSession` calls you once, when the session ends, and says why:
+
+```ts
+import { forgetConnection, watchSession } from '@kamui/sdk';
+
+const stop = watchSession(connection, provider, (end) => {
+  // end.reason: 'expired' | 'revoked' | 'all-revoked' | 'owners-changed' | 'replaced' | 'gone'
+  forgetConnection(localStorage);
+  // show "Connect with Kamui" again
+});
+
+// when the page or component goes away:
+stop();
+```
+
+How it knows:
+
+| Cause | How it is seen | `reason` |
+|---|---|---|
+| `validUntil` passed | A local timer. No network. | `expired` |
+| The user revoked this session | The account's `SessionKeyRevoked` event, keyed by the session key | `revoked` |
+| The user revoked all sessions | The account's `AllSessionsRevoked` event | `all-revoked` |
+| The user added or removed a device | `AllSessionsRevoked` in a transaction that also emitted `OwnerAdded` or `OwnerRemoved` | `owners-changed` |
+| The same key was approved again with another expiry | The account's `SessionKeySet` event | `replaced` |
+| It ended before the watcher started | One read of the account at the start | `gone` (or `replaced`) |
+
+By default the watcher reads the account's events every 30 seconds: one `starknet_blockNumber`, and one `starknet_getEvents` from the last block it saw when there is a new block. Change the cadence with `pollIntervalMs`. Read failures go to `onError` and are retried at the next interval.
+
+If your node serves WebSocket subscriptions, pass a starknet.js `WebSocketChannel` and nothing is polled:
+
+```ts
+import { WebSocketChannel } from 'starknet';
+
+const channel = new WebSocketChannel({ nodeUrl: 'wss://YOUR-SEPOLIA-RPC' });
+await channel.waitForConnection();
+const stop = watchSession(connection, provider, onEnded, { channel });
+```
+
+Good to know:
+
+- The answer comes from the node you give it. Treat it as a hint for your interface: the account still decides on every call.
+- Events are read up to the latest accepted block, so a revocation shows up one block plus one interval later at most.
+- The expiry timer follows the device's clock; the account follows block time.
+- Over a WebSocket, events emitted while the socket is down are not replayed. The next failed call tells you (below).
+- A session that used all its `maxCalls` has not ended on the account. `sessionCall` returns `null` for it.
+
+### When a call fails
+
+A failed call does not say whether the session is over. Ask once, after the failure:
+
+```ts
+import { checkSessionEnded, isSessionRefusal } from '@kamui/sdk';
+
+try {
+  await sponsor(SPONSOR_URL, prepared.call);
+} catch (error) {
+  const end = await checkSessionEnded(connection, provider); // null, or { reason }
+  if (end) {
+    // 'expired', 'replaced', or 'gone' (revoked, or a device changed): connect again
+  } else if (isSessionRefusal(error)) {
+    // the account refused the call but the session is alive: out of scope, or a used nonce
+  }
+}
+```
+
+`checkSessionEnded` is local for an expired session and one read of the account otherwise. It cannot tell a revocation from a change of devices; `watchSession` can, because it sees the event.
+
+### Watching the events yourself
+
+An indexer or a backend can watch the same events without the SDK. They are emitted by the user's account, so filter on its address. The first key is the selector of the event name (`starknet_keccak`):
+
+| Event | Keys after the selector | Data |
+|---|---|---|
+| `SessionKeyRevoked` | `session_key` | none |
+| `AllSessionsRevoked` | none | `new_epoch` |
+| `SessionKeySet` | `session_key` | `valid_until`, `max_calls`, `max_fee_per_tx`, `allowed_len`, `scoped`, `generation` |
+| `OwnerAdded`, `OwnerRemoved` | `owner` | none |
+
+`SESSION_END_EVENT_KEYS` is the ready-made `keys` filter, and `sessionEventTracker` turns a stream of these events into "alive" or a reason.
+
 ## Where the session key lives
 
 `beginConnect` writes to the `KeyValueStore` you pass (`localStorage`, `sessionStorage` or your own):
@@ -80,9 +162,40 @@ if (!(await isConnectionAlive(connection, provider))) {
 | `kamui.pending` | The request in flight and its session key pair, until the answer arrives |
 | `kamui.connection` | The account, chain, class hash and session key pair |
 | `kamui.pending.execute` | The id of a one-off transaction request in flight |
+| `kamui.pending.sign` | The id of a sign-message request in flight |
 
 - `localStorage` keeps the session across reloads and tabs. Any script running on your origin can read it, so it is only as safe as your page. The session's scope and limits cap the damage.
 - `sessionStorage` forgets it when the tab closes. The user approves a new session in each tab.
+
+## Signing messages
+
+A session can sign SNIP-12 typed data as the account, for example to prove to your server who is playing. `sessionSignTypedData` returns the signature in the format the account accepts, with no prompt:
+
+```ts
+import { sessionSignTypedData, verifyMessageSignature } from '@kamui/sdk';
+
+const signature = sessionSignTypedData(connection, typedData); // [session_pubkey, r, s, valid_until]
+
+// on your server:
+const ok = await verifyMessageSignature(provider, connection.account, typedData, signature);
+```
+
+The session's scope and limits do not apply to messages: while the session lasts it can sign any message. The signature stops verifying when the session expires, is revoked, or the user adds or removes a device. Put a nonce and an expiry in the message, and do not treat a session signature as the user's own consent to anything the session could not do.
+
+Without a session, or when the user themself must sign (a sign-in), send them to the keychain with `beginSignMessage`. They see your origin, the domain and every value of the message, and sign with their account's owner key:
+
+```ts
+import { beginSignMessage, finishSignMessage, pendingRequestKind } from '@kamui/sdk';
+
+location.assign(beginSignMessage({ keychainUrl, redirectUri: `${location.origin}/`, appName: 'My game', typedData }, localStorage));
+
+// after the redirect back:
+if (pendingRequestKind(localStorage) === 'signMessage') {
+  const signed = finishSignMessage(location.hash, localStorage); // { account, chainId, signature } or throws if denied
+}
+```
+
+The typed data must be SNIP-12 revision 1 with the account's `chainId` in its domain. The keychain never signs an outside execution as a message. Verify the answer with `verifyMessageSignature` before relying on it.
 
 ## Outside the session: one-off approvals
 
