@@ -7,9 +7,10 @@
 // ask the browser to decrypt, which is why the keychain needs a strict content security policy
 // and no third-party scripts.
 //
-// The account record (address, pepper, recovery file) is sealed the same way, and so are the two
+// The account record (address, pepper, recovery file) is sealed the same way, and so are the
 // things that wait here for a short time: a recovery file chosen for a sign-in, while the user
-// is at the issuer, and sessions the registry has not recorded yet.
+// is at the issuer, sessions the registry has not recorded yet, and a key waiting to be added
+// from another device (link.ts).
 import type { KeyPair, PepperFile, RegistrySession } from '../../sdk/src';
 
 const DATABASE = 'kamui-keychain';
@@ -21,10 +22,28 @@ export type AccountRecord = {
   account: string;
   chainId: string;
   classHash: string;
-  pepper: string;
-  keyVersion: number;
+  /**
+   * The pepper and the recovery file exist only on a device that signed in with the issuer. A
+   * device added from another device (link.ts) never sees them, and has none.
+   */
+  pepper?: string;
+  keyVersion?: number;
   /** Built at login, when the token's claims were at hand. Holds no user id. */
-  pepperFile: PepperFile;
+  pepperFile?: PepperFile;
+};
+
+/** A key this device made and is waiting for a signed-in device to add to the account. */
+export type PendingLink = {
+  device: KeyPair;
+  account: string;
+  chainId: string;
+  classHash: string;
+  /** The owners anchor the key signed over. If the account's anchor moves on, the code is dead. */
+  anchor: string;
+  /** The code to copy to the signed-in device. */
+  code: string;
+  /** Unix seconds after which the signed-in device refuses the code. */
+  expires: number;
 };
 
 function open(): Promise<IDBDatabase> {
@@ -74,9 +93,10 @@ async function unseal<T>(sealed: Sealed | undefined): Promise<T | null> {
   return JSON.parse(new TextDecoder().decode(bytes)) as T;
 }
 
-/** A key waiting for its login to finish. It replaces any earlier pending key. */
+/** A key waiting for its login to finish. It replaces any earlier pending key, linked or not. */
 export async function savePendingDevice(device: KeyPair): Promise<void> {
   await put('pending-device', await seal(device));
+  await remove('pending-link');
 }
 
 export async function loadPendingDevice(): Promise<KeyPair | null> {
@@ -88,6 +108,7 @@ export async function saveLogin(device: KeyPair, account: AccountRecord): Promis
   await put('device', await seal(device));
   await put('account', await seal(account));
   await remove('pending-device');
+  await remove('pending-link');
 }
 
 export async function loadLogin(): Promise<{ device: KeyPair; account: AccountRecord } | null> {
@@ -112,6 +133,17 @@ export async function takePendingPepperFile(): Promise<PepperFile | null> {
   return file;
 }
 
+/** Passing null removes it. It replaces any earlier pending key, linked or not. */
+export async function savePendingLink(link: PendingLink | null): Promise<void> {
+  if (link) await put('pending-link', await seal(link));
+  else await remove('pending-link');
+  await remove('pending-device');
+}
+
+export async function loadPendingLink(): Promise<PendingLink | null> {
+  return unseal<PendingLink>(await get<Sealed>('pending-link'));
+}
+
 /**
  * Sessions approved on this device that the registry has not recorded yet, because it could
  * not be reached. They are shown from here and sent again on the next visit.
@@ -131,5 +163,6 @@ export async function forget(): Promise<void> {
   await remove('account');
   await remove('pending-device');
   await remove('pending-pepper-file');
+  await remove('pending-link');
   await remove('unrecorded-sessions');
 }

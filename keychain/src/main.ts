@@ -4,6 +4,7 @@
 //   /connect   an app asks to connect; the request is in the URL fragment
 //   /execute   an app asks for one transaction to be approved
 //   /callback  the issuer returns here after a sign-in
+//   /link      a signed-in device's link, opened on a device to be added without a sign-in
 //   /          this device's account: owners, sessions, recovery file
 //
 // Everything a site or a token supplies is written with textContent, never as HTML.
@@ -17,14 +18,16 @@
 //   sessions.ts  the session registry, and what the account says
 //   approval.ts  the connect and execute approval pages
 //   home.ts      the account page
+//   link.ts      adding a device from one that is already signed in
 //   main.ts      routing (this file)
 import { finishLogin, showSignIn } from './login';
 import { KamuiReader, parseConnectRequest, parseExecuteRequest } from '../../sdk/src';
-import { loadLogin } from './vault';
+import { loadLogin, loadPendingLink } from './vault';
 import { provider } from './context';
 import { REQUEST, answer, pendingRequest, type Pending } from './request';
 import { showApproval, showTransaction } from './approval';
 import { showHome } from './home';
+import { showLinkInvite, showLinkWaiting } from './link';
 import { button, el, show, status } from './ui';
 
 //
@@ -35,10 +38,12 @@ import { button, el, show, status } from './ui';
 async function resume() {
   status('');
   const login = await loadLogin();
-  if (!login) return showSignIn(resume);
   // The key may have been removed from another device since the last visit.
-  if (!(await new KamuiReader(provider, login.account.account).isOwner(login.device.publicKey))) {
-    return showSignIn(resume, 'This device no longer has access to your account. Sign in again to add it back.');
+  if (!login || !(await new KamuiReader(provider, login.account.account).isOwner(login.device.publicKey))) {
+    // A key made here from another device's link, still waiting to be added.
+    const link = await loadPendingLink();
+    if (link) return showLinkWaiting(link, resume);
+    return showSignIn(resume, login ? 'This device no longer has access to your account. Sign in again to add it back.' : '');
   }
   const pending = pendingRequest();
   if (pending?.kind === 'connect') return showApproval(pending.request, login.device, login.account);
@@ -61,6 +66,11 @@ async function main() {
     if (request) sessionStorage.setItem(REQUEST, JSON.stringify({ kind: 'execute', request } satisfies Pending));
   } else if (location.pathname === '/callback') {
     await finishLogin();
+  } else if (location.pathname === '/link') {
+    // Like a request: read once, and taken out of the address bar and the history first.
+    const fragment = location.hash;
+    history.replaceState(null, '', '/');
+    return showLinkInvite(fragment, resume);
   }
   await resume();
 }

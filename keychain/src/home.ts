@@ -7,11 +7,13 @@ import {
   revokeSessionCall,
   serializePepperFile,
   sponsor,
+  MAX_OWNERS,
   type KeyPair,
 } from '../../sdk/src';
 import { forget, loadUnrecordedSessions, saveUnrecordedSessions, type AccountRecord } from './vault';
 import { config, provider } from './context';
 import { REGISTRY_TIMEOUT_MS, loadSessions, registryFor } from './sessions';
+import { showAddDevice } from './link';
 import { limitRows, lookUpTokens, spendingLimits, tokenCell } from './tokens';
 import { ask, button, code, el, sameFelt, short, show, status, table, within } from './ui';
 
@@ -103,6 +105,23 @@ async function sessionsSection(device: KeyPair, record: AccountRecord, reader: K
   return nodes;
 }
 
+/** The recovery file's download, or why this device has none. */
+function recoveryFile(record: AccountRecord): Node[] {
+  const file = record.pepperFile;
+  // A device added from another device never saw the sign-in the file is built from.
+  if (!file) return [el('p', 'This device was added from another device and holds no recovery file. Download it on a device you signed in on with your Google or Apple account.', 'note')];
+  return [
+    el('p', 'Keep a copy. Together with your sign-in, it lets you reach your account even if Kamui\'s own lookup service is ever lost: choose the file on the sign-in page. Anyone who has the file can see which account is yours, but cannot use it.', 'note'),
+    button('Download recovery file', () => {
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob([serializePepperFile(file)], { type: 'application/json' }));
+      link.download = 'kamui-recovery.json';
+      link.click();
+      return false;
+    }),
+  ];
+}
+
 export async function showHome(device: KeyPair, record: AccountRecord, resume: Resume) {
   const reader = new KamuiReader(provider, record.account);
   const owners = await reader.owners();
@@ -124,20 +143,15 @@ export async function showHome(device: KeyPair, record: AccountRecord, resume: R
   show(
     el('h2', 'Your account'),
     table([], [['Address', code(record.account)]]),
-    el('h2', `Devices (${owners.length} of 5)`),
+    el('h2', `Devices (${owners.length} of ${MAX_OWNERS})`),
     table(['', 'Key', ''], ownerRows),
-    el('p', 'Each device you sign in on has its own key. Removing one ends every session on your account.', 'note'),
+    el('p', 'Each device you sign in on has its own key. Adding or removing one ends every session on your account.', 'note'),
+    // Drawn even when the account is full: the page it opens says why it cannot add one.
+    button('Add another device', () => showAddDevice(record, (calls) => sendAsOwner(device, record, calls), () => showHome(device, record, resume))),
     ...(await sessionsSection(device, record, reader, resume)),
     el('h2', 'Recovery file'),
     el('p', 'Keep this file outside the browser. Browser storage can be cleared, including by Safari after inactivity. Losing this device’s key requires another sign-in, which ends every session; a lost key may remain in the device list until you remove it.', 'warn'),
-    el('p', 'Keep a copy. Together with your sign-in, it lets you reach your account even if Kamui\'s own lookup service is ever lost: choose the file on the sign-in page. Anyone who has the file can see which account is yours, but cannot use it.', 'note'),
-    button('Download recovery file', () => {
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(new Blob([serializePepperFile(record.pepperFile)], { type: 'application/json' }));
-      link.download = 'kamui-recovery.json';
-      link.click();
-      return false;
-    }),
+    ...recoveryFile(record),
     el('h2', 'This device'),
     button('Forget this device', async () => {
       if (!(await ask('Forget the key on this device? Its key stays on your account until you remove it from another device.', 'Yes, forget it'))) return false;

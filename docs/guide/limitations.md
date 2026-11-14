@@ -30,7 +30,8 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 
 ### Users
 
-- **First sign-in on a device needs desktop Chromium.** The login proof is made in the browser and needs memory64 and several GB of memory. Firefox, Safari and mobile browsers cannot complete it today; there is no server fallback. Returning users on a device that already owns the account need no proof.
+- **First sign-in on a device needs desktop Chromium.** The login proof is made in the browser and needs memory64 and several GB of memory. Firefox, Safari and mobile browsers cannot complete it today; there is no server fallback. The sign-in page says so before sending the user to Google. Returning users on a device that already owns the account need no proof.
+- **A signed-in device can add another one without a proof** ("Add another device" on the keychain's account page: a link one way, a code back). This is new: it has browser tests on desktop engines only, has not been run on a phone or on Sepolia, and is not security reviewed. It does not help a user whose first device is a phone.
 - **The first sign-in takes tens of seconds** while the proof runs.
 - **Adding a device ends every session.** Your app is told by [`watchSession`](/guide/sessions#being-told-when-it-ends) (reason `owners-changed`), or sees `isConnectionAlive` turn false, and must ask again.
 - **Safari may clear the keychain's storage** after seven days of Safari use without visiting it. The user then signs in as on a new device.

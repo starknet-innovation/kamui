@@ -1,5 +1,5 @@
 // Sign-in: the sign-in page, the trip to the issuer, and adding this device to the account on return.
-import { browserProver, assertBrowserProvingSupported } from './proving';
+import { browserProver, assertBrowserProvingSupported, provingSupported } from './proving';
 import {
   KamuiReader,
   authUrl,
@@ -132,6 +132,22 @@ export function showSignIn(resume: Resume, reason = '') {
     await startLogin(via, file, resume);
   };
 
+  const fromAnotherDevice = [
+    el('h2', 'Already use Kamui on another device?'),
+    el('p', 'Open Kamui there, choose "Add another device" on your account page, and open the link it gives you in this browser. That needs no sign-in here and no proof.', 'note'),
+  ];
+  if (!provingSupported()) {
+    // Said before the trip to the issuer, not after it. Nothing is sent to a server to prove instead.
+    nodes.push(
+      el('p', 'This browser cannot do a first sign-in. Signing in on a new device makes a proof inside the browser, and that needs a recent desktop Chromium browser such as Chrome, with WebAssembly memory64 and about 8 GB of memory. Kamui does not send your sign-in to a server to make the proof for you.', 'warn'),
+      ...fromAnotherDevice,
+      el('h2', 'New to Kamui?'),
+      el('p', 'Open this page in Chrome on a desktop computer and sign in there first. From its account page you can then add other devices without a proof.', 'note'),
+    );
+    if (request) nodes.push(button('Cancel', () => answer(request, { ok: false, error: 'cancelled by the user' })));
+    return show(...nodes);
+  }
+
   nodes.push(
     el('p', 'Signing in on a new device adds a key for this device to your account. Proving runs in this browser and may take several minutes; it ends every session your apps have, on all your devices.', 'warn'),
     el('p', 'New-device recovery currently requires a recent desktop Chromium browser with WebAssembly memory64 and at least 8 GB of device RAM recommended.', 'note'),
@@ -146,6 +162,7 @@ export function showSignIn(resume: Resume, reason = '') {
     label,
     input,
     fileNote,
+    ...fromAnotherDevice,
   );
   show(...nodes);
 }

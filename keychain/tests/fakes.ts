@@ -6,7 +6,7 @@ import { installProverFake } from './prover-fake';
 // security policy are the real ones.
 import type { BrowserContext, Route } from '@playwright/test';
 import { ec, hash } from 'starknet';
-import { accountAddressFromLogin, registryMessageHash, type RegistryAction } from '../../sdk/src';
+import { accountAddressFromLogin, newOwnerMessageHash, registryMessageHash, type RegistryAction } from '../../sdk/src';
 
 export const KEYCHAIN = 'http://localhost:5183';
 export const RPC = 'http://localhost:5184';
@@ -136,9 +136,11 @@ function rpc(world: World, method: string, params: any): unknown {
     case 'starknet_getNonce': return '0x0';
     case 'starknet_blockNumber':
       return 100;
-    case 'starknet_getClassHashAt':
-      if (!world.deployed) throw { code: 20, message: 'Contract not found' };
+    case 'starknet_getClassHashAt': {
+      const address = params.contract_address ?? params[1];
+      if (!world.deployed || (address !== undefined && !isAccount(address))) throw { code: 20, message: 'Contract not found' };
       return CLASS_HASH;
+    }
     case 'starknet_call': {
       const request = params.request ?? params[0];
       if (BigInt(request.entry_point_selector) === selector('get_key')) return Array.from({length:24}, (_,i) => hex(fixtureModulus >> (96n*BigInt(i)) & ((1n<<96n)-1n)));
@@ -203,8 +205,31 @@ function applySponsored(world: World, calls: ReturnType<typeof outsideCalls>) {
     } else if (call.selector === selector('remove_owner')) {
       world.owners = world.owners.filter((o) => !same(o, call.data[0]!));
       ownersChanged(world);
+    } else if (call.selector === selector('add_owner')) {
+      // As contracts/src/owners.cairo: a new key, room for it, and the key's own signature
+      // accepting ownership of this account at the current anchor.
+      const [key, length, r, s] = call.data;
+      if (!key || BigInt(key) === 0n) throw new Error('Owners: zero key');
+      if (world.owners.some((o) => same(o, key))) throw new Error('Owners: already an owner');
+      if (world.owners.length >= 5) throw new Error('Owners: full');
+      if (BigInt(length ?? 0) !== 2n || !signedBy(key, newOwnerMessageHash(call.to, hex(world.anchor)), [r!, s!])) throw new Error('Owners: invalid signature');
+      world.owners.push(key);
+      ownersChanged(world);
     }
   }
+}
+
+/** Whether `signature` is `[r, s]` by the Stark key `key` over `messageHash`. */
+function signedBy(key: string, messageHash: string, signature: string[]): boolean {
+  const digest = BigInt(messageHash).toString(16).padStart(64, '0');
+  // A key is the x coordinate of a point; either of the two points with that x will do.
+  return ['02', '03'].some((prefix) => {
+    try {
+      return ec.starkCurve.verify(new ec.starkCurve.Signature(BigInt(signature[0]!), BigInt(signature[1]!)), digest, prefix + BigInt(key).toString(16).padStart(64, '0'));
+    } catch {
+      return false;
+    }
+  });
 }
 
 const cors = { 'access-control-allow-origin': KEYCHAIN, 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST, OPTIONS' };
@@ -295,7 +320,12 @@ export async function installFakes(context: BrowserContext, world: World) {
     }
     const calls = outsideCalls(request.calldata);
     world.sponsorRequests.push({ endpoint: new URL(route.request().url()).pathname, account: request.account, calls });
-    applySponsored(world, calls);
+    try {
+      applySponsored(world, calls);
+    } catch (error) {
+      // What the account itself would refuse (only `add_owner` is checked here).
+      return json(route, { error: (error as Error).message }, 400);
+    }
     return json(route, { transaction_hash: '0xbbb' });
   });
 

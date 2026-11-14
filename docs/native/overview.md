@@ -3,7 +3,9 @@
 Kamui is built for the web first. This page sets out how native apps (iOS, Android, React Native, Capacitor, game engines) will connect, and **what is missing today**. None of these flows is supported yet.
 
 ::: danger Not supported yet
-The blocker is sign-in on phones: a user's first sign-in on a device makes a zero-knowledge proof in the browser, and that prover needs a recent **desktop Chromium** with memory64 and several GB of memory. Mobile Safari and mobile Chrome cannot do it today, and there is no server fallback. A user who has never signed in on that phone cannot complete the flow.
+The blocker is sign-in on phones: a user's first sign-in on a device makes a zero-knowledge proof in the browser, and that prover needs a recent **desktop Chromium** with memory64 and several GB of memory. Mobile Safari and mobile Chrome cannot do it today, and there is no server fallback. A user who has never signed in on that phone cannot complete the flow by signing in there.
+
+The keychain now has a second way in that needs no proof: a user who is signed in on a desktop can add another device from the account page (a link to open on the new device, a code to paste back). It has not been run on a phone yet, so it is not a supported path, and it does not help a user who has no desktop sign-in.
 :::
 
 ## Connection flows
@@ -23,6 +25,7 @@ Status and gaps:
 | Need | Today |
 |---|---|
 | Sign-in on a phone the user has not used before | **Blocked**: browser prover is desktop Chromium only |
+| Adding a phone from a desktop that is signed in | In the keychain, **untested on phones** |
 | Custom URL schemes (`mygame://kamui`) as `redirectUri` | **Refused**. Only `https:` (or `http://localhost`) |
 | Opening the keychain URL directly from the app | **Refused**: no referrer. Needs a bounce page on your domain |
 | Native session signing (Swift, Kotlin, Rust, C#) | **No SDK**. You implement Stark ECDSA, the SNIP-12 outside-execution hash and Kamui's session signature yourself (see [Protocol](/reference/protocol#signing-session-calls)) |

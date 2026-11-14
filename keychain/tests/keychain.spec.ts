@@ -1240,7 +1240,7 @@ test.describe('signing in with Apple', () => {
 
 test.describe('page security', () => {
   test('pages are served with a strict content security policy and cannot be framed', async ({ request }) => {
-    for (const path of ['/', '/connect', '/execute', '/callback', '/main.js']) {
+    for (const path of ['/', '/connect', '/execute', '/callback', '/link', '/main.js']) {
       const response = await request.get(path);
       const policy = response.headers()['content-security-policy']!;
       expect(policy).toContain("default-src 'none'");
