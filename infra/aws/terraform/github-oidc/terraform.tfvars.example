@@ -33,3 +33,5 @@ release_repository_names = [
 # In the pepper account, list the live pepper HMAC key here: pepper/kms.tf manages its policy,
 # and CI must never be able to rewrite it.
 protected_kms_key_arns = []
+# When the repository uses immutable OIDC subjects (see variables.tf):
+# github_immutable_subject_prefix = "repo:owner@123/name@456"

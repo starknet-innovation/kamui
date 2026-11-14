@@ -47,6 +47,20 @@ variable "github_repository" {
   }
 }
 
+variable "github_immutable_subject_prefix" {
+  description = <<-EOT
+    The subject prefix GitHub sends when the repository uses immutable OIDC subjects, as
+    repo:owner@<owner id>/name@<repository id> (gh api repos/<owner>/<name>/actions/oidc/customization/sub
+    shows it as sub_claim_prefix). Empty when the repository uses the default subject.
+  EOT
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.github_immutable_subject_prefix == "" || can(regex("^repo:[A-Za-z0-9._-]+@[0-9]+/[A-Za-z0-9._-]+@[0-9]+$", var.github_immutable_subject_prefix))
+    error_message = "github_immutable_subject_prefix must be repo:owner@<id>/name@<id>, or empty."
+  }
+}
+
 variable "apply_branch" {
   description = "The only branch whose workflows may assume the apply and publish roles."
   type        = string

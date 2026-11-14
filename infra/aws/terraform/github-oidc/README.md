@@ -57,6 +57,8 @@ access it does not need.
 cd infra/aws/terraform/github-oidc
 cp backend.hcl.example backend.hcl            # fill in; both are ignored by git
 cp terraform.tfvars.example terraform.tfvars
+# If the repository uses immutable OIDC subjects, set github_immutable_subject_prefix to the
+# sub_claim_prefix from: gh api repos/<owner>/<name>/actions/oidc/customization/sub
 terraform init -backend-config=backend.hcl
 terraform plan    # review every statement before applying
 terraform apply
