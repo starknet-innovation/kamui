@@ -41,16 +41,59 @@ The keychain refuses these requests whatever the user clicks:
 
 `maxCalls` is counted separately on each payment path: a session may send up to `maxCalls` **sponsored** transactions and up to `maxCalls` **self-paid** ones.
 
-Sponsored transactions use a reserved range of nonces, one per call. `sessionCall` finds the next unused one by asking the account, one read per used nonce. For long sessions, keep the `offset` it returns and pass it back:
+Sponsored transactions use a reserved range of nonces, one per call. The account keeps no counter of how many are used, so `sessionCall` finds a free one by asking the account:
+
+- It remembers its place on the `connection` object. After the first call, each call costs two reads: the session's nonce base and the next nonce.
+- With no memory (a fresh page load) it searches the range in about `2·log2(used)` reads: 18 for a session with 500 calls behind it, where it used to take 501.
+- Pass the store and the place survives reloads too:
 
 ```ts
-let offset = 0;
-const prepared = await sessionCall(connection, calls, provider, offset);
-if (!prepared) throw new Error('session used up');
-offset = prepared.offset + 1;
+const prepared = await sessionCall(connection, calls, provider, { store: localStorage });
+if (!prepared) {
+  // every call is used: renew the session (below)
+}
 ```
 
-When the range is used up, `sessionCall` returns `null`. Ask the user to connect again.
+Prepare one call at a time per connection: two `sessionCall`s running at once get the same nonce, and the second transaction is refused. A call you prepared and never sent leaves its nonce free; `sessionCall` finds such leftovers once the rest of the range is used, at the cost of one read per nonce, once.
+
+When the range is used up, `sessionCall` returns `null`.
+
+## Renewing a session
+
+`beginExtend` asks the user to renew the session your app already holds: more calls, a later deadline, the same key. It works like `beginConnect`, and the answer is read by `finishConnect`:
+
+```ts
+import { beginExtend, finishConnect } from '@kamui/sdk';
+
+location.assign(
+  beginExtend(
+    connection,
+    { keychainUrl, redirectUri: `${location.origin}/`, appName: 'My game', validUntil: nextWeek, maxCalls: 2000, calls, limits },
+    localStorage,
+  ),
+);
+
+// after the redirect back:
+const renewed = finishConnect(location.hash, localStorage); // same session key, new limits
+```
+
+What to know:
+
+- **It is one approval, and still a redirect.** The user sees the whole request again, marked as a renewal, and approves it once. No account change happens without them.
+- **It replaces the session.** You state the full terms again (`calls`, `limits`, `validUntil`, `maxCalls`); nothing is carried over. The call count starts again from zero on both payment paths, and each spending limit starts a new period.
+- **Calls signed before the renewal and not yet sent are refused after it.** Send what you have prepared, then renew.
+- **Only the site the session was approved for can renew it.** The keychain refuses a renewal from an origin other than the one it recorded for the session, and warns the user when it has no record to check against.
+- **If the user denies it,** `finishConnect` throws and the stored connection is unchanged: the old session works until it runs out.
+- **It does not survive what ends a session.** After a revocation or a change of devices, renewing asks for a session under the old key, which is fine; you may as well `beginConnect`.
+
+### Sizing a session
+
+Each renewal costs the user a trip to the keychain, so ask for enough to make it rare, and no more than you would be comfortable having stolen with the session key:
+
+- **`maxCalls`**: your expected number of sponsored transactions until `validUntil`, with headroom (two to three times). A large number costs nothing on chain: the range is reserved, not stored. It is shown to the user as is.
+- **`validUntil`**: as long as a user would expect to stay signed in to your app on this device. Days to weeks for a game; hours for anything that moves value.
+- **Spending limits** are what bound the damage, not `maxCalls`. Keep them tight and the other two generous.
+- **Renew ahead of time**, at a moment that suits the user: when fewer than about 10% of the calls or of the time are left, and never in the middle of an action. `prepared.offset + 1` is how many calls are used when nonces are used in order; `connection.session.validUntil` is the deadline.
 
 ## When a session ends
 

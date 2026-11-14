@@ -56,7 +56,7 @@ bun run main.ts
 2. **First run.** The approval must happen in a browser on the same machine (it talks to `localhost`). For a remote server, forward the port (`ssh -L 8765:localhost:8765 host`) and open the link locally.
 3. **Persistence.** Sessions end at `validUntil`, on revocation, and whenever the user adds or removes a device. `connect()` checks that on start; long-running processes should check `isConnectionAlive` periodically and on failures.
 4. **Errors.** `sponsor()` throws `sponsor: CODE` with the codes in [Errors](/reference/errors). A timeout may still have spent the nonce: check the chain before you retry.
-5. **Nonces.** Keep the `offset` that `sessionCall` returns and pass it back for the next call, so each send does not re-scan used nonces. See [Sessions](/guide/sessions#how-many-calls).
+5. **Nonces.** `sessionCall` remembers its place on the connection object, so keep that object for the life of the process, and pass `{ store }` to keep the place across restarts. Prepare one call at a time. See [Sessions](/guide/sessions#how-many-calls).
 6. **Secrets.** Keep `KAMUI_SPONSOR_TOKEN` in your secret manager, not in the repository.
 
 ## No headless mode

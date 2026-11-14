@@ -17,7 +17,7 @@ import {
 import type { AccountRecord } from './vault';
 import { config, provider } from './context';
 import { answer } from './request';
-import { recordSession } from './sessions';
+import { recordSession, recordedOrigin } from './sessions';
 import { limitRows, lookUpTokens, spendingLimits, tokenCaution, tokenCell } from './tokens';
 import { button, code, el, short, show, status, table } from './ui';
 
@@ -32,11 +32,28 @@ export async function showApproval(request: ConnectRequest, device: KeyPair, rec
   const { params, limits } = sessionFromWire(session);
   const tokenOf = await lookUpTokens(limits.map((limit) => limit.token));
 
+  // A request for a key the account already has a session for is a renewal: approving it
+  // replaces that session. Only the site the session was approved for may ask for that; the
+  // flag is read from the account, not from the request.
+  const renewal = (await new KamuiReader(provider, record.account).session(session.publicKey)).exists;
+  const approvedFor = renewal ? await recordedOrigin(device, record, session.publicKey) : null;
+  if (approvedFor !== null && approvedFor !== origin) {
+    problems.push(`this session key already belongs to a session approved for ${approvedFor}`);
+  }
+
   const nodes: Node[] = [
-    el('h2', 'Connection request'),
+    el('h2', renewal ? 'Session renewal' : 'Connection request'),
     el('p', origin, 'origin'),
     el('p', request.appName ? `It calls itself "${request.appName}". Trust the address above, not the name.` : 'Check that this is the site you came from.', 'note'),
-    el('p', 'It asks for a session: permission to act for your account without asking you each time, within these limits.'),
+    el(
+      'p',
+      renewal
+        ? 'It asks to renew a session your account already has: permission to act for your account without asking you each time. Approving replaces that session with the limits below; its count of transactions and its spending periods start again.'
+        : 'It asks for a session: permission to act for your account without asking you each time, within these limits.',
+    ),
+    ...(renewal && approvedFor === null
+      ? [el('p', 'Kamui could not check which site this session was first approved for. Approve only if you came from the site above.', 'warn')]
+      : []),
     el('h2', 'What it may call'),
     table(['Contract', 'Function'], session.calls.map((call) => [code(short(call.to)), code(call.entrypoint)])),
     el('h2', 'Limits'),

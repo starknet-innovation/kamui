@@ -17,9 +17,19 @@ type Connection = {
   account: string;
   chainId: string;
   classHash: string;
-  session: { privateKey: string; publicKey: string; validUntil: number; maxCalls: number };
+  session: {
+    privateKey: string;
+    publicKey: string;
+    validUntil: number;
+    maxCalls: number;
+    nonces?: { base: string; next: number; exhausted?: boolean }; // kept by sessionCall
+  };
 };
 ```
+
+### `beginExtend(connection, options, store): string`
+
+Like `beginConnect`, but for the session key `connection` already holds: the user is asked to renew that session instead of approving a new key. Same options, same answer, read by `finishConnect`. The stored connection is replaced only when the user approves. See [Renewing a session](/guide/sessions#renewing-a-session).
 
 ### `loadConnection(store): Connection | null`
 
@@ -39,9 +49,21 @@ Which answer the app is waiting for. Call it before `finishConnect`/`finishExecu
 
 ## Sending
 
-### `sessionCall(connection, calls, provider, fromOffset = 0): Promise<{ call, offset } | null>`
+### `sessionCall(connection, calls, provider, options?): Promise<{ call, offset } | null>`
 
-Signs `calls` with the session key as a sponsored outside execution and returns the `execute_from_outside_v2` call to hand to a relayer. Finds the next unused session nonce from `fromOffset`. Returns `null` when the session's `maxCalls` sponsored nonces are used.
+Signs `calls` with the session key as a sponsored outside execution and returns the `execute_from_outside_v2` call to hand to a relayer. Returns `null` when the session's `maxCalls` sponsored nonces are used.
+
+It finds a free session nonce and records its place in `connection.session.nonces`, so later calls on the same object cost two reads. Options:
+
+| Option | |
+|---|---|
+| `store` | The store the connection is kept in. The place is saved there as well, so it survives a reload. |
+| `fromOffset` | Never use a nonce below this offset. A number in place of `options` means the same. |
+| `scanGaps` | Default `true`: before answering `null`, read every nonce not read yet, in case one was skipped. `false` answers `null` as soon as the end of the range is found used. |
+
+### `nextSessionNonce(reader, sessionPublicKey, maxCalls, fromOffset = 0, options?): Promise<{ nonce, offset } | null>`
+
+The search `sessionCall` uses, for apps that build outside executions themselves. `options.hint` is the offset to try first; `options.scanGaps` and `options.concurrency` (default 8) control the last-resort scan. With `n` nonces used in order it reads the account about `2·log2(n)` times, once with a good hint. The nonce returned is always one the account reported unused.
 
 ### `sponsor(url, call, send?): Promise<string>`
 

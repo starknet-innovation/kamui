@@ -18,7 +18,7 @@
 // page on that same origin (the browser's referrer). That stops a link on another site from
 // asking in an app's name with its own session key.
 import { CallData, type BigNumberish, type Call, type ProviderInterface } from 'starknet';
-import { nextSessionNonce, sessionOutsideExecution } from './outside';
+import { searchSessionNonce, sessionOutsideExecution } from './outside';
 import { KamuiReader } from './reader';
 import { assertValidSession, unlimitedTokenCalls, type ScopedCall, type SessionParams, type SpendingLimit } from './sessions';
 import { newKeyPair, randomFelt, sameFelt, toHex } from './utils';
@@ -319,7 +319,18 @@ export type Connection = {
   chainId: string;
   classHash: string;
   /** The session key pair. The private key never left this app. */
-  session: { privateKey: string; publicKey: string; validUntil: number; maxCalls: number };
+  session: {
+    privateKey: string;
+    publicKey: string;
+    validUntil: number;
+    maxCalls: number;
+    /**
+     * Where `sessionCall` got to in the session's sponsored nonces, so the next call does not
+     * search again. Only a hint: it is dropped when the account's nonce base no longer matches,
+     * which is what happens when the session is renewed.
+     */
+    nonces?: { base: string; next: number; exhausted?: boolean };
+  };
 };
 
 /**
@@ -327,7 +338,26 @@ export type Connection = {
  * send the user to (`location.assign(url)`).
  */
 export function beginConnect(options: ConnectOptions, store: KeyValueStore): string {
-  const key = newKeyPair();
+  return connectUrl(options, newKeyPair(), store);
+}
+
+/**
+ * App side: asks the user to renew the session of `connection`, keeping its key. Returns the
+ * keychain address to send the user to; read the answer with `finishConnect`, as for a first
+ * connection. Use it when the session is about to run out of calls or to expire.
+ *
+ * It is a connect request for a key the account already knows. The user sees the whole request
+ * again and approves it once; the account then replaces the session: a new deadline, a fresh
+ * range of `maxCalls` calls, and spending windows that start again. Calls signed for the old
+ * session and not yet sent are refused afterwards. Until the user approves, and if they deny,
+ * the stored connection is left as it is.
+ */
+export function beginExtend(connection: Connection, options: ConnectOptions, store: KeyValueStore): string {
+  const { privateKey, publicKey } = connection.session;
+  return connectUrl(options, { privateKey, publicKey }, store);
+}
+
+function connectUrl(options: ConnectOptions, key: { privateKey: string; publicKey: string }, store: KeyValueStore): string {
   const request: ConnectRequest = {
     v: 1,
     id: randomFelt(),
@@ -448,15 +478,51 @@ export async function isConnectionAlive(connection: Connection, provider: Provid
   return data.exists && data.validUntil >= Math.floor(Date.now() / 1000);
 }
 
+export type SessionCallOptions = {
+  /** Never use an offset below this one. For apps that track offsets themselves. */
+  fromOffset?: number;
+  /** Where the connection is kept. When given, the nonce position is saved there too. */
+  store?: KeyValueStore;
+  /** See `SessionNonceOptions.scanGaps`. */
+  scanGaps?: boolean;
+};
+
 /**
  * App side: the sponsored call for `calls`, signed by the session key and ready to hand to a
- * relayer. Returns null if the session has used all its calls.
+ * relayer. Returns null if the session has used all its calls: renew it with `beginExtend`.
+ *
+ * It remembers on `connection` (and in `options.store`, if given) which nonce it handed out, so
+ * the next call reads the account twice: once for the session's nonce base, once to check the
+ * next nonce. Without that memory it searches the range in about `2·log2(used)` reads. Do not
+ * prepare two calls at once from the same connection: they would get the same nonce.
  */
-export async function sessionCall(connection: Connection, calls: Call[], provider: ProviderInterface, fromOffset = 0): Promise<{ call: Call; offset: number } | null> {
+export async function sessionCall(
+  connection: Connection,
+  calls: Call[],
+  provider: ProviderInterface,
+  options: number | SessionCallOptions = {},
+): Promise<{ call: Call; offset: number } | null> {
+  const { fromOffset = 0, store, scanGaps }: SessionCallOptions = typeof options === 'number' ? { fromOffset: options } : options;
+  const session = connection.session;
   const reader = new KamuiReader(provider, connection.account);
-  const next = await nextSessionNonce(reader, connection.session.publicKey, connection.session.maxCalls, fromOffset);
-  if (!next) return null;
-  const call = sessionOutsideExecution({ chainId: connection.chainId, account: connection.account, calls, session: connection.session, nonce: next.nonce });
+  const base = await reader.sessionNonceBase(session.publicKey);
+  const known = session.nonces && sameFelt(session.nonces.base, base) ? session.nonces : undefined;
+  const remember = (next: number, exhausted?: boolean) => {
+    session.nonces = { base, next, ...(exhausted ? { exhausted } : {}) };
+    // Only into a store that still holds this connection: the app may have forgotten it meanwhile.
+    const stored = store ? loadConnection(store) : null;
+    if (store && stored && sameFelt(stored.session.publicKey, session.publicKey)) store.setItem(CONNECTION, JSON.stringify(connection));
+  };
+
+  // A used nonce stays used, so a range found full stays full until the base changes.
+  if (known?.exhausted) return null;
+  const next = await searchSessionNonce(reader, BigInt(base), session.maxCalls, fromOffset, { hint: known?.next, scanGaps });
+  if (!next) {
+    if (scanGaps !== false && fromOffset <= 0) remember(session.maxCalls, true);
+    return null;
+  }
+  remember(next.offset + 1);
+  const call = sessionOutsideExecution({ chainId: connection.chainId, account: connection.account, calls, session, nonce: next.nonce });
   return { call, offset: next.offset };
 }
 

@@ -23,8 +23,10 @@ import {
   ownerOutsideExecution,
   removeOwnerCall,
   revokeSessionCall,
+  sessionCall,
   sessionOutsideExecution,
   signNewOwner,
+  type Connection,
   type KeyPair,
   type SessionParams,
 } from '../src';
@@ -202,6 +204,54 @@ describe.skipIf(!devnetUp)('devnet', () => {
     // Estimation runs validation, so refusals are visible before sending.
     await expect(sessionAccount.estimateInvokeFee(spend(1))).rejects.toThrow(/Spending: over window limit/);
     await expect(sessionAccount.estimateInvokeFee(removeOwnerCall(account, owner.publicKey))).rejects.toThrow();
+  }, TIMEOUT);
+
+  test('nonces used out of order are never handed out again', async () => {
+    // Offsets 0 and 1 are used. Use 4, skipping 2 and 3: the account takes them in any order.
+    const base = BigInt(await reader.sessionNonceBase(session.publicKey));
+    await relay(sessionOutsideExecution({ chainId, account, calls: [ping()], session, nonce: num.toHex(base + 4n) }));
+    expect((await nextSessionNonce(reader, session.publicKey, 6))!.offset).toBe(2);
+    expect((await nextSessionNonce(reader, session.publicKey, 6, 0, { hint: 4 }))!.offset).toBe(5);
+    await relay(sessionOutsideExecution({ chainId, account, calls: [ping()], session, nonce: num.toHex(base + 5n) }));
+    // The end of the range is used; the two skipped nonces are still found.
+    expect((await nextSessionNonce(reader, session.publicKey, 6, 0, { hint: 6 }))!.offset).toBe(2);
+    expect((await nextSessionNonce(reader, session.publicKey, 6, 3))!.offset).toBe(3);
+  }, TIMEOUT);
+
+  test('an owner renews the session under the same key: more calls, a later deadline, usage starts again', async () => {
+    const oldBase = BigInt(await reader.sessionNonceBase(session.publicKey));
+    const renewed = { ...session, validUntil: session.validUntil + 3600 };
+    await asOwner(createSessionCalls(account, { ...sessionParams(), validUntil: renewed.validUntil, maxCalls: 12 }, [limit()]));
+
+    expect(await reader.session(session.publicKey)).toMatchObject({ exists: true, maxCalls: 12, validUntil: renewed.validUntil });
+    const base = BigInt(await reader.sessionNonceBase(session.publicKey));
+    expect(base).not.toBe(oldBase);
+    expect(await reader.sessionNonceLimit(session.publicKey)).toBe(0);
+    expect((await reader.spendingPolicy(session.publicKey, target)).spentInWindow).toBe(0n);
+
+    // The app's connection, as `finishConnect` leaves it after a renewal, with a stale memory
+    // of the old range thrown in: the new base makes `sessionCall` drop it.
+    const connection: Connection = {
+      account,
+      chainId,
+      classHash: '0x0',
+      session: { ...renewed, maxCalls: 12, nonces: { base: num.toHex(oldBase), next: 6, exhausted: true } },
+    };
+    const before = await count();
+    for (const offset of [0, 1, 2]) {
+      const prepared = (await sessionCall(connection, [ping()], provider))!;
+      expect(prepared.offset).toBe(offset);
+      await relay(prepared.call);
+    }
+    expect(await count()).toBe(before + 3);
+    expect(connection.session.nonces).toEqual({ base: num.toHex(base), next: 3 });
+
+    // What was signed for the old session is dead: its deadline, and its nonces.
+    expect(await refusal(sessionOutsideExecution({ chainId, account, calls: [ping()], session, nonce: num.toHex(oldBase + 2n) }))).toContain('Kamui: invalid session');
+    expect(await refusal(sessionOutsideExecution({ chainId, account, calls: [ping()], session: renewed, nonce: num.toHex(oldBase + 2n) }))).toContain('Kamui: invalid session');
+    // The new range ends at the new `maxCalls`.
+    expect(await refusal(sessionOutsideExecution({ chainId, account, calls: [ping()], session: renewed, nonce: num.toHex(base + 11n) }))).toBeNull();
+    expect(await refusal(sessionOutsideExecution({ chainId, account, calls: [ping()], session: renewed, nonce: num.toHex(base + 12n) }))).toContain('Kamui: invalid session');
   }, TIMEOUT);
 
   test('an owner change kills the session', async () => {

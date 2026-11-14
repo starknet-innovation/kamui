@@ -10,7 +10,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 
 | Module | What it does |
 |---|---|
-| `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `sessionProblems`, `executeProblems`, `describeCall`. |
+| `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExtend` to renew one, `beginExecute` and `finishExecute` for one approved transaction, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `sessionProblems`, `executeProblems`, `describeCall`. |
 | `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
 | `client-proving` | `browserRecoverBackend`, `ClientProver`, V2 facts/profile helpers: local proof orchestration, authenticated first deployment and durable relay polling. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |
@@ -111,7 +111,7 @@ const login = await completeLogin({
 ## Things to know
 
 - **Any change of owners revokes every session**, including a login on a new device. Check `reader.session(key).exists` and ask the user to approve again.
-- **Sponsored session nonces** are a reserved range of `maxCalls` values; any other nonce is refused. `nextSessionNonce` finds the next free one by asking the account, one call per used nonce, so keep the returned offset for long sessions.
+- **Sponsored session nonces** are a reserved range of `maxCalls` values; any other nonce is refused. The account accepts them in any order and has no counter, so `nextSessionNonce` searches: about `2·log2(used)` reads, or one with a `hint`. `sessionCall` keeps the hint on the connection for you. When the range is used up, `beginExtend` asks the user to renew the session under the same key.
 - **`maxCalls` is counted per path**: a session may send up to `maxCalls` sponsored and up to `maxCalls` self-paid transactions. On the self-paid path the range also shrinks when other keys send transactions.
 - **The address depends on the class hash.** Kamui accounts are not upgradeable, so a new class means new addresses. Keep every class hash you have deployed with.
 - **The session registry is untrusted input.** `registryClient().list()` drops records that are not shaped as the protocol says and caps the list at 50, but what a record claims (the site, the calls, the limits) is only a claim. Check each session with `reader.session(key).exists`, read what it may do from the account, and show `origin` and `appName` as text.
@@ -127,11 +127,12 @@ bun test test/login.test.ts           # 24 tests, no network; runs the pepper se
 bun test test/keychain.test.ts        # 23 tests, no network
 bun test test/tokens.test.ts          # 9 tests, no network
 bun test test/registry.test.ts        # 21 tests, no network
+bun test test/nonce.test.ts           # 16 tests, no network
 
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0
 (cd ../contracts && scarb build)
-bun test test/devnet.test.ts          # 7 tests against the devnet
+bun test test/devnet.test.ts          # 9 tests against the devnet
 ```
 
 Bun 1.2 or later. The devnet tests deploy `DevAccount` (the production owner, session and spending code with a first key set at deployment) and the real `KamuiAccount` class for the address check. They are skipped when no devnet answers.

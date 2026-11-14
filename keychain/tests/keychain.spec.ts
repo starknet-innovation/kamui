@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import {
   beginConnect,
   beginExecute,
+  beginExtend,
   exportPepper,
   finishConnect,
   finishExecute,
@@ -986,6 +987,81 @@ test.describe('sessions', () => {
     await answer(page, true);
     await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
     await expect.poll(() => world.registry.size).toBe(0);
+  });
+
+  /** A site on `from` asks to renew the session of `publicKey`, as `beginExtend` does. */
+  async function renewalFrom(page: Page, from: string, publicKey: string, store = memoryStore(), privateKey = '0x1') {
+    const connection = { account: ACCOUNT, chainId: CHAIN_ID, classHash: CLASS_HASH, session: { privateKey, publicKey, validUntil: later(), maxCalls: 20 } };
+    const url = beginExtend(
+      connection,
+      { keychainUrl: KEYCHAIN, redirectUri: `${from}/`, appName: 'Example Game', validUntil: later() + 3600, maxCalls: 500, calls: [{ to: GAME, entrypoint: 'move' }] },
+      store,
+    );
+    await page.goto(`${from}/`);
+    await page.evaluate((target) => location.assign(target), url);
+    await page.waitForURL(`${KEYCHAIN}/connect`);
+    return store;
+  }
+
+  test('a renewal keeps the session key, is shown as a renewal, and replaces the session and its record', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const store = await requestFrom(page, APP);
+    await expect(page.getByRole('heading', { name: 'Connection request' })).toBeVisible();
+    await page.getByRole('button', { name: 'Approve' }).click();
+    const first = await answerAt(page, store);
+    if (!first.ok) throw new Error(first.error);
+    const { publicKey, privateKey } = first.connection.session;
+
+    await renewalFrom(page, APP, publicKey, store, privateKey);
+    await expect(page.getByRole('heading', { name: 'Session renewal' })).toBeVisible();
+    await expect(page.locator('.origin')).toHaveText(APP);
+    await expect(page.getByText('Approving replaces that session with the limits below')).toBeVisible();
+    await expect(page.getByText('at most 500 sponsored')).toBeVisible();
+    await expect(page.getByText('Kamui could not check which site')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Approve' }).click();
+    const renewed = await answerAt(page, store);
+    if (!renewed.ok) throw new Error(renewed.error);
+    expect(renewed.connection.session).toMatchObject({ publicKey, privateKey, maxCalls: 500 });
+
+    // One more sponsored call, for the same key with the new limits; still one record.
+    expect(world.sponsorRequests).toHaveLength(2);
+    const call = world.sponsorRequests[1]!.calls[0]!;
+    expect(call.selector).toBe(selectorOf('add_or_update_scoped_session_key'));
+    expect(BigInt(call.data[0]!)).toBe(BigInt(publicKey));
+    expect(BigInt(call.data[2]!)).toBe(500n);
+    expect(world.registry.size).toBe(1);
+    expect(world.registry.get(felt(publicKey))).toMatchObject({ origin: APP, maxCalls: 500 });
+  });
+
+  test('a site cannot renew a session that was approved for another site', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    sessionOnChain(world, SESSION_KEY);
+    recorded(world, SESSION_KEY);
+
+    const store = await renewalFrom(page, OTHER_SITE, SESSION_KEY);
+    await expect(page.getByRole('heading', { name: 'Session renewal' })).toBeVisible();
+    await expect(page.getByText(`this session key already belongs to a session approved for ${APP}`)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Go back' }).click();
+    await page.waitForURL(`${OTHER_SITE}/**`);
+    expect(() => finishConnect(new URL(page.url()).hash, store)).toThrow(/refused by the keychain/);
+    expect(world.sponsorRequests).toHaveLength(0);
+  });
+
+  test('a renewal of a session Kamui has no record of says so, and can still be approved', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    sessionOnChain(world, SESSION_KEY);
+
+    await renewalFrom(page, APP, SESSION_KEY);
+    await expect(page.getByRole('heading', { name: 'Session renewal' })).toBeVisible();
+    await expect(page.getByText('Kamui could not check which site this session was first approved for')).toBeVisible();
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.waitForURL(`${APP}/**`);
+    expect(world.sponsorRequests).toHaveLength(1);
   });
 });
 
