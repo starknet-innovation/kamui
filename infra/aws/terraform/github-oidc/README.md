@@ -57,6 +57,8 @@ access it does not need.
 cd infra/aws/terraform/github-oidc
 cp backend.hcl.example backend.hcl            # fill in; both are ignored by git
 cp terraform.tfvars.example terraform.tfvars
+# If the repository uses immutable OIDC subjects, set github_immutable_subject_prefix to the
+# sub_claim_prefix from: gh api repos/<owner>/<name>/actions/oidc/customization/sub
 terraform init -backend-config=backend.hcl
 terraform plan    # review every statement before applying
 terraform apply
@@ -78,11 +80,12 @@ reviewers, since the apply and publish workflows wait on them.
 
 ## The workflows
 
-- `.github/workflows/terraform.yml` — plans every root module on a pull request. Applying is a
-  manual run, not something a merge does: **this tree still describes the retired Fargate design,
-  while the live Sepolia deployment is the lean package.** Applying `backend/` or `pepper/` would
-  create or change real infrastructure the lean deployment does not use. Point apply at a root
-  module only when you mean it.
+- `.github/workflows/terraform.yml` — a read-only plan of this module in both accounts, on a pull
+  request that touches `infra/aws/terraform/` or on a manual run. It applies nothing. Anything but
+  "No changes" means the live roles differ from this tree and an operator still has to apply it.
+  It reads account-specific values from repository variables, including
+  `AWS_PEPPER_PROTECTED_KMS_KEY_ARNS` (a JSON list, the same as `protected_kms_key_arns`). The
+  `backend/` and `pepper/` root modules describe the retired Fargate design and are not planned.
 - `.github/workflows/images.yml` — builds the images on a pull request and, on a manual run,
   pushes them as `ci-<sha>`. **This is not a release.** `infra/aws/lean/setup/07-build-release.sh`
   remains the only thing that produces an installable one; it pins base images by digest, verifies

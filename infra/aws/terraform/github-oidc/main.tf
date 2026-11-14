@@ -10,15 +10,17 @@
 # own access.
 
 locals {
-  oidc_host   = "token.actions.githubusercontent.com"
-  oidc_arn    = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
-  subject_any = "repo:${var.github_repository}:*"
+  oidc_host = "token.actions.githubusercontent.com"
+  oidc_arn  = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
+  # GitHub's subject starts with repo:owner/name, or, with immutable subjects turned on for the
+  # repository, repo:owner@<id>/name@<id>. Both name this one repository; trust whichever is set.
+  subject_prefixes = compact(["repo:${var.github_repository}", var.github_immutable_subject_prefix])
+  subject_any      = [for prefix in local.subject_prefixes : "${prefix}:*"]
   # A job gets the apply or publish role only from the chosen branch, and, when an environment is
   # named, only while running in it. Matching on the repository alone would let any branch or any
   # fork's pull request in.
-  subject_apply = var.apply_environment == "" ? ["repo:${var.github_repository}:ref:refs/heads/${var.apply_branch}"] : [
-    "repo:${var.github_repository}:environment:${var.apply_environment}",
-  ]
+  subject_apply = [for prefix in local.subject_prefixes : (var.apply_environment == "" ?
+  "${prefix}:ref:refs/heads/${var.apply_branch}" : "${prefix}:environment:${var.apply_environment}")]
   prefix = "${var.name}-${var.service}-gha"
 }
 
@@ -57,7 +59,7 @@ data "aws_iam_policy_document" "trust_plan" {
     condition {
       test     = "StringLike"
       variable = "${local.oidc_host}:sub"
-      values   = [local.subject_any]
+      values   = local.subject_any
     }
   }
 }
