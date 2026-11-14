@@ -17,7 +17,7 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 ### Integration
 
 - **The SDK is not published to npm.** Vendor `sdk/` from the repository, see [Quickstart](/guide/quickstart#_1-add-the-sdk).
-- **No wallet connectors.** No `starknet-react` connector, no get-starknet / wallet-standard support. Apps use the redirect helpers directly.
+- **Wallet connectors are partial.** There is a [`starknet-react` connector](/examples/starknet-react) and a get-starknet-style wallet object (`KamuiWallet`), both limited to what a session can do: no message signing, no declare, one chain. Kamui does not register with the wallet standard that get-starknet v5 and later use for discovery. The connector is tested against `@starknet-react/core` 5.0.3 with mocked redirects, not yet against the hosted keychain.
 - **Redirects only.** Your page reloads on every connect and one-off approval. There is no popup or iframe mode.
 - **One-off approvals fail on hosted Sepolia.** The keychain's `/execute` page posts the user's transaction to the sponsor endpoint without app credentials, and the hosted backend refuses it with `APP_AUTH_REQUIRED`.
 - **Message signing is not on hosted Sepolia yet.** `sessionSignTypedData` works against any deployed account. The keychain's `/sign` page (`beginSignMessage`) is in the code but only reaches the hosted keychain with its next release.
@@ -32,7 +32,7 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 
 - **First sign-in on a device needs desktop Chromium.** The login proof is made in the browser and needs memory64 and several GB of memory. Firefox, Safari and mobile browsers cannot complete it today; there is no server fallback. Returning users on a device that already owns the account need no proof.
 - **The first sign-in takes tens of seconds** while the proof runs.
-- **Adding a device ends every session.** Your app sees `isConnectionAlive` turn false and must ask again.
+- **Adding a device ends every session.** Your app is told by [`watchSession`](/guide/sessions#being-told-when-it-ends) (reason `owners-changed`), or sees `isConnectionAlive` turn false, and must ask again.
 - **Safari may clear the keychain's storage** after seven days of Safari use without visiting it. The user then signs in as on a new device.
 - **Referrer settings.** Browsers or extensions that strip referrers make the keychain refuse every request.
 - **Only STRK and ETH are recognised** by name on approval screens. Other tokens are shown as unverified.

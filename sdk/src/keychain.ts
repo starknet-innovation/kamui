@@ -407,7 +407,14 @@ export type Connection = {
   chainId: string;
   classHash: string;
   /** The session key pair. The private key never left this app. */
-  session: { privateKey: string; publicKey: string; validUntil: number; maxCalls: number };
+  session: {
+    privateKey: string;
+    publicKey: string;
+    validUntil: number;
+    maxCalls: number;
+    /** What the session was asked to cover. Absent on a connection stored by an older SDK. */
+    calls?: ScopedCall[];
+  };
 };
 
 /**
@@ -435,7 +442,10 @@ export function beginConnect(options: ConnectOptions, store: KeyValueStore): str
       })),
     },
   };
-  store.setItem(PENDING, JSON.stringify({ id: request.id, key, validUntil: options.validUntil, maxCalls: options.maxCalls }));
+  store.setItem(
+    PENDING,
+    JSON.stringify({ id: request.id, key, validUntil: options.validUntil, maxCalls: options.maxCalls, calls: request.session.calls }),
+  );
   return `${options.keychainUrl.replace(/\/$/, '')}/connect${toFragment(request)}`;
 }
 
@@ -449,7 +459,13 @@ export function finishConnect(fragment: string, store: KeyValueStore): Connectio
   if (data === null) return null;
   const pendingText = store.getItem(PENDING);
   if (!pendingText) throw new Error('keychain: an answer arrived but nothing was asked');
-  const pending = JSON.parse(pendingText) as { id: string; key: { privateKey: string; publicKey: string }; validUntil: number; maxCalls: number };
+  const pending = JSON.parse(pendingText) as {
+    id: string;
+    key: { privateKey: string; publicKey: string };
+    validUntil: number;
+    maxCalls: number;
+    calls?: ScopedCall[];
+  };
   if (typeof data !== 'object' || data.v !== KEYCHAIN_PROTOCOL_VERSION || data.id !== pending.id) {
     throw new Error('keychain: the answer is not for this request');
   }
@@ -460,7 +476,12 @@ export function finishConnect(fragment: string, store: KeyValueStore): Connectio
     account: data.account,
     chainId: data.chainId,
     classHash: data.classHash,
-    session: { ...pending.key, validUntil: pending.validUntil, maxCalls: pending.maxCalls },
+    session: {
+      ...pending.key,
+      validUntil: pending.validUntil,
+      maxCalls: pending.maxCalls,
+      ...(pending.calls ? { calls: pending.calls } : {}),
+    },
   };
   store.setItem(CONNECTION, JSON.stringify(connection));
   return connection;
