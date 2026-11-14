@@ -12,6 +12,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 |---|---|
 | `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `beginSignMessage` and `finishSignMessage` for one owner-signed message, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `parseSignMessageRequest`, `sessionProblems`, `executeProblems`, `signMessageProblems`, `describeCall`. |
 | `messages` | SNIP-12 typed data signed as the account: `sessionSignTypedData` (a session, `[session_pubkey, r, s, valid_until]`), `ownerSignTypedData` (`[r, s]`), `verifyMessageSignature` (the account's `is_valid_signature`), `typedDataHash`, `typedDataFields`. |
+| `popup` | The keychain's requests in a popup, so the app's page is not reloaded: `connectWithPopup`, `executeWithPopup`, `signMessageWithPopup` (promises, with a fallback to the redirect when the popup is blocked), `relayPopupResult` for the page the popup ends on, and `KeychainPopupError`. |
 | `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
 | `client-proving` | `browserRecoverBackend`, `ClientProver`, V2 facts/profile helpers: local proof orchestration, authenticated first deployment and durable relay polling. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |
