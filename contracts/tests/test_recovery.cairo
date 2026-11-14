@@ -449,6 +449,21 @@ fn a_proof_made_after_the_revocation_recovers() {
 }
 
 #[test]
+fn removing_a_kid_that_holds_no_key_revokes_nothing() {
+    let env = setup();
+    at_block(40);
+    registry().set_key(Issuer::Google, "kid-1", rsa_key(1));
+    // Removing a kid that was never set withdraws no trust.
+    at_block(100);
+    registry().remove_key(Issuer::Google, "kid-unknown");
+    assert_eq!(registry().revocation_count(), 0);
+    assert_eq!(registry().last_revocation_block(), 0);
+    // So a proof made before that removal still recovers.
+    recover_with_base(env, device(1), 99);
+    assert!(owners(env.account).is_owner(device(1).public_key));
+}
+
+#[test]
 #[should_panic(expected: 'REVOKED_SINCE_PROOF')]
 fn a_proof_made_before_a_key_was_replaced_cannot_recover() {
     let env = setup();
