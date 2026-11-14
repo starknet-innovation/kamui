@@ -151,7 +151,7 @@ The SNIP-12 message hash the account signs. It commits to the account address.
 
 ## Wallet interface
 
-The helpers above, behind the interface wallet libraries expect. Walkthrough: [starknet-react](/examples/starknet-react).
+The helpers above, behind the interface wallet libraries expect. Walkthrough: [Starknet Start](/examples/starknet-start).
 
 ### `new KamuiWallet({ keychainUrl, provider, session, sponsor?, store?, page? })`
 
@@ -164,10 +164,12 @@ A get-starknet-style wallet object (`id`, `name`, `version`, `icon`, `request`, 
 | `renew(): Promise<never>` | Navigates to the keychain to renew the session under the same key, with the `session` option's terms. `resume()` picks up the renewed session. Use it on `SESSION_EXHAUSTED`, or before the session expires. |
 | `disconnect(): void` | Forgets the session key and emits `accountsChanged` with `[]`. |
 | `execute(calls): Promise<{ transaction_hash }>` | Sends calls inside the session, sponsored if `sponsor` is set. Sponsored calls are sent one at a time; the place in the session's nonces is kept on the connection and in `store`. |
+| `signTypedData(typedData): string[]` | Signs a SNIP-12 message with the session key (`sessionSignTypedData`), no prompt. Refuses a message whose domain names another chain. |
+| `watch(onEnded?, options?): () => void` | `watchSession` for the live session. When it ends the wallet disconnects (emitting `accountsChanged` with `[]`), keeps the reason in `lastEnd` and calls `onEnded`. A renewal stored by this app is carried on with, not reported. Returns a stop function. |
 | `approveInKeychain(calls, appName?): Promise<never>` | Navigates to the keychain's `/execute` page. The approval comes back signed and unsent; `resume()` sends it. Throws `UNSUPPORTED` without a `sponsor`. |
 | `account(provider?)` | A starknet.js account whose `execute` is the wallet's. |
 | `request({ type, params })` | The wallet API. See the walkthrough for what is answered. |
-| `connection`, `error`, `lastApproved` | The live session, why the last trip to the keychain (or sending an approved transaction) failed, and the hash of a one-off transaction just approved and sent. |
+| `connection`, `error`, `lastApproved`, `lastEnd` | The live session, why the last trip to the keychain (or sending an approved transaction) failed, the hash of a one-off transaction just approved and sent, and how a watched session ended. |
 
 `page` replaces how the wallet reads the URL fragment and navigates (`fragment`, `clearFragment`, `redirectUri`, `navigate`); the default uses `window`. Tests pass their own.
 
@@ -183,9 +185,22 @@ The calls the session's stored scope does not cover. Empty when the connection h
 
 Sets `target.starknet_kamui`.
 
-### `@kamui/sdk/starknet-react`
+### `@kamui/sdk/starknet-start`
 
-`new KamuiConnector(options | wallet)` is a starknet-react `Connector` over a `KamuiWallet` (`connector.wallet`). `useKamuiReconnect(connector)` completes the connection after a page load and returns `{ isResuming, error, lastApproved }`. Needs `@starknet-react/core` 5 and React 18, which the rest of the SDK does not.
+`new KamuiStandardWallet(options | wallet, { watch? })` is a wallet-standard wallet (`WalletWithStarknetFeatures`) over a `KamuiWallet` (`.wallet`), for Starknet Start's `extraWallets` and for starknet.js's `WalletAccountV6`.
+
+| Member | |
+|---|---|
+| `features['standard:connect'].connect({ silent? })` | With a live session, settles with its account. Without one: `silent` settles with no accounts and stays on the page; otherwise navigates to the keychain and never settles. |
+| `features['standard:disconnect'].disconnect()` | Forgets the session key. |
+| `features['standard:events'].on('change', listener)` | Called with the account on connect, and with no accounts on disconnect and when the watched session ends. |
+| `features['starknet:walletApi'].request(call)` | The wallet API, as `KamuiWallet.request`; declare, deploy, watch-asset, add-chain and STRK20 requests are refused with `UNSUPPORTED`. |
+| `accounts`, `chains` | The session's account and chain (`starknet:0x…`) once connected; empty before. |
+| `lastEnd` | How the watched session ended. |
+
+`watch` is on by default (`watchSession` every 30 seconds while connected); pass its options, or `false`.
+
+`useKamuiReconnect(wallet)` completes the connection after a page load and returns `{ isResuming, error, lastApproved }`. This entry point needs `@starknetfoundation/starknet-start-react` 2, `@starknet-io/get-starknet-core` 6 and React 19, which the rest of the SDK does not.
 
 ## Popup mode
 

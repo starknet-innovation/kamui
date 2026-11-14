@@ -1,4 +1,4 @@
-// Without starknet-react: the same session as a wallet object (`request`, `on`, `off`).
+// Without a wallet library: the same session as a get-starknet v4 wallet object (`request`, `on`, `off`).
 import { RpcProvider, WalletAccount } from 'starknet';
 import { KamuiWallet, injectKamuiWallet } from '@kamui/sdk';
 
@@ -18,7 +18,7 @@ export const wallet = new KamuiWallet({
 });
 
 // Lists Kamui next to extension wallets for anything that scans `window.starknet_*`
-// (get-starknet v4 discovery, starknet-react's InjectedConnector with id "kamui").
+// (get-starknet v4 discovery).
 injectKamuiWallet(wallet);
 
 /** Call on every page load. Null until the user has connected. */

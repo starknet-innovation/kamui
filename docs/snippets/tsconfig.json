@@ -14,9 +14,9 @@
     "baseUrl": ".",
     "paths": {
       "@kamui/sdk": ["../../sdk/src/index.ts"],
-      "@kamui/sdk/starknet-react": ["../../sdk/src/starknet-react.ts"],
-      "@starknet-react/core": ["../../sdk/node_modules/@starknet-react/core"],
-      "@starknet-react/chains": ["../../sdk/node_modules/@starknet-react/chains"],
+      "@kamui/sdk/starknet-start": ["../../sdk/src/starknet-start.ts"],
+      "@starknetfoundation/*": ["../../sdk/node_modules/@starknetfoundation/*"],
+      "@starknet-io/get-starknet-core": ["../../sdk/node_modules/@starknet-io/get-starknet-core"],
       "starknet": ["../../sdk/node_modules/starknet"]
     }
   },
