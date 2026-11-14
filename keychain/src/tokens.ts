@@ -10,22 +10,18 @@ export async function lookUpTokens(addresses: string[]): Promise<(address: strin
   return (address) => infos[unique.indexOf(BigInt(address))] ?? { status: 'unknown', address };
 }
 
-/** A token as a table cell: its name if Kamui recognises it, otherwise what it claims, and always its address. */
+/** A token as a table cell: the symbol its contract gives, and always its address. */
 export function tokenCell(info: TokenInfo): Node {
   const cell = el('span');
-  const name = info.status === 'known' ? info.symbol : info.status === 'unverified' ? `says it is "${info.symbol}"` : 'unidentified';
+  const name = info.status === 'named' ? info.symbol : 'unidentified';
   cell.append(document.createTextNode(`${name} `), code(short(info.address)));
   return cell;
 }
 
-/** What to say about a token Kamui cannot vouch for. Nothing for a known one. */
+/** What to say about a contract that did not answer like a token. Nothing for one that did. */
 export function tokenCaution(info: TokenInfo): Node | null {
-  if (info.status === 'known') return null;
-  const text =
-    info.status === 'unverified'
-      ? `Kamui does not recognise this token. It says it is "${info.symbol}", but anyone can make a token with that name. Check the contract address before you approve.`
-      : 'Kamui could not identify this token, so the amount is shown in its smallest unit and may be much larger or smaller than it looks.';
-  return el('p', text, 'warn');
+  if (info.status === 'named') return null;
+  return el('p', 'Kamui could not identify this token, so the amount is shown in its smallest unit and may be much larger or smaller than it looks.', 'warn');
 }
 
 export type Limit = { token: string; maxPerCall: bigint; maxPerWindow: bigint; windowSeconds: number };
@@ -39,7 +35,7 @@ export function limitRows(validUntil: number, maxCalls: number, maxFeePerTx: big
   ];
 }
 
-/** Spending limits as a table, followed by a caution for each token Kamui cannot vouch for. */
+/** Spending limits as a table, followed by a caution for each token Kamui could not identify. */
 export function spendingLimits(limits: Limit[], tokenOf: (address: string) => TokenInfo): Node[] {
   const nodes: Node[] = [
     table(
