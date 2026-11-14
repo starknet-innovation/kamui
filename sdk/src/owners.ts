@@ -1,6 +1,6 @@
 // Owner keys: one per device, at most MAX_OWNERS. See contracts/src/owners.cairo.
 import { hash, shortString, type BigNumberish, type Call } from 'starknet';
-import { signHash, toHex } from './utils';
+import { signHash, toHex } from './utils.js';
 
 /**
  * What a key signs to become an owner: `poseidon('StarkNet Message', 'accept_ownership',

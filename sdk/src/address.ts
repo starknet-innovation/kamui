@@ -1,7 +1,7 @@
 // Where a Kamui account lives. The derivation is the one in keep-starknet-strange/social-account
 // (MIT), which Kamui's account keeps: see `identity` in contracts/src/jwt/types.cairo.
 import { CallData, Deployer, byteArray, hash, type BigNumberish, type Call } from 'starknet';
-import { toHex } from './utils';
+import { toHex } from './utils.js';
 
 /** The claims of a login token that identify the user. */
 export type LoginClaims = { iss: string; aud: string; sub: string };

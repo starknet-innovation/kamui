@@ -1,6 +1,6 @@
 // Read-only view of a Kamui account.
 import { hash, uint256, type BigNumberish, type ProviderInterface } from 'starknet';
-import { toHex } from './utils';
+import { toHex } from './utils.js';
 
 export type SessionData = {
   validUntil: number;

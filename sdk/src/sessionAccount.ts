@@ -1,7 +1,7 @@
 // Self-paid session transactions: a starknet.js Account that signs with a session key.
 import { Account, Signer, type AccountOptions, type AllowArray, type Call, type Signature, type UniversalDetails } from 'starknet';
-import { sessionSignature } from './sessions';
-import { keyPairFromPrivateKey } from './utils';
+import { sessionSignature } from './sessions.js';
+import { keyPairFromPrivateKey } from './utils.js';
 
 /** Signs transaction hashes as a session: `[session_pubkey, r, s, valid_until]`. */
 export class SessionSigner extends Signer {

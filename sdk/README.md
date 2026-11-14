@@ -4,7 +4,7 @@ TypeScript helpers for Kamui accounts, on starknet.js 10: where an account lives
 
 It covers the login (from a Google or Apple sign-in to a device key that owns the account) and what happens once a user has an account. Storing the login attempt across the redirect, and the redirect itself, are left to the caller (the keychain).
 
-Not audited, like the contracts. Source-only for now: import from `src/`.
+Not audited, like the contracts. It builds as the npm package `@kamui/sdk` (ESM and type declarations, `starknet` as a peer dependency); see [Package](#package). Code in this repository imports `src/` directly.
 
 ## What is in it
 
@@ -118,6 +118,20 @@ const login = await completeLogin({
 - **`NO_PEPPER` is for testnets only.** Mainnet accounts need the pepper service.
 - **Offer the pepper export.** The pepper service's key has no backup, so a user's exported pepper is their protection against its loss. The file reveals the user's account address to whoever holds it and gives no access to the account. Before using a file for a login, check it with `pepperFileMatchesLogin`, or take the pepper with `pepperFromFile`, which does. A file made for another account class is consistent with itself, so also pass `pepperFromFile` the class hash in use, or compare `file.classHash` yourself. Passphrase protection of the file is not implemented yet.
 
+## Package
+
+```sh
+bun install
+bun run build          # dist/: ESM and .d.ts, from src/ only
+bun run test:package   # npm pack, then use the tarball from a scratch project
+```
+
+`test:package` (`scripts/check-package.mjs`) checks the tarball's file list, imports it under plain Node and Bun, and type-checks its declarations under `NodeNext` and `Bundler` resolution. It needs npm and the network.
+
+Relative imports in `src/` carry a `.js` extension (`./utils.js`). That is what makes the built files load in plain Node; `tsconfig.build.json` rejects an import without it.
+
+The package is not on npm yet, and `"private": true` stays in `package.json` until its name, scope and visibility are decided. Publishing is a manual run of the [sdk-package](../.github/workflows/sdk-package.yml) workflow; its header lists what has to be set up first. Until then, `npm pack` here gives an installable `kamui-sdk-<version>.tgz`.
+
 ## Tests
 
 ```sh
@@ -144,4 +158,4 @@ Bun 1.2 or later. The devnet tests deploy `DevAccount` (the production owner, se
 - Browser proving (the backend proves; plan D9).
 - A wallet-standard connector. Apps connect with the redirect helpers in `keychain`; see `../keychain/README.md` and `../apps/demo-dapp`.
 - Override recovery calls.
-- Publishing as a built package.
+- A release on npm. The package builds and is checked in CI; publishing it is a manual step that has not been taken.

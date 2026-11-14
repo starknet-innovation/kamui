@@ -13,11 +13,11 @@
 // the account. Storing the attempt across the redirect and doing the redirect itself are left
 // to the caller (the keychain).
 import { hash, shortString, type ProviderInterface } from 'starknet';
-import { accountAddressFromLogin, type LoginClaims } from './address';
-import { signNewOwner } from './owners';
-import { pepperFileMatchesLogin, type PepperFile } from './pepper';
-import { KamuiReader } from './reader';
-import { randomFelt, sameFelt, signHash, toHex, type KeyPair } from './utils';
+import { accountAddressFromLogin, type LoginClaims } from './address.js';
+import { signNewOwner } from './owners.js';
+import { pepperFileMatchesLogin, type PepperFile } from './pepper.js';
+import { KamuiReader } from './reader.js';
+import { randomFelt, sameFelt, signHash, toHex, type KeyPair } from './utils.js';
 
 export type LoginProvider = 'google' | 'apple';
 

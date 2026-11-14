@@ -7,8 +7,8 @@
 // What the file gives away: whoever holds it learns the user's account address. It gives no
 // access to the account. Recovery still needs a login token from the issuer and a proof.
 import type { BigNumberish } from 'starknet';
-import { accountAddressFromLogin, type LoginClaims } from './address';
-import { sameFelt, toHex } from './utils';
+import { accountAddressFromLogin, type LoginClaims } from './address.js';
+import { sameFelt, toHex } from './utils.js';
 
 /** Peppers are 250-bit values (services/pepper/src/derive.ts). */
 const MAX_PEPPER = (1n << 250n) - 1n;

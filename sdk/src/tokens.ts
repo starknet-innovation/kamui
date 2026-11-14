@@ -8,7 +8,7 @@
 //                contract that answers the same; show what it claims, and say it is a claim
 //   unknown      the contract did not answer like a token; only raw amounts can be shown
 import type { ProviderInterface } from 'starknet';
-import { sameFelt } from './utils';
+import { sameFelt } from './utils.js';
 
 export type TokenInfo =
   | { status: 'known'; address: string; symbol: string; decimals: number }

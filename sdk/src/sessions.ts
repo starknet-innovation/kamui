@@ -1,8 +1,8 @@
 // Session keys (SNIP-41) and their spending policies (Part H).
 // See contracts/src/session/component.cairo and spending.cairo.
 import { hash, type BigNumberish, type Call } from 'starknet';
-import { BLOCKED_ENTRYPOINTS, MAX_SESSION_SCOPE_ENTRIES, SPENDING_ENTRYPOINTS } from './constants';
-import { sameFelt, signHash, toHex, u256Calldata } from './utils';
+import { BLOCKED_ENTRYPOINTS, MAX_SESSION_SCOPE_ENTRIES, SPENDING_ENTRYPOINTS } from './constants.js';
+import { sameFelt, signHash, toHex, u256Calldata } from './utils.js';
 
 /** What a session may call. */
 export type SessionScope =

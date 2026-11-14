@@ -4,21 +4,46 @@
   "private": true,
   "description": "TypeScript SDK for Kamui accounts: owners, sessions, spending limits and sponsored calls.",
   "license": "MIT",
-  "type": "module",
-  "exports": {
-    ".": "./src/index.ts"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/starknet-innovation/kamui.git",
+    "directory": "sdk"
   },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "rm -rf dist && tsc -p tsconfig.build.json",
     "test": "bun test",
     "test:unit": "bun test test/unit.test.ts",
     "test:devnet": "bun test test/devnet.test.ts",
+    "test:package": "node scripts/check-package.mjs",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "starknet": "10.8.0"
+  "peerDependencies": {
+    "starknet": "^10.8.0"
   },
   "devDependencies": {
     "@types/bun": "^1.1.0",
+    "starknet": "10.8.0",
     "typescript": "^5.6.0"
   }
 }

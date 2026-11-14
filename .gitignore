@@ -16,3 +16,7 @@ target/
 
 # Pinned SNIP-36 release binaries: install with keychain/scripts/prover-assets.ts.
 keychain/prover/**/*.wasm
+
+# Build output and packed tarballs of the SDK package
+sdk/dist/
+sdk/*.tgz

@@ -4,39 +4,36 @@ This page gets a browser app from nothing to a sponsored session call. Framework
 
 ## 1. Add the SDK
 
-::: warning Not on npm yet
-`@kamui/sdk` is not published as a package. Until it is, copy `sdk/` from the [Kamui repository](https://github.com/starknet-innovation/kamui) into your project (or add the repository as a git submodule) and alias the import.
-:::
-
-```sh
-git submodule add https://github.com/starknet-innovation/kamui vendor/kamui
-npm install starknet@10.8.0
-```
-
-Point `@kamui/sdk` at the TypeScript source. The SDK uses `starknet` 10.8.0; make sure your app resolves the same copy.
+`@kamui/sdk` is a built ESM package with type declarations. `starknet` is a peer dependency: your app installs it, and the SDK uses your copy. The SDK is tested against `starknet` 10.8.0.
 
 ::: code-group
 
-```ts [vite.config.ts]
-import { defineConfig } from 'vite';
-import { fileURLToPath } from 'node:url';
-
-export default defineConfig({
-  resolve: {
-    alias: { '@kamui/sdk': fileURLToPath(new URL('./vendor/kamui/sdk/src/index.ts', import.meta.url)) },
-    dedupe: ['starknet'],
-  },
-});
+```sh [npm]
+npm install @kamui/sdk starknet@10.8.0
 ```
 
-```json [tsconfig.json]
-{
-  "compilerOptions": {
-    "paths": { "@kamui/sdk": ["./vendor/kamui/sdk/src/index.ts"] }
-  }
-}
+```sh [pnpm]
+pnpm add @kamui/sdk starknet@10.8.0
 ```
 
+```sh [bun]
+bun add @kamui/sdk starknet@10.8.0
+```
+
+:::
+
+No alias or bundler setting is needed. The package works with Vite, Next.js, SvelteKit, Bun and plain Node.js 22 or later.
+
+::: warning Before the first npm release
+`@kamui/sdk` has not been released to npm yet. Until it is, build the same package from the [Kamui repository](https://github.com/starknet-innovation/kamui) and install the file:
+
+```sh
+git clone https://github.com/starknet-innovation/kamui
+(cd kamui/sdk && bun install && npm pack)   # writes kamui-sdk-0.1.0.tgz
+npm install ./kamui/sdk/kamui-sdk-0.1.0.tgz starknet@10.8.0
+```
+
+Everything else on this site is the same either way.
 :::
 
 ## 2. Get sponsorship credentials
