@@ -1,0 +1,75 @@
+# Builds the developer docs (docs/, VitePress) on every pull request that touches them or the
+# SDK they document, and publishes them to GitHub Pages from main.
+#
+# One-time setup: Settings > Pages > Build and deployment > Source: "GitHub Actions".
+
+name: docs
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'sdk/src/**'
+      - '.github/workflows/docs.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'sdk/src/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0 # lastUpdated reads git history
+
+      - uses: oven-sh/setup-bun@v2.0.1
+        with:
+          bun-version: 1.4.4
+
+      # The snippets type-check against ../sdk/src, which resolves starknet from sdk/node_modules.
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          (cd ../sdk && bun install --frozen-lockfile)
+
+      - name: Type-check the code the docs include
+        run: bun run typecheck
+
+      - name: Build
+        run: bun run build
+
+      - uses: actions/upload-pages-artifact@v3.0.1
+        if: github.event_name != 'pull_request'
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4.0.5
