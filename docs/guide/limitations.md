@@ -35,4 +35,4 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 - **Adding a device ends every session.** Your app sees `isConnectionAlive` turn false and must ask again.
 - **Safari may clear the keychain's storage** after seven days of Safari use without visiting it. The user then signs in as on a new device.
 - **Referrer settings.** Browsers or extensions that strip referrers make the keychain refuse every request.
-- **Only STRK and ETH are recognised** by name on approval screens. Other tokens are shown as unverified.
+- **Few tokens are recognised** by name on approval screens: on Sepolia STRK, ETH, vSTRK, Circle's native USDC, and the StarkGate test USDT and WBTC. Other tokens, including the StarkGate-bridged USDC, are shown as unverified.

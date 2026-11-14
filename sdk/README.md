@@ -19,7 +19,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 | `owners` | `signNewOwner`, `addOwnerCall`, `removeOwnerCall`. |
 | `pepper` | `exportPepper`, `parsePepperFile`, `pepperFileMatchesLogin`: a recovery file holding the user's pepper. |
 | `sessions` | `createSessionCalls`, `addSessionCall`, `setSpendingPolicyCall`, `revokeSessionCall`, `revokeAllSessionsCall`, `sessionSignature`, and the checks `assertValidSession` and `unlimitedTokenCalls`. |
-| `tokens` | `readTokenInfo`, `formatTokenAmount`, `describeAmount`: a token's name and exact amounts for approval screens, with known, unverified and unknown tokens told apart. |
+| `tokens` | `readTokenInfo`, `formatTokenAmount`, `describeAmount`: a token's name and exact amounts for approval screens, with known, unverified and unknown tokens told apart. The known tokens are listed per network in `KNOWN_TOKENS`; changing that list follows [KNOWN_TOKENS.md](KNOWN_TOKENS.md). |
 | `outside` | Sponsored calls: `ownerOutsideExecution`, `sessionOutsideExecution`, `nextSessionNonce`. |
 | `sessionAccount` | `createSessionAccount`: a starknet.js `Account` that signs as a session, for self-paid transactions. |
 
@@ -125,8 +125,11 @@ bun install
 bun test test/unit.test.ts            # 19 tests, no network
 bun test test/login.test.ts           # 24 tests, no network; runs the pepper service in process
 bun test test/keychain.test.ts        # 23 tests, no network
-bun test test/tokens.test.ts          # 9 tests, no network
+bun test test/tokens.test.ts          # 15 tests, no network
 bun test test/registry.test.ts        # 21 tests, no network
+
+# opt-in: asks a live node whether every known token answers its listed symbol and decimals
+bun run check:tokens                  # Sepolia; see KNOWN_TOKENS.md
 
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0

@@ -12,7 +12,8 @@
     "test": "bun test",
     "test:unit": "bun test test/unit.test.ts",
     "test:devnet": "bun test test/devnet.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:tokens": "bun scripts/check-known-tokens.ts"
   },
   "dependencies": {
     "starknet": "10.8.0"

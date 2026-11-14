@@ -74,9 +74,9 @@ Reads the answer. Throws if the user denied or the keychain reported an error.
 
 ## Tokens
 
-### `readTokenInfo(provider, token)`, `formatTokenAmount(amount, decimals)`, `describeAmount(...)`
+### `readTokenInfo(provider, token, chainId?)`, `formatTokenAmount(amount, decimals)`, `describeAmount(...)`
 
-Name, symbol and exact amounts for display. STRK and ETH are recognised by address; anything else is reported as unverified.
+Name, symbol and exact amounts for display. A short list of tokens is recognised by address, per network (`KNOWN_TOKENS`, `knownTokensFor(chainId)`); anything else is reported as unverified. The network is the provider's, unless you pass `chainId`.
 
 ## Constants
 

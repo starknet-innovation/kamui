@@ -128,7 +128,7 @@ What this does not show:
 - **Google-only live checks passed** on Sepolia: revoke-all, stale-device removal, and recovery-file sign-in with pepper stopped (`../spikes/s1/results/run-10-device-session-recovery.md`).
 - **Naturally elapsed Safari storage expiry**, private windows and mobile browsers (see Browsers above). Native Safari mechanics alone are not a production browser-support sign-off.
 - **Override recovery.** Apple is outside the current Google-only scope; its existing implementation remains unchanged.
-- **Only STRK and ETH are recognised by address.** Every other token, including well-known ones, is shown as unverified. The list is in `../sdk/src/tokens.ts` and needs an owner and a process before it grows.
+- **Few tokens are recognised by address.** On Sepolia: STRK, ETH, vSTRK, Circle's native USDC, and the StarkGate test USDT and WBTC. On mainnet: STRK and ETH. Every other token, including the StarkGate-bridged USDC, is shown as unverified. The list is per network, in `../sdk/src/tokens.ts`; [`../sdk/KNOWN_TOKENS.md`](../sdk/KNOWN_TOKENS.md) is the review process for changing it. The list still has no named owner, and no mainnet entry may be added until it has one.
 - **A single transaction is always sponsored.** There is no path for the account to pay its own fee from the keychain.
 - **Sessions the registry does not know.** A session approved while the registry was down shows only on the device that approved it until the record gets through, and a session whose record is lost shows nowhere. "Revoke all sessions" still ends them.
 - **The registry trusts the keychain's clock** to within five minutes. A device whose clock is further off cannot list or record sessions; the page then says the list could not be loaded.

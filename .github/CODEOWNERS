@@ -1,0 +1,13 @@
+# Who must review a change. GitHub applies a line only when it names a user or team with write
+# access, and only requires the review when branch protection on main has "Require review from
+# Code Owners" turned on.
+
+# The known-token list decides which tokens approval screens show as trusted. Its owner approves
+# every change, following sdk/KNOWN_TOKENS.md.
+#
+# TODO(owner): the list has no owner yet. Name one, then uncomment the three lines below with their
+# GitHub handle or team in place of OWNER. Until then nothing here is enforced.
+#
+# /sdk/src/tokens.ts                  OWNER
+# /sdk/KNOWN_TOKENS.md                OWNER
+# /sdk/scripts/check-known-tokens.ts  OWNER

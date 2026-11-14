@@ -60,6 +60,12 @@ jobs:
       - name: Server config unit tests
         run: bun test ./server-config.test.ts
 
+      # The known-token list decides which tokens approval screens show as trusted. Its format
+      # checks need no network (sdk/KNOWN_TOKENS.md).
+      - name: Known-token list tests
+        working-directory: sdk
+        run: bun test test/tokens.test.ts
+
       # The server reports proverReady only when every pinned file matches keychain/prover/
       # manifest.json, and one test checks the executor Wasm is served. The prover itself is
       # faked (tests/prover-fake.ts). The cache only saves the download: prover-assets.ts still
