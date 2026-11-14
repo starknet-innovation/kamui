@@ -67,7 +67,9 @@ Send the user to `GET {keychainUrl}/execute#kamui=<payload>`:
 }
 ```
 
-At most 10 calls and 100 calldata felts per call. No call may target the user's account. The answer is `{ v, id, ok: true, transactionHash }` or `{ v, id, ok: false, error }`. The transaction has been accepted by the network when the user comes back.
+At most 10 calls and 100 calldata felts per call. No call may target the user's account. The answer is `{ v, id, ok: true, account, calldata }` or `{ v, id, ok: false, error }`.
+
+`calldata` is the calldata of `execute_from_outside_v2` on `account`, signed by an owner key, with `caller` = `ANY_CALLER` and `execute_before` ten minutes after the approval. Nothing has been sent when the user comes back: post `{ account, calldata }` to the [sponsor endpoint](/guide/sponsorship) from your server, with your credential. The account accepts it once.
 
 ## Signing session calls
 

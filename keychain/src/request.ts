@@ -12,7 +12,7 @@ export function pendingRequest(): Pending | null {
 
 type Answer =
   | { ok: true; account: string; chainId: string; classHash: string }
-  | { ok: true; transactionHash: string }
+  | { ok: true; account: string; calldata: string[] }
   | { ok: false; error: string };
 
 export function answer(request: { id: string; redirectUri: string }, result: Answer) {

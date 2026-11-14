@@ -58,8 +58,10 @@ Calls inside the session are signed in the browser and sent through your [sponso
 
 <<< @/snippets/react/PlayButtons.tsx
 
-::: danger One-off approvals on hosted Sepolia
-`execute()` (the keychain's `/execute` page) currently fails on the hosted backend with `APP_AUTH_REQUIRED`. See [Status and limitations](/guide/limitations).
+`execute()` leaves the page. When the user comes back, the provider reads the signed transaction and sends it through the same sponsor route; `lastExecuted` is its hash.
+
+::: warning One-off approvals on hosted Sepolia
+Not yet run against the hosted backend. See [Status and limitations](/guide/limitations).
 :::
 
 ### 5. Put it together

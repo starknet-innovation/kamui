@@ -57,9 +57,9 @@ A starknet.js `Account` that signs as the session and pays its own fees (needs `
 
 Stores the pending request (`kamui.pending.execute`) and returns the keychain URL that asks the user to approve `calls` with the account's full authority.
 
-### `finishExecute(fragment, store): { transactionHash } | null`
+### `finishExecute(fragment, store): { account, call } | null`
 
-Reads the answer. Throws if the user denied or the keychain reported an error.
+Reads the answer. Throws if the user denied or the keychain reported an error. Nothing has been sent: `call` is the owner-signed `execute_from_outside_v2` call on `account`. Pass it to `sponsor(url, call)` with your own sponsor route to send it. It can be sent once, within `EXECUTE_APPROVAL_SECONDS` of the approval.
 
 ## Reading an account
 
@@ -85,5 +85,7 @@ Name, symbol and exact amounts for display. STRK and ETH are recognised by addre
 | `KEYCHAIN_PROTOCOL_VERSION` | `1` |
 | `MAX_EXECUTE_CALLS` | `10` |
 | `MAX_EXECUTE_CALLDATA` | `100` |
+| `MAX_EXECUTE_RESULT_CALLDATA` | `1038` |
+| `EXECUTE_APPROVAL_SECONDS` | `600` |
 | `MAX_SESSION_SCOPE_ENTRIES` | `64` |
 | `SPENDING_ENTRYPOINTS` | `transfer`, `approve`, `increase_allowance`, `increaseAllowance` |

@@ -86,23 +86,33 @@ if (!(await isConnectionAlive(connection, provider))) {
 
 ## Outside the session: one-off approvals
 
-For a call the session does not cover, send the user to the keychain with `beginExecute`. They see every call, with token transfers and approvals described in plain words, and approve it with their account's full authority. They come back with the transaction hash, read by `finishExecute`.
+For a call the session does not cover, send the user to the keychain with `beginExecute`. They see every call, with token transfers and approvals described in plain words, and approve it with their account's full authority.
+
+The keychain signs the transaction and **does not send it**. The user comes back with the signed transaction, read by `finishExecute`, and your app sends it through your [sponsor route](/guide/sponsorship#your-sponsor-route), like a session call:
 
 ```ts
-import { beginExecute, finishExecute, pendingRequestKind } from '@kamui/sdk';
+import { beginExecute, finishExecute, pendingRequestKind, sponsor } from '@kamui/sdk';
 
 location.assign(beginExecute({ keychainUrl, redirectUri: `${location.origin}/`, appName: 'My game', calls }, localStorage));
 
 // after the redirect back:
 if (pendingRequestKind(localStorage) === 'execute') {
-  const sent = finishExecute(location.hash, localStorage); // { transactionHash } or throws if denied
+  const approved = finishExecute(location.hash, localStorage); // { account, call } or throws if denied
+  history.replaceState(null, '', location.pathname);           // before sending: a reload must not send it twice
+  if (approved) {
+    const transactionHash = await sponsor('/api/kamui/sponsor', approved.call);
+  }
 }
 ```
 
 At most 10 calls and 100 calldata felts per call. A call to the user's own account is always refused.
 
-::: danger Not working on hosted Sepolia
-The keychain currently sends one-off transactions to the sponsor endpoint without any app credential, and the hosted backend requires one. Expect `APP_AUTH_REQUIRED` until this is fixed. See [Status and limitations](/guide/limitations).
+- The approval is good for **10 minutes** and can be sent **once**, exactly as the user approved it. Send it as soon as the user is back.
+- Your app's sponsorship budget pays for it. Kamui does not pay for one-off transactions on its own account, and the keychain holds no credential.
+- The approved transaction is not bound by any session limit. Your sponsor route decides whether to pay for it, see [Sponsorship](/guide/sponsorship#your-sponsor-route).
+
+::: warning Not yet confirmed on hosted Sepolia
+This flow is covered by browser tests against a stand-in for the hosted backend's credential check. It has not been run against the hosted Sepolia backend yet. See [Status and limitations](/guide/limitations).
 :::
 
 ## Self-paid session transactions

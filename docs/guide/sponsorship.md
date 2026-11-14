@@ -26,7 +26,7 @@ A plain `Request → Response` handler. It works as a Next.js route handler, a S
 <<< @/snippets/server/sponsor-route.ts
 
 ::: warning Kamui approves your app, not your users
-Anyone who can call your route can spend your budget, within what each user's session allows. Put your own checks in front of it: your login, per-user or per-IP rate limits, a captcha, an allow-list.
+Anyone who can call your route can spend your budget, within what each user's session allows. A [one-off approval](/guide/sessions#outside-the-session-one-off-approvals) is signed by the account's owner and no session limit applies to it. Put your own checks in front of the route: your login, per-user or per-IP rate limits, a captcha, an allow-list.
 :::
 
 In the browser, pass your route to `sponsor`:

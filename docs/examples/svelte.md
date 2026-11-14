@@ -44,8 +44,10 @@ bun add starknet@10.8.0
 
 <<< @/snippets/svelte/Play.svelte
 
-::: danger One-off approvals on hosted Sepolia
-`execute()` currently fails on the hosted backend with `APP_AUTH_REQUIRED`. See [Status and limitations](/guide/limitations).
+`execute()` leaves the page. When the user comes back, `init()` reads the signed transaction and sends it through the same sponsor route; `lastExecuted` is its hash.
+
+::: warning One-off approvals on hosted Sepolia
+Not yet run against the hosted backend. See [Status and limitations](/guide/limitations).
 :::
 
 ## Sponsor route

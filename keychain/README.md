@@ -10,7 +10,9 @@ Full-page redirects, like an OAuth login (`../sdk/src/keychain.ts`):
 2. The keychain signs the user in if needed, shows the request, and on approval has the account register the session.
 3. The keychain sends the user back with the account address. The app then signs calls with its session key and has them sponsored. The keychain is not involved again until the session ends.
 
-For anything a session does not cover, the app sends the user to `/execute` with the calls it wants. The keychain shows them, and on approval the account sends them once, with its full authority. The user comes back with the transaction hash.
+For anything a session does not cover, the app sends the user to `/execute` with the calls it wants. The keychain shows them, and on approval signs them once with the device key, with the account's full authority. It does not send them. The user comes back with the signed transaction (an `execute_from_outside_v2` call that any relayer may submit, once, within ten minutes), and the app has it sent through its own server, with its own sponsorship credential, exactly as it does for a session call.
+
+Why the keychain does not send it: the backend's `/sponsor` pays only for an approved app whose server presents its credential, and a credential must never be in a browser. The keychain is a public page and holds none, and its `/api` proxy injects none. Its own budget (`/wallet/sponsor`) covers only the account's management calls, never calls a site chose. So the app that asked pays.
 
 The session's private key never leaves the app, and the device key never leaves the keychain.
 
@@ -89,12 +91,12 @@ bun run server.ts      # http://localhost:5173
 
 ## Tested
 
-- **The protocol,** its refusals and the app-side helpers: 23 tests in `../sdk/test/keychain.test.ts`.
-- **The pages and key storage, in three browsers:** 73 UI tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 219 runs in all, plus an opt-in real Worker runtime test. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
+- **The protocol,** its refusals and the app-side helpers: 25 tests in `../sdk/test/keychain.test.ts`.
+- **The pages and key storage, in three browsers:** 75 UI tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 225 runs in all, plus an opt-in real Worker runtime test. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
   - sign-in with Google and with Apple, polling a slow recovery through a dropped connection, a remembered device, a stale sign-in page, a key removed elsewhere, an error from the issuer, and no Apple button without an Apple client id;
   - sign-in with a recovery file: the pepper service never contacted, the file a device downloads signing another device in, how the file is stored during the trip, and files refused for another user, network, class, application or issuer, or for not being a recovery file;
   - how the key is stored, and forgetting the device;
-  - approving and denying a session or a single transaction, the requests the keychain refuses, how token calls and amounts are described for known, unverified and unidentified tokens, an app name containing markup;
+  - approving and denying a session or a single transaction, an approved transaction handed back signed and unsent and then paid for by the app's server when the backend requires an approved app's credential (and refused when the app has none), the requests the keychain refuses, how token calls and amounts are described for known, unverified and unidentified tokens, an app name containing markup;
   - the session list: a session recorded at approval with an owner signature the fake registry verifies, revocation sending exactly `revoke_session_key` for that key, "Revoke all sessions" with a registry that is down or empty, a registry that is down or full at approval, keys formatted differently from the account's, a record whose session does not exist or has expired, markup in a recorded origin or name, malformed records, and a record that disagrees with the account;
   - removing a device, the recovery file download, and the content security policy.
 - **Live on Sepolia** on 2026-11-12, through the demo app: sign-in on a new device, the approval screen, a sponsored session call, a call outside the session refused by the account, and the device list (`../spikes/s1/results/RESULTS.md`, run 6); and one transaction approved in the keychain (run 7).
@@ -129,7 +131,9 @@ What this does not show:
 - **Naturally elapsed Safari storage expiry**, private windows and mobile browsers (see Browsers above). Native Safari mechanics alone are not a production browser-support sign-off.
 - **Override recovery.** Apple is outside the current Google-only scope; its existing implementation remains unchanged.
 - **Only STRK and ETH are recognised by address.** Every other token, including well-known ones, is shown as unverified. The list is in `../sdk/src/tokens.ts` and needs an owner and a process before it grows.
-- **A single transaction is always sponsored.** There is no path for the account to pay its own fee from the keychain.
+- **A single transaction is always sponsored, by the app that asked.** There is no path for the account to pay its own fee from the keychain, and none for Kamui to pay for it. An app with no sponsorship credential gets the approval and cannot send it.
+- **The keychain does not see an approved transaction land.** It hands the signed transaction to the app and shows nothing afterwards. The app can send it once, as approved, within ten minutes, or not at all.
+- **The largest transaction request cannot be sponsored.** A request may carry 10 calls of 100 arguments (1038 felts once signed); the backend's `/sponsor` refuses more than 600 with `BAD_CALLDATA`, after the user has approved.
 - **Sessions the registry does not know.** A session approved while the registry was down shows only on the device that approved it until the record gets through, and a session whose record is lost shows nowhere. "Revoke all sessions" still ends them.
 - **The registry trusts the keychain's clock** to within five minutes. A device whose clock is further off cannot list or record sessions; the page then says the list could not be loaded.
 - **Embedded modes** (iframe with the Storage Access API, or popup) for apps that cannot afford a page reload.
@@ -138,4 +142,4 @@ What this does not show:
 
 ## Lean production image
 
-`Dockerfile` builds browser JavaScript ahead of startup and includes the complete verified prover assets/notices. Production mode reads only explicit public configuration, never the backend developer secret file. Its `/api` proxy allows exact routes/methods, bounds bodies and outbound time, strips arbitrary response headers and forwards caller sponsorship credentials only on `POST /api/sponsor`. It does not inject a privileged token. [Host package](../infra/aws/lean/README.md), [validation](../infra/aws/lean/VALIDATION.md). Owner-authorized wallet management uses `/api/wallet/sponsor` with a separate default-off PostgreSQL wallet budget; ordinary app calls still require approved-app sponsorship; local browser tests use mocked services.
+`Dockerfile` builds browser JavaScript ahead of startup and includes the complete verified prover assets/notices. Production mode reads only explicit public configuration, never the backend developer secret file. Its `/api` proxy allows exact routes/methods, bounds bodies and outbound time, strips arbitrary response headers and forwards caller sponsorship credentials only on `POST /api/sponsor`. It does not inject a privileged token. [Host package](../infra/aws/lean/README.md), [validation](../infra/aws/lean/VALIDATION.md). Owner-authorized wallet management uses `/api/wallet/sponsor` with a separate default-off PostgreSQL wallet budget; ordinary app calls still require approved-app sponsorship, which the keychain page never requests itself: an approved single transaction goes back to the app unsent; local browser tests use mocked services.
