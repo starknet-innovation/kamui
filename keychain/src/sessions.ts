@@ -37,6 +37,21 @@ export async function recordSession(device: KeyPair, record: AccountRecord, sess
   }
 }
 
+/**
+ * The site a session key was recorded for, from this device's storage or the registry. Null when
+ * neither has a record of it, or when the registry cannot be reached. Never throws.
+ */
+export async function recordedOrigin(device: KeyPair, record: AccountRecord, publicKey: string): Promise<string | null> {
+  try {
+    const waiting = (await loadUnrecordedSessions()).find((session) => sameFelt(session.publicKey, publicKey));
+    if (waiting) return waiting.origin;
+    const listed = await within(REGISTRY_TIMEOUT_MS, registryFor(device, record).list());
+    return listed.find((entry) => sameFelt(entry.publicKey, publicKey))?.origin ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** A session as the account page shows it. Everything but the site's names is read from the account. */
 export type LiveSession = {
   publicKey: string;

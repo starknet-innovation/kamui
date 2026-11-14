@@ -24,9 +24,14 @@ type Connection = {
     maxCalls: number;
     /** The scope that was asked for. Absent on a connection stored by an older SDK. */
     calls?: { to: string; entrypoint: string }[];
+    nonces?: { base: string; next: number; exhausted?: boolean }; // kept by sessionCall
   };
 };
 ```
+
+### `beginExtend(connection, options, store): string`
+
+Like `beginConnect`, but for the session key `connection` already holds: the user is asked to renew that session instead of approving a new key. Same options, same answer, read by `finishConnect`. The stored connection is replaced only when the user approves. See [Renewing a session](/guide/sessions#renewing-a-session).
 
 ### `loadConnection(store): Connection | null`
 
@@ -55,12 +60,16 @@ Calls `onEnded({ reason, transactionHash?, blockNumber? })` once when the sessio
 | `revoked` | The user revoked this session |
 | `all-revoked` | The user revoked every session |
 | `owners-changed` | The user added or removed a device |
-| `replaced` | The same session key was registered again with another expiry |
+| `replaced` | The same session key was registered again with another expiry. A renewal by this app reads this way to a watcher holding the connection from before it: see `renewedConnection` |
 | `gone` | The account no longer has the session, and the cause was not seen |
 
 ### `checkSessionEnded(connection, provider, now?): Promise<SessionEnd | null>`
 
 One look: `null` while the session is alive, else `{ reason }` with `expired` (decided locally), `replaced` or `gone`. For use after a failed call.
+
+### `renewedConnection(connection, store): Connection | null`
+
+After a `replaced`: the stored connection, if it is for the same account and session key with another deadline, which is what a renewal through `beginExtend` leaves in the store. `null` when the store holds nothing newer. See [Renewals and the watcher](/guide/sessions#renewals-and-the-watcher).
 
 ### `isSessionRefusal(error): boolean`
 
@@ -69,6 +78,10 @@ Whether an error carries the account's `Kamui: invalid session` refusal, as text
 ### `sessionEventTracker(session)`, `SESSION_END_EVENT_KEYS`
 
 For your own event source. `SESSION_END_EVENT_KEYS` is the `keys` filter for `starknet_getEvents` or `starknet_subscribeEvents` on the account's address. `sessionEventTracker({ publicKey, validUntil })` returns `{ push(event), ended }`: push the events in the order they were emitted and read `ended` (`null`, or the reason).
+
+### `saveConnection(connection, store): boolean`
+
+Writes `connection` over the stored one, only if the store still holds a connection with the same session key and deadline. For keeping `connection.session.nonces` across reloads when you do not pass `{ store }` to `sessionCall`.
 
 ### `forgetConnection(store): void`
 
@@ -80,9 +93,21 @@ Which answer the app is waiting for. Call it before `finishConnect`/`finishExecu
 
 ## Sending
 
-### `sessionCall(connection, calls, provider, fromOffset = 0): Promise<{ call, offset } | null>`
+### `sessionCall(connection, calls, provider, options?): Promise<{ call, offset } | null>`
 
-Signs `calls` with the session key as a sponsored outside execution and returns the `execute_from_outside_v2` call to hand to a relayer. Finds the next unused session nonce from `fromOffset`. Returns `null` when the session's `maxCalls` sponsored nonces are used.
+Signs `calls` with the session key as a sponsored outside execution and returns the `execute_from_outside_v2` call to hand to a relayer. Returns `null` when the session's `maxCalls` sponsored nonces are used.
+
+It finds a free session nonce and records its place in `connection.session.nonces`, so later calls on the same object cost two reads. Options:
+
+| Option | |
+|---|---|
+| `store` | The store the connection is kept in. The place is saved there as well, so it survives a reload. |
+| `fromOffset` | Never use a nonce below this offset. A number in place of `options` means the same. |
+| `scanGaps` | Default `true`: before answering `null`, read every nonce not read yet, in case one was skipped. `false` answers `null` as soon as the end of the range is found used. |
+
+### `nextSessionNonce(reader, sessionPublicKey, maxCalls, fromOffset = 0, options?): Promise<{ nonce, offset } | null>`
+
+The search `sessionCall` uses, for apps that build outside executions themselves. `options.hint` is the offset to try first; `options.scanGaps` and `options.concurrency` (default 8) control the last-resort scan. With `n` nonces used in order it reads the account about `2·log2(n)` times, once with a good hint. The nonce returned is always one the account reported unused.
 
 ### `sponsor(url, call, send?): Promise<string>`
 
@@ -136,8 +161,9 @@ A get-starknet-style wallet object (`id`, `name`, `version`, `icon`, `request`, 
 |---|---|
 | `resume(): Promise<Connection \| null>` | Once per page load: reads the keychain's answer, loads the stored connection, checks it on chain. Never redirects, never throws. |
 | `connect(): Promise<Connection>` | Settles at once with a live session. Otherwise navigates to the keychain and never settles. |
+| `renew(): Promise<never>` | Navigates to the keychain to renew the session under the same key, with the `session` option's terms. `resume()` picks up the renewed session. Use it on `SESSION_EXHAUSTED`, or before the session expires. |
 | `disconnect(): void` | Forgets the session key and emits `accountsChanged` with `[]`. |
-| `execute(calls): Promise<{ transaction_hash }>` | Sends calls inside the session, sponsored if `sponsor` is set. Sponsored calls are sent one at a time. |
+| `execute(calls): Promise<{ transaction_hash }>` | Sends calls inside the session, sponsored if `sponsor` is set. Sponsored calls are sent one at a time; the place in the session's nonces is kept on the connection and in `store`. |
 | `approveInKeychain(calls, appName?): Promise<never>` | Navigates to the keychain's `/execute` page. |
 | `account(provider?)` | A starknet.js account whose `execute` is the wallet's. |
 | `request({ type, params })` | The wallet API. See the walkthrough for what is answered. |
