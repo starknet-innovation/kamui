@@ -1,0 +1,214 @@
+# Headless sessions and session presets
+
+| | |
+|---|---|
+| Status | **Decided 2026-11-14**, both questions. |
+| Issue | [#23](https://github.com/starknet-innovation/kamui/issues/23) |
+| Written | 2026-11-14 |
+| Decision | Presets: yes, on Cartridge's model. Headless: keep today's model (H0), and make the server path easier (H1) when an integrator asks. See [Decision record](#decision-record). |
+
+This page is an internal working document. It is excluded from the published developer docs (`srcExclude` in [`docs/.vitepress/config.ts`](../.vitepress/config.ts)).
+
+## What is being decided
+
+Two separate questions. They can be answered differently.
+
+1. **Headless sessions.** Should a bot or backend be able to act through Kamui with no person approving in the keychain?
+2. **Session presets.** Should apps be able to refer to a reviewed, named set of session policies, where today every request carries its whole scope?
+
+If the answer to either is yes, the next step is a design and one issue per piece. If no, the developer docs say so plainly. Until then the docs state only what is true today (see [Developer docs](#developer-docs)).
+
+## How it works today
+
+Paths are relative to the repository root.
+
+**The account has no owner until a person signs in.** `KamuiAccount`'s constructor takes `(aud, identity)` and sets no key (`contracts/src/account.cairo:91-97`). An owner key appears in one of two ways: a login proof (`apply_recovery`, `account.cairo:121-123`), or an existing owner adding one (`add_owner`, `contracts/src/owners.cairo:27`). The backend refuses to deploy an account without a login token: `/deploy` answers `AUTHENTICATED_DEPLOYMENT_REQUIRED` (`services/backend/src/services/api/app.ts:123-132`).
+
+**Only an owner can create a session.** `add_or_update_session_key` and `add_or_update_scoped_session_key` both start with `assert_only_self` (`contracts/src/session/component.cairo:118`, `:182`). The account calls itself only on an owner signature. A session can never call them: they are on the blocklist, with owner management and recovery (`contracts/src/session/interface.cairo:99-125`), and a session can never call the account at all.
+
+**The owner key is the device key, and it stays in the keychain.** It is kept in IndexedDB on the keychain's origin under a non-extractable wrapping key (`keychain/src/vault.ts:1-12`). On "Approve", the keychain builds the session calls, signs them as an outside execution with the device key and sends them to `/wallet/sponsor` (`keychain/src/approval.ts:71-88`).
+
+**The request carries the whole scope.** A connect request is JSON in the URL fragment with the session's public key, expiry, call cap, fee cap, every `(contract, entrypoint)` pair and every spending limit (`WireSession`, `sdk/src/keychain.ts:28-47`). The keychain checks it (`parseConnectRequest`, `sdk/src/keychain.ts:164-205`), refuses what must never be approved (`sessionProblems`, `sdk/src/keychain.ts:212-225`; `assertValidSession` and `unlimitedTokenCalls`, `sdk/src/sessions.ts:44-77`), and shows the rest: the origin, a table of shortened contract addresses and entry point names, and the limits (`keychain/src/approval.ts:28-58`).
+
+**The keychain identifies the app by origin only.** `redirectUri` must be `https:`, or `http:` on `localhost`, and the page that navigated to the keychain must be on the same origin (`envelope`, `sdk/src/keychain.ts:109-136`; read once in `keychain/src/main.ts:51-60`). `appName` is display text.
+
+**On chain, a session is a key plus limits.** The account stores expiry, call cap, fee cap and a whitelist of up to 64 entries (`_set_session`, `component.cairo:365-411`; `MAX_ALLOWED_ENTRIES`, `interface.cairo:12`), and per-token spending policies (`contracts/src/session/spending.cairo`). It does not know which app asked. The backend's session registry holds the origin and name for display only, and is "a convenience, not an authority" (`services/backend/src/services/registry/registry.ts:1-20`).
+
+**Every change of owners ends every session.** `after_owners_changed` bumps the session epoch (`account.cairo:105-114`, plan decision D5). A user signing in on a new device kills a bot's session.
+
+**Sponsorship is per app, checked by the backend.** `/sponsor` needs a registered app key and its token (`authorizeApp`, `services/backend/src/services/sponsor/funding.ts:105-113`), accepts only accounts of the one Kamui class (`WRONG_CLASS`, `services/backend/src/services/recovery/sponsor.ts:94-101`), and debits per-app, per-account and global budgets (`sponsor.ts:103-116`, `funding.ts:115-140`). It does not look at what the calls are; the account does.
+
+**What the Node.js example does.** `docs/snippets/node/connect.ts` starts a server on `http://localhost:<port>`. `/start` is a page that navigates to the keychain, so the keychain sees a referrer (`connect.ts:47-52`). The keychain sends the user back to `/callback`, which posts the fragment to `/answer` (`connect.ts:54-78`). The session key is generated by the script and stored in a file (`docs/snippets/node/file-store.ts`). `docs/snippets/node/main.ts` then signs session calls and posts them to the sponsor endpoint with the app's credential.
+
+Three facts about that workaround matter for the decision:
+
+- It is one approval, not one per run. The keychain puts no upper bound on `validUntil`, and `maxCalls` is a `u32`. A bot can ask for a long session.
+- The approval must reach `localhost` on the machine running the script. A remote server needs a forwarded port (`docs/examples/node.md`, "Important notes").
+- The session still ends when the user adds or removes a device, so a long-running bot needs a way to ask the user again.
+
+## Headless sessions
+
+"Headless" is used for three different things. They have very different consequences, so they are separated here.
+
+### Options
+
+**H0. Keep today's model.** Every account belongs to a person. A server gets a session by one browser approval. Say so in the docs.
+
+**H1. Keep the model, make the server path easier.** No change to who holds what. Candidates:
+
+- Ship the localhost round trip as an SDK helper, not only as a docs snippet.
+- Document and test the variant for a server with its own HTTPS domain: it serves the `/start` and `/callback` pages itself, with no `localhost` and no port forward. The protocol already allows it (same-origin `https:` redirect, `sdk/src/keychain.ts:119-130`). Not tested end to end.
+- A documented pattern for re-approval when a session ends (notify the user with a link).
+
+A "device code" flow, where the script prints a keychain link that works from any browser, is deliberately not in this list. It would need the keychain to accept a request with no referrer from the app's origin. That check is what stops a link on another site from asking in an app's name with its own session key (`sdk/src/keychain.ts:16-19`).
+
+**H2. An app-owned account type.** A second account class (or constructor) whose first owner is a key the app holds, with no login. The Cairo side is small: `OwnersComponent::initializer(owner)` exists and a test mock already builds such an account (`contracts/src/owners.cairo:224-225`, `contracts/src/mocks.cairo:114`). The rest is not small:
+
+- A new class hash. The backend sponsors exactly one class today. Plan decision D1 says the class must be final before the first mainnet account, and each class is audit scope.
+- A way to deploy without a login token, authorised by the app's credential, with its own budget.
+- Address derivation, SDK helpers, docs.
+
+What the app gets is a plain Starknet account it fully controls, plus Kamui paying its fees. Sessions add little: the app holds the owner key, so nobody else is limiting it.
+
+For comparison, Cartridge documents two things under "headless" (both read 2026-11-14):
+
+- [Headless Authentication](https://docs.cartridge.gg/controller/headless-authentication), in the browser: the app calls `connect({ username, signer, password? })` and the user's own signer (passkey, password, OAuth login or wallet) authenticates in a hidden keychain iframe, with no login modal. The approval screen still opens when the session's policies are unverified or include spending limits, and their sessions page says every session creation needs user approval. It is browser only. This is H0/H1 without the redirect, not an account with no person.
+- [Native Headless Controller](https://docs.cartridge.gg/controller/native/headless), for servers: the app creates the owner from a private key it generates, creates the account with `new_headless` and registers it with `signup`. That is the H2 model.
+
+Their docs describe nothing like H3.
+
+**H3. App-managed keys on users' accounts.** The app's server, or Kamui's, holds an owner key of a user's account, or can create sessions on it without the user. This needs no new contract: a server-held key would be added as an owner.
+
+### Security and custody
+
+| | Who holds what | A compromised app backend can | Sponsorship |
+|---|---|---|---|
+| **H0 / H1** | User: device key, in the keychain. App: session key only. | Act within the approved scope, limits and expiry, until the user revokes or changes devices. Sign off-chain messages as the account while the session lives (plan section 7). It cannot change owners or widen its scope. | Unchanged. An account costs a real Google identity and a login proof, so per-account budgets mean something. |
+| **H2** | App: the owner key. No user, no keychain. | Everything on those accounts: move all funds, change owners. No limit applies. | New abuse path. Accounts become free to create, so a per-account budget no longer bounds anything; only the per-app and global budgets do. A leaked app credential can deploy and drive accounts until the app budget is spent. Deployment would need its own cap. |
+| **H3** | App or Kamui: an owner key on every participating user's account. | Take over every such account: move funds, add its own owner, remove the user's. One breach covers all users. | Unchanged, but the damage is to users' funds, not to the budget. |
+
+Notes:
+
+- H3 makes whoever holds the keys a custodian of users' assets. The plan already says "non-custodial" needs careful wording for the web keychain (PLAN.md section 7); H3 removes the question. It also conflicts with the statement in the developer docs that the device key never leaves the keychain.
+- H2 is custody of the app's own accounts by the app. If an app used such accounts to hold assets for its users, the app would be the custodian, and Kamui would be sponsoring it.
+- In every option a stolen session key is bounded by the account. That is the property H2 and H3 give up for the owner key.
+
+The custody and regulatory points above are an engineering view. **They need legal review before anyone relies on them.**
+
+### Effort
+
+Rough, in engineer-days, excluding audit and review time. Not measured against past work in this repository.
+
+| Option | Work | Estimate |
+|---|---|---|
+| H0 | Docs only (done in this change for the current state) | 0 |
+| H1 | SDK helper for the round trip, test of the HTTPS-origin variant, docs | 2 to 4 |
+| H2 | New class and tests (3 to 5), backend: second class, credentialed deployment, deployment budget (4 to 6), SDK and docs (3 to 5) | 10 to 16, plus audit scope |
+| H3 | Not estimated | - |
+
+### Recommendation
+
+**Adopted: the project owner decided on 2026-11-14 to keep today's model (H0) and to do H1 when an integrator asks. See the [Decision record](#decision-record).**
+
+- **Rule out H3.** It turns Kamui, or its apps, into a custodian of users' accounts and removes the one boundary the design is built on.
+- **Do not build H2 now.** It serves apps that want an account of their own, which any standard Starknet account already gives them; what Kamui would add is free gas, with a new abuse path and a second class to audit before the first one is final. Revisit if an approved app has a concrete need that H1 does not meet.
+- **Adopt H0, and do H1 when a server-side integrator asks for it.** It keeps custody with the user and costs days.
+
+Main trade-off: bots stay tied to a person. A fully unattended service (no user at all, for example a market-maker or a keeper) is not served by Kamui and should use its own account.
+
+## Session presets
+
+### What a preset would be in Kamui
+
+A reviewed record, kept by the Kamui team, that says: these origins may ask for this scope (contracts, entry points, spending limits), under this name, with these human-readable labels. An app's connect request would name the preset. The keychain would resolve it, check that the request's origin is one of the preset's origins, and show the scope with a "reviewed" mark and readable names.
+
+What would not change:
+
+- **The user still approves.** A preset changes what the approval screen can say, not whether it appears.
+- **The contracts.** The account stores the same whitelist and limits whichever way the scope reached the keychain. No new class, no audit scope in Cairo.
+- **The rules the keychain enforces** (`sessionProblems`): a preset must pass them like any request.
+
+How Cartridge does it, from their public docs (read 2026-11-14):
+
+- Presets are config files committed to the `configs` folder of Cartridge's presets repository. A preset holds the allowed origins, a theme, and per-chain session policies. Policies are merged after review with the Cartridge team. [Presets](https://docs.cartridge.gg/controller/presets), [Sessions](https://docs.cartridge.gg/controller/sessions).
+- An app names its preset with the `preset` option. Preset policies for the current chain take precedence over policies passed by the app, unless the app sets `shouldOverridePresetPolicies`. [Configuration](https://docs.cartridge.gg/controller/configuration).
+- Verified and unverified policies go through the same approval flow; verification adds a trust indicator on the approval screen. [Sessions](https://docs.cartridge.gg/controller/sessions).
+- Cartridge presets also carry per-method paymaster settings. [Presets](https://docs.cartridge.gg/controller/presets).
+
+Kamui uses no Cartridge code (PLAN.md section 2). Anything built here would be written from this description, not from their repository.
+
+### What presets would buy
+
+- **A readable approval screen.** Today the user sees shortened contract addresses and raw entry point names (`keychain/src/approval.ts:41`), and a token is shown by the symbol its own contract gives. A reviewed record can carry names.
+- **A review gate.** Someone has looked at what the app asks for before users see a "reviewed" mark.
+- **One record per app.** Sponsorship approval is already manual and per app. The preset could be the same registration: app key, origins, scope.
+- **Optionally, tighter sponsorship.** The backend could refuse to sponsor calls outside an app's reviewed scope. Today it sponsors any call the session allows.
+
+Request size is not a reason: 64 scope entries fit in a URL fragment.
+
+### Options
+
+**P0. No presets.** Every request carries its scope. Say so in the docs.
+
+**P1. Reviewed apps, no protocol change.** Requests stay as they are. The keychain ships with a registry: origin, app name, contract labels, the reviewed scope. When a request comes from a registered origin and asks for no more than the reviewed scope, the approval screen shows the mark and the labels. Otherwise it looks as it does today.
+
+**P2. Named presets.** A `preset` field in the connect request. The keychain resolves the scope from its registry. Needs a rule for a request that names a preset and also carries a scope, a protocol change (a version-1 keychain refuses a request with no `session`, `sdk/src/keychain.ts:170`), and SDK support.
+
+**P3. P1 or P2, plus enforcement in the backend.** `/sponsor` decodes the calls and refuses those outside the app's reviewed scope. The backend already decodes outside executions for `/wallet/sponsor` (`services/backend/src/services/recovery/wallet-sponsor.ts:83`).
+
+### Security and responsibility
+
+- **A wrong preset is worse than no preset.** A "reviewed" mark lowers the user's guard. If a reviewed scope is too wide, or a listed contract is malicious or later changes behaviour, the mark carried Kamui's name. The review needs an owner, written criteria and a way to withdraw a preset quickly. What that mark commits SNF to **needs legal review**.
+- **The registry is part of the keychain's trusted code.** Whoever can change it can make any scope look reviewed for any origin. It must be reviewed and released like keychain code. A registry fetched at run time from a server would add that server to the trust base; bundling it avoids that at the cost of a keychain release per change.
+- **Origin binding is the whole check.** A preset must never apply to an origin it does not list. `http://localhost` needs a decision: allowing it for every preset helps developers and lets any local page show a reviewed mark.
+- **No change to custody or to what a compromised backend can do.** The session key stays with the app; the account enforces the scope.
+- **P3 narrows sponsorship abuse.** With a leaked app credential today, an attacker can spend the app's budget on any call some session allows. With P3, only on the reviewed scope.
+- **Staleness.** A contract redeploy means a preset change and, if bundled, a keychain release. With P2, an app whose preset lags cannot connect with the new scope until it is reviewed, unless overrides are allowed, which weakens the gate.
+
+### Effort
+
+Rough, in engineer-days, excluding the time reviewers spend on each app.
+
+| Option | Work | Estimate |
+|---|---|---|
+| P0 | Docs only (done in this change for the current state) | 0 |
+| P1 | Registry format and loader, approval screen, tests (3 to 5); review criteria and process (1 to 2) | 4 to 7 |
+| P2 | P1, plus protocol and SDK changes, precedence rule, docs (4 to 6) | 8 to 13 |
+| P3 | Backend scope check and tests, on top of P1 or P2 | plus 4 to 6 |
+
+The recurring cost is the review itself: every app, and every change of scope.
+
+### Recommendation
+
+**Superseded: the project owner decided on 2026-11-14 to support presets on Cartridge's model. See the [Decision record](#decision-record). The recommendation below is kept as written.**
+
+- **Do not build presets now (P0).** Kamui is a Sepolia preview with manual, per-app onboarding. A review programme and a "reviewed" mark are commitments that are better made with the audit and the mainnet plan than before them.
+- **If the team wants a first step, make it P1.** It improves the approval screen for approved apps, changes no protocol and no contract, and can grow into P2 or P3 later.
+- **Decide P3 with the mainnet sponsorship policy**, not here: it is a spending control more than a session feature.
+
+Main trade-off: until then, users approve raw addresses and entry point names for every app, and nothing distinguishes an app the team has looked at from one it has not.
+
+## Questions for the team
+
+1. Is there an approved or prospective app that needs an account with no person behind it? If so, what does it need from Kamui beyond fees?
+2. Is H3 ruled out for good, so the docs can say so?
+3. Who would own preset review, and against which criteria?
+4. Should sponsorship approval and a preset be one registration?
+5. Should the backend enforce reviewed scopes on mainnet (P3)?
+
+## Developer docs
+
+This change makes the published docs state the current state only, in the same words on every page:
+
+- Headless: not supported, and Kamui will not add it. Every session needs a person to approve it in the keychain.
+- The supported route for servers: one approval in a browser, through the localhost round trip.
+- Presets: not available today, and planned. Every request carries its full scope until they ship.
+
+Before this change one page said headless was "not planned", which read as a decision. Once the team decides, update those pages to say "planned" or "will not be supported", and record the outcome below and as a numbered decision in [PLAN.md](../../PLAN.md).
+
+## Decision record
+
+| Question | Decision | Date | Follow-up issues |
+|---|---|---|---|
+| Headless sessions | **Keep today's model (H0).** Every account belongs to a person and every session is approved in the keychain; a bot or server gets its session through one browser approval. **H1** (an SDK helper for the round trip, a tested HTTPS-origin variant, a documented re-approval pattern; 2 to 4 days) is done when a server-side integrator asks. An app-owned account type (H2) and app-managed keys on users' accounts (H3) are not being built. | 2026-11-14 | None now. Open an issue for H1 when an integrator asks. |
+| Session presets | **Yes, as Cartridge does.** Reviewed preset files that list an app's origins and, per chain, its contracts and methods with names; an app names its preset in the connect request; preset policies take precedence over the request's unless the app overrides; a reviewed preset gets a trust indicator and a compact approval screen; the user still approves every session; methods can be marked as sponsored. This is P2 with P3. | 2026-11-14 | #45 registry and review process, #46 protocol and SDK, #47 keychain approval screen, #48 sponsorship by preset |
