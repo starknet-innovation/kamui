@@ -1,0 +1,31 @@
+# Checks the Cairo contracts' formatting on every pull request that touches them. The scarb version
+# comes from contracts/.tool-versions, so CI formats with the same toolchain the repo pins.
+
+name: contracts
+
+on:
+  pull_request:
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/contracts.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: software-mansion/setup-scarb@v1.5.0
+        with:
+          tool-versions: contracts/.tool-versions
+
+      - name: scarb fmt --check
+        working-directory: contracts
+        run: scarb fmt --check
