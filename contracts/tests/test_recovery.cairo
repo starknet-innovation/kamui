@@ -21,8 +21,8 @@ use snforge_std::{
     start_cheat_block_timestamp_global, start_cheat_caller_address, start_cheat_proof_facts,
     stop_cheat_caller_address, store,
 };
-use starknet::account::Call;
 use starknet::SyscallResultTrait;
+use starknet::account::Call;
 use super::test_sessions::{
     Env, FEE_CAP, NOW, add_session, as_owner, default_fees, ext, manager, new_owner_signature,
     owner_key, owners, ping, recover_onto, recovery_facts, recovery_facts_at, registry_owner,

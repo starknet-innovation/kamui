@@ -47,7 +47,9 @@ pub trait ISessionSpendingPolicy<TContractState> {
     fn get_spending_policy(
         self: @TContractState, session_key: felt252, token: ContractAddress,
     ) -> SpendingPolicy;
-    fn remove_spending_policy(ref self: TContractState, session_key: felt252, token: ContractAddress);
+    fn remove_spending_policy(
+        ref self: TContractState, session_key: felt252, token: ContractAddress,
+    );
 }
 
 /// ERC-20 selectors counted as spending (SNIP-41 Part H).

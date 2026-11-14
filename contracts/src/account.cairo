@@ -118,9 +118,7 @@ pub mod KamuiAccount {
             self.owners.anchor()
         }
 
-        fn apply_recovery(
-            ref self: ContractState, new_pubkey: felt252, signature: Span<felt252>,
-        ) {
+        fn apply_recovery(ref self: ContractState, new_pubkey: felt252, signature: Span<felt252>) {
             self.owners.add_recovered_owner(new_pubkey, signature);
         }
     }

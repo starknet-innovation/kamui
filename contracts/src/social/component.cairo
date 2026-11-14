@@ -84,9 +84,9 @@ pub mod SocialComponent {
     use crate::jwt::verification::{verify_and_extract, verify_recovery_aud};
     use crate::social::proof_facts::ProofFactsVerificationTrait;
     use super::{
-        FINALIZE_WINDOW, ISocialRecoverable, RecoveryTarget, JWK_REGISTRY_ADDRESS, PROOF_VALIDITY_BLOCKS,
+        FINALIZE_WINDOW, ISocialRecoverable, JWK_REGISTRY_ADDRESS, PROOF_VALIDITY_BLOCKS,
         PendingOverrideRecoveryCanceledEvent, PendingOverrideRecoveryEvent, RECOVERY_DELAY,
-        RecoveredEvent, SOCIAL_COMPONENT_ID,
+        RecoveredEvent, RecoveryTarget, SOCIAL_COMPONENT_ID,
     };
 
 

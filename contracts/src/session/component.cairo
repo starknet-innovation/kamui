@@ -214,9 +214,8 @@ pub mod SessionKeyComponent {
             selector: felt252,
         ) -> bool {
             match self._load_live(session_key) {
-                Option::Some((
-                    config, state,
-                )) => self._is_call_allowed(session_key, config, state, to, selector),
+                Option::Some((config, state)) => self
+                    ._is_call_allowed(session_key, config, state, to, selector),
                 Option::None => false,
             }
         }
@@ -255,8 +254,7 @@ pub mod SessionKeyComponent {
             let tx_info = get_tx_info().unbox();
 
             // Steps 1 to 3: signature shape, expiry, session exists.
-            let (session_key, r, s, config, state) = match self
-                ._open_session(tx_info.signature) {
+            let (session_key, r, s, config, state) = match self._open_session(tx_info.signature) {
                 Option::Some(opened) => opened,
                 Option::None => { return false; },
             };

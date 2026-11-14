@@ -1,6 +1,8 @@
 //! Spending policies (SNIP-41 Part H) on both execution paths.
 use core::num::traits::Zero;
-use kamui::core::{IKamuiAccountDispatcher, IKamuiAccountDispatcherTrait, OutsideExecutionSNIP12Metadata};
+use kamui::core::{
+    IKamuiAccountDispatcher, IKamuiAccountDispatcherTrait, OutsideExecutionSNIP12Metadata,
+};
 use kamui::mocks::{ITargetDispatcher, ITargetDispatcherTrait};
 use kamui::session::interface::{
     ISessionKeyManagerExtDispatcher, ISessionKeyManagerExtDispatcherTrait,
@@ -41,9 +43,7 @@ fn setup_with_policy() -> Env {
 
 fn token_call(token: ContractAddress, selector: felt252, amount: u256) -> Call {
     Call {
-        to: token,
-        selector,
-        calldata: array![0x1234, amount.low.into(), amount.high.into()].span(),
+        to: token, selector, calldata: array![0x1234, amount.low.into(), amount.high.into()].span(),
     }
 }
 
