@@ -7,7 +7,7 @@
 //
 // Skipped when no devnet answers on DEVNET_URL (default http://127.0.0.1:5050).
 import { beforeAll, describe, expect, test } from 'bun:test';
-import { Account, RpcProvider, json, num, type Call } from 'starknet';
+import { Account, RpcProvider, json, num, type Call, type TypedData } from 'starknet';
 import {
   KamuiReader,
   SESSION_KEY_INTERFACE_ID,
@@ -21,10 +21,16 @@ import {
   newKeyPair,
   nextSessionNonce,
   ownerOutsideExecution,
+  ownerSignTypedData,
   removeOwnerCall,
   revokeSessionCall,
+  sessionCall,
   sessionOutsideExecution,
+  sessionSignTypedData,
   signNewOwner,
+  type Connection,
+  typedDataHash,
+  verifyMessageSignature,
   type KeyPair,
   type SessionParams,
 } from '../src';
@@ -98,6 +104,26 @@ describe.skipIf(!devnetUp)('devnet', () => {
     scope: { kind: 'contracts', calls: [{ to: target, entrypoint: 'ping' }, { to: target, entrypoint: 'transfer' }] },
   });
   const limit = () => ({ token: target, maxPerCall: 100n, maxPerWindow: 150n, windowSeconds: 3600 });
+  /** A sign-in message (SNIP-12 revision 1) for this devnet. */
+  const signIn = (nonce = '0x1234'): TypedData => ({
+    types: {
+      StarknetDomain: [
+        { name: 'name', type: 'shortstring' },
+        { name: 'version', type: 'shortstring' },
+        { name: 'chainId', type: 'shortstring' },
+        { name: 'revision', type: 'shortstring' },
+      ],
+      SignIn: [
+        { name: 'statement', type: 'string' },
+        { name: 'nonce', type: 'felt' },
+      ],
+    },
+    primaryType: 'SignIn',
+    domain: { name: 'Example Game', version: '1', chainId, revision: '1' },
+    message: { statement: 'Sign in to Example Game', nonce },
+  });
+  /** The session's connection, as `finishConnect` returns it. */
+  const connection = () => ({ account, chainId, classHash: '0x0', session: { ...session, maxCalls: 6 } });
   const sponsored = async (calls: Call[], fromOffset = 0) => {
     const next = await nextSessionNonce(reader, session.publicKey, 6, fromOffset);
     if (!next) throw new Error('session exhausted');
@@ -204,10 +230,95 @@ describe.skipIf(!devnetUp)('devnet', () => {
     await expect(sessionAccount.estimateInvokeFee(removeOwnerCall(account, owner.publicKey))).rejects.toThrow();
   }, TIMEOUT);
 
+  test('the account accepts typed data signed by a live session and by an owner (is_valid_signature)', async () => {
+    const accepts = (signature: string[], data = signIn()) => verifyMessageSignature(provider, account, data, signature);
+
+    // The session, in the format `sessionSignTypedData` produces.
+    const bySession = sessionSignTypedData(connection(), signIn());
+    expect(bySession).toHaveLength(4);
+    expect(await accepts(bySession)).toBe(true);
+    // The raw entry point answers 'VALID', as SNIP-6 says.
+    const raw = await provider.callContract({
+      contractAddress: account,
+      entrypoint: 'is_valid_signature',
+      calldata: [typedDataHash(signIn(), account), '0x4', ...bySession],
+    });
+    expect(BigInt(raw[0]!)).toBe(BigInt('0x56414c4944'));
+
+    // Not for another message, not with another expiry, not from a key that is no session.
+    expect(await accepts(bySession, signIn('0x9999'))).toBe(false);
+    expect(await accepts([...bySession.slice(0, 3), num.toHex(session.validUntil + 1)])).toBe(false);
+    const stranger = { ...newKeyPair(), validUntil: session.validUntil };
+    expect(await accepts(sessionSignTypedData({ account, session: stranger }, signIn()))).toBe(false);
+    // The hash commits to the account: a signature made for another account is refused.
+    expect(await accepts(sessionSignTypedData({ account: target, session }, signIn()))).toBe(false);
+
+    // An owner, as the keychain signs a sign-message request.
+    expect(await accepts(ownerSignTypedData(signIn(), account, owner.privateKey))).toBe(true);
+    expect(await accepts(ownerSignTypedData(signIn(), account, newKeyPair().privateKey))).toBe(false);
+  }, TIMEOUT);
+
+  test('nonces used out of order are never handed out again', async () => {
+    // Offsets 0 and 1 are used. Use 4, skipping 2 and 3: the account takes them in any order.
+    const base = BigInt(await reader.sessionNonceBase(session.publicKey));
+    await relay(sessionOutsideExecution({ chainId, account, calls: [ping()], session, nonce: num.toHex(base + 4n) }));
+    expect((await nextSessionNonce(reader, session.publicKey, 6))!.offset).toBe(2);
+    expect((await nextSessionNonce(reader, session.publicKey, 6, 0, { hint: 4 }))!.offset).toBe(5);
+    await relay(sessionOutsideExecution({ chainId, account, calls: [ping()], session, nonce: num.toHex(base + 5n) }));
+    // The end of the range is used; the two skipped nonces are still found.
+    expect((await nextSessionNonce(reader, session.publicKey, 6, 0, { hint: 6 }))!.offset).toBe(2);
+    expect((await nextSessionNonce(reader, session.publicKey, 6, 3))!.offset).toBe(3);
+  }, TIMEOUT);
+
+  test('an owner renews the session under the same key: more calls, a later deadline, usage starts again', async () => {
+    const oldBase = BigInt(await reader.sessionNonceBase(session.publicKey));
+    const renewed = { ...session, validUntil: session.validUntil + 3600 };
+    await asOwner(createSessionCalls(account, { ...sessionParams(), validUntil: renewed.validUntil, maxCalls: 12 }, [limit()]));
+
+    expect(await reader.session(session.publicKey)).toMatchObject({ exists: true, maxCalls: 12, validUntil: renewed.validUntil });
+    const base = BigInt(await reader.sessionNonceBase(session.publicKey));
+    expect(base).not.toBe(oldBase);
+    expect(await reader.sessionNonceLimit(session.publicKey)).toBe(0);
+    expect((await reader.spendingPolicy(session.publicKey, target)).spentInWindow).toBe(0n);
+
+    // The app's connection, as `finishConnect` leaves it after a renewal, with a stale memory
+    // of the old range thrown in: the new base makes `sessionCall` drop it.
+    const connection: Connection = {
+      account,
+      chainId,
+      classHash: '0x0',
+      session: { ...renewed, maxCalls: 12, nonces: { base: num.toHex(oldBase), next: 6, exhausted: true } },
+    };
+    const before = await count();
+    for (const offset of [0, 1, 2]) {
+      const prepared = (await sessionCall(connection, [ping()], provider))!;
+      expect(prepared.offset).toBe(offset);
+      await relay(prepared.call);
+    }
+    expect(await count()).toBe(before + 3);
+    expect(connection.session.nonces).toEqual({ base: num.toHex(base), next: 3 });
+
+    // What was signed for the old session is dead: its deadline, and its nonces.
+    expect(await refusal(sessionOutsideExecution({ chainId, account, calls: [ping()], session, nonce: num.toHex(oldBase + 2n) }))).toContain('Kamui: invalid session');
+    expect(await refusal(sessionOutsideExecution({ chainId, account, calls: [ping()], session: renewed, nonce: num.toHex(oldBase + 2n) }))).toContain('Kamui: invalid session');
+    // The new range ends at the new `maxCalls`.
+    expect(await refusal(sessionOutsideExecution({ chainId, account, calls: [ping()], session: renewed, nonce: num.toHex(base + 11n) }))).toBeNull();
+    expect(await refusal(sessionOutsideExecution({ chainId, account, calls: [ping()], session: renewed, nonce: num.toHex(base + 12n) }))).toContain('Kamui: invalid session');
+  }, TIMEOUT);
+
   test('an owner change kills the session', async () => {
+    // The session was renewed above: its signatures carry the renewed deadline, and one made
+    // with the deadline from before the renewal is already refused.
+    const renewed = { ...session, validUntil: session.validUntil + 3600 };
+    expect(await verifyMessageSignature(provider, account, signIn(), sessionSignTypedData(connection(), signIn()))).toBe(false);
+    const stillValid = sessionSignTypedData({ account, session: renewed }, signIn());
+    expect(await verifyMessageSignature(provider, account, signIn(), stillValid)).toBe(true);
     const third = newKeyPair();
     await asOwner([addOwnerCall(account, third.publicKey, signNewOwner(account, await reader.ownersAnchor(), third.privateKey))]);
     expect((await reader.session(session.publicKey)).exists).toBe(false);
     expect(await refusal(await sponsored([ping()], 2))).toContain('Kamui: invalid session');
+    // Its message signatures stop verifying too; the owner's still do.
+    expect(await verifyMessageSignature(provider, account, signIn(), stillValid)).toBe(false);
+    expect(await verifyMessageSignature(provider, account, signIn(), ownerSignTypedData(signIn(), account, owner.privateKey))).toBe(true);
   }, TIMEOUT);
 });

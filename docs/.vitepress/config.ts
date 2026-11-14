@@ -28,6 +28,7 @@ export default defineConfig({
           { text: 'Quickstart', link: '/guide/quickstart' },
           { text: 'Sessions', link: '/guide/sessions' },
           { text: 'Sponsorship', link: '/guide/sponsorship' },
+          { text: 'Popup mode', link: '/guide/popup' },
           { text: 'Status and limitations', link: '/guide/limitations' },
         ],
       },
@@ -35,6 +36,7 @@ export default defineConfig({
         text: 'Examples',
         items: [
           { text: 'React', link: '/examples/react' },
+          { text: 'starknet-react', link: '/examples/starknet-react' },
           { text: 'Svelte', link: '/examples/svelte' },
           { text: 'Node.js', link: '/examples/node' },
         ],

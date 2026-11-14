@@ -19,7 +19,7 @@ import {
 } from '../../sdk/src';
 import { loadLogin, loadPendingDevice, saveLogin, savePendingDevice, savePendingPepperFile, takePendingPepperFile } from './vault';
 import { config, provider, view } from './context';
-import { answer, pendingRequest } from './request';
+import { answer, noteLeavingForIssuer, pendingRequest } from './request';
 import { button, el, sameFelt, short, show, status } from './ui';
 
 const ATTEMPT = 'kamui.keychain.attempt';
@@ -86,6 +86,7 @@ async function startLogin(via: LoginProvider, file: PepperFile | null, resume: R
   await savePendingPepperFile(file);
   const attempt = beginLogin(via, device.publicKey);
   sessionStorage.setItem(ATTEMPT, JSON.stringify({ attempt, fromFile: file !== null } satisfies StoredAttempt));
+  noteLeavingForIssuer();
   location.assign(authUrl(attempt, clientIdOf(via), config.redirectUri));
 }
 
