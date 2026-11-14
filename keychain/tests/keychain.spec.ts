@@ -25,7 +25,7 @@ const APP = 'http://localhost:5199';
 const OTHER_SITE = 'http://localhost:5198';
 const GAME = '0x2f8ce9fcc5f6e165ab5dcccf865c4c08e7d752d6b930938195683eef9f43dfc';
 const TOKEN = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d'; // STRK
-/** A contract that is not on Kamui's list of known tokens. */
+/** A token contract other than STRK. */
 const OTHER_TOKEN = '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 /** 1.5 tokens of 18 decimals, as the low half of a u256. */
 const ONE_AND_A_HALF = '0x14d1120d7b160000';
@@ -318,7 +318,7 @@ test.describe('connection requests', () => {
       limits: [{ token: TOKEN, maxPerCall: 10n ** 18n, maxPerWindow: 15n * 10n ** 17n, windowSeconds: 3600 }],
     });
     await expect(page.getByRole('heading', { name: 'Spending limits' })).toBeVisible();
-    // A known token: amounts read in whole units, with its name.
+    // Amounts read in whole units, with the token's name.
     await expect(page.getByRole('cell', { name: '1 STRK', exact: true })).toBeVisible();
     await expect(page.getByText('1.5 STRK every 60 min')).toBeVisible();
     await page.getByRole('button', { name: 'Approve' }).click();
@@ -487,23 +487,15 @@ test.describe('transaction requests', () => {
     await expect(page.getByText('Lets another address spend up to an unlimited amount of STRK from your account.')).toBeVisible();
   });
 
-  test('a token Kamui does not list is shown as a claim, with a caution', async ({ page, context }) => {
+  test('a token is shown by the name and decimals its contract gives, with its address', async ({ page, context }) => {
     const world = await setup(context);
     world.tokens.set(BigInt(OTHER_TOKEN), { symbol: 'GOLD', decimals: 6 });
     await signIn(page);
     await transactionFrom(page, APP, [{ contractAddress: OTHER_TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x2625a0', '0x0'] }]);
     await expect(page.getByText('Sends 2.5 GOLD out of your account.')).toBeVisible();
-    await expect(page.getByText('Kamui does not recognise this token. It says it is "GOLD"')).toBeVisible();
-    await expect(page.getByText('says it is "GOLD"', { exact: false }).first()).toBeVisible();
-  });
-
-  test('a contract calling itself STRK at another address is not taken for STRK', async ({ page, context }) => {
-    const world = await setup(context);
-    world.tokens.set(BigInt(OTHER_TOKEN), { symbol: 'STRK', decimals: 18 });
-    await signIn(page);
-    await transactionFrom(page, APP, [{ contractAddress: OTHER_TOKEN, entrypoint: 'transfer', calldata: [GAME, ONE_AND_A_HALF, '0x0'] }]);
-    await expect(page.getByText('Kamui does not recognise this token. It says it is "STRK", but anyone can make a token with that name.')).toBeVisible();
     await expect(page.getByRole('cell', { name: OTHER_TOKEN })).toBeVisible();
+    // Kamui keeps no token list, so there is nothing to warn about for a contract that answers like a token.
+    await expect(page.getByText('could not identify')).toHaveCount(0);
   });
 
   test('a contract that is not a token gets raw amounts and a caution', async ({ page, context }) => {

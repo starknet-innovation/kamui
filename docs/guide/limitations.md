@@ -35,4 +35,4 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 - **Adding a device ends every session.** Your app is told by [`watchSession`](/guide/sessions#being-told-when-it-ends) (reason `owners-changed`), or sees `isConnectionAlive` turn false, and must ask again.
 - **Safari may clear the keychain's storage** after seven days of Safari use without visiting it. The user then signs in as on a new device.
 - **Referrer settings.** Browsers or extensions that strip referrers make the keychain refuse every request.
-- **Only STRK and ETH are recognised** by name on approval screens. Other tokens are shown as unverified.
+- **Kamui keeps no token list.** Approval screens show the symbol and decimals a token's contract gives, next to its address. Only STRK is built in. A token can give itself any name, so the address is what identifies it.

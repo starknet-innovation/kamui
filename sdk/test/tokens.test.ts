@@ -1,7 +1,7 @@
 // Token names and amounts for approval screens.
 import { describe, expect, test } from 'bun:test';
 import { shortString } from 'starknet';
-import { KNOWN_TOKENS, describeAmount, formatTokenAmount, isUnlimitedAmount, readTokenInfo, type TokenInfo } from '../src';
+import { STRK_ADDRESS, describeAmount, formatTokenAmount, isUnlimitedAmount, readTokenInfo, type TokenInfo } from '../src';
 
 const STRK = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
 const OTHER = '0x2f8ce9fcc5f6e165ab5dcccf865c4c08e7d752d6b930938195683eef9f43dfc';
@@ -48,40 +48,43 @@ describe('amounts', () => {
     expect(isUnlimitedAmount(0n)).toBe(false);
   });
 
-  test('read differently for known, unverified and unknown tokens', () => {
-    const known: TokenInfo = { status: 'known', address: STRK, symbol: 'STRK', decimals: 18 };
-    const unverified: TokenInfo = { status: 'unverified', address: OTHER, symbol: 'GOLD', decimals: 6 };
+  test('read in whole units for a token with a symbol, in raw units for one without', () => {
+    const strk: TokenInfo = { status: 'named', address: STRK, symbol: 'STRK', decimals: 18 };
+    const gold: TokenInfo = { status: 'named', address: OTHER, symbol: 'GOLD', decimals: 6 };
     const unknown: TokenInfo = { status: 'unknown', address: OTHER };
-    expect(describeAmount(1_500_000_000_000_000_000n, known)).toBe('1.5 STRK');
-    expect(describeAmount(2_500_000n, unverified)).toBe('2.5 GOLD');
+    expect(describeAmount(1_500_000_000_000_000_000n, strk)).toBe('1.5 STRK');
+    expect(describeAmount(2_500_000n, gold)).toBe('2.5 GOLD');
     expect(describeAmount(2_500_000n, unknown)).toBe('2500000 units');
-    expect(describeAmount((1n << 256n) - 1n, known)).toBe('an unlimited amount of STRK');
+    expect(describeAmount((1n << 256n) - 1n, strk)).toBe('an unlimited amount of STRK');
     expect(describeAmount((1n << 256n) - 1n, unknown)).toBe('an unlimited amount');
   });
 });
 
 describe('token lookup', () => {
-  test('a listed address is known without asking the chain', async () => {
+  test('STRK is built in and answered without asking the chain', async () => {
     const { provider, calls } = chain('not a contract');
-    expect(await readTokenInfo(provider, STRK)).toEqual({ status: 'known', address: STRK, symbol: 'STRK', decimals: 18 });
+    expect(await readTokenInfo(provider, STRK)).toEqual({ status: 'named', address: STRK, symbol: 'STRK', decimals: 18 });
     // The same address written differently is the same token.
-    expect((await readTokenInfo(provider, '0x4718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d')).status).toBe('known');
+    expect(await readTokenInfo(provider, '0x4718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d')).toMatchObject({ symbol: 'STRK', decimals: 18 });
     expect(calls).toEqual([]);
-    expect(KNOWN_TOKENS.map((token) => token.symbol)).toEqual(['STRK', 'ETH']);
+    expect(STRK_ADDRESS).toBe(STRK);
   });
 
-  test('a contract that answers like a token is unverified, whatever it claims', async () => {
-    const info = await readTokenInfo(chain({ symbol: [felt('GOLD')], decimals: ['0x6'] }).provider, OTHER);
-    expect(info).toEqual({ status: 'unverified', address: OTHER, symbol: 'GOLD', decimals: 6 });
-    // A contract claiming to be STRK at another address is still only unverified.
-    const fake = await readTokenInfo(chain({ symbol: [felt('STRK')], decimals: ['0x12'] }).provider, OTHER);
-    expect(fake.status).toBe('unverified');
+  test('any other token is named by what its contract answers', async () => {
+    const { provider, calls } = chain({ symbol: [felt('GOLD')], decimals: ['0x6'] });
+    expect(await readTokenInfo(provider, OTHER)).toEqual({ status: 'named', address: OTHER, symbol: 'GOLD', decimals: 6 });
+    expect(calls.sort()).toEqual([`decimals@${OTHER}`, `symbol@${OTHER}`]);
+    // No list is consulted: ETH is read from the chain like any other token.
+    const eth = '0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7';
+    const asked = chain({ symbol: [felt('ETH')], decimals: ['0x12'] });
+    expect(await readTokenInfo(asked.provider, eth)).toEqual({ status: 'named', address: eth, symbol: 'ETH', decimals: 18 });
+    expect(asked.calls).toHaveLength(2);
   });
 
   test('a symbol returned as a byte array is read too', async () => {
     // ByteArray "USDC": no full word, pending word 'USDC', pending length 4.
     const info = await readTokenInfo(chain({ symbol: ['0x0', felt('USDC'), '0x4'], decimals: ['0x6'] }).provider, OTHER);
-    expect(info).toMatchObject({ status: 'unverified', symbol: 'USDC', decimals: 6 });
+    expect(info).toMatchObject({ status: 'named', symbol: 'USDC', decimals: 6 });
   });
 
   test('anything that does not answer like a token is unknown', async () => {
