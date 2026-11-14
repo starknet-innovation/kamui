@@ -85,4 +85,4 @@ With Vite only, run any small server for it, or use Vite's `server.proxy` during
 
 ## starknet-react
 
-There is no `starknet-react` connector for Kamui yet, so `useAccount` and friends do not see a Kamui session. Use the `useKamui()` hook above, or pass `createSessionAccount(...)` to your own code where a starknet.js `Account` is expected (self-paid sessions only, see [Sessions](/guide/sessions#self-paid-session-transactions)).
+If your app already uses starknet-react, skip the provider above and use the connector: `useAccount`, `useConnect` and `useSendTransaction` then see the Kamui session. See [starknet-react](/examples/starknet-react).

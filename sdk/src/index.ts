@@ -12,3 +12,4 @@ export * from './sessions';
 export * from './tokens';
 export { keyPairFromPrivateKey, newKeyPair, randomFelt, signHash, type KeyPair } from './utils';
 export * from './client-proving';
+export * from './wallet';

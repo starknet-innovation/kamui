@@ -17,7 +17,14 @@ type Connection = {
   account: string;
   chainId: string;
   classHash: string;
-  session: { privateKey: string; publicKey: string; validUntil: number; maxCalls: number };
+  session: {
+    privateKey: string;
+    publicKey: string;
+    validUntil: number;
+    maxCalls: number;
+    /** The scope that was asked for. Absent on a connection stored by an older SDK. */
+    calls?: { to: string; entrypoint: string }[];
+  };
 };
 ```
 
@@ -60,6 +67,43 @@ Stores the pending request (`kamui.pending.execute`) and returns the keychain UR
 ### `finishExecute(fragment, store): { transactionHash } | null`
 
 Reads the answer. Throws if the user denied or the keychain reported an error.
+
+## Wallet interface
+
+The helpers above, behind the interface wallet libraries expect. Walkthrough: [starknet-react](/examples/starknet-react).
+
+### `new KamuiWallet({ keychainUrl, provider, session, sponsor?, store?, page? })`
+
+A get-starknet-style wallet object (`id`, `name`, `version`, `icon`, `request`, `on`, `off`) for one session.
+
+| Member | |
+|---|---|
+| `resume(): Promise<Connection \| null>` | Once per page load: reads the keychain's answer, loads the stored connection, checks it on chain. Never redirects, never throws. |
+| `connect(): Promise<Connection>` | Settles at once with a live session. Otherwise navigates to the keychain and never settles. |
+| `disconnect(): void` | Forgets the session key and emits `accountsChanged` with `[]`. |
+| `execute(calls): Promise<{ transaction_hash }>` | Sends calls inside the session, sponsored if `sponsor` is set. Sponsored calls are sent one at a time. |
+| `approveInKeychain(calls, appName?): Promise<never>` | Navigates to the keychain's `/execute` page. |
+| `account(provider?)` | A starknet.js account whose `execute` is the wallet's. |
+| `request({ type, params })` | The wallet API. See the walkthrough for what is answered. |
+| `connection`, `error`, `lastApproved` | The live session, why the last trip to the keychain failed, and the hash of a one-off transaction just approved. |
+
+`page` replaces how the wallet reads the URL fragment and navigates (`fragment`, `clearFragment`, `redirectUri`, `navigate`); the default uses `window`. Tests pass their own.
+
+### `KamuiWalletError`
+
+`code` is `NOT_CONNECTED`, `OUT_OF_SCOPE` (with `calls`), `SESSION_EXHAUSTED`, `SESSION_EXPIRED` or `UNSUPPORTED`.
+
+### `callsOutsideSession(connection, calls): Call[]`
+
+The calls the session's stored scope does not cover. Empty when the connection has no stored scope.
+
+### `injectKamuiWallet(wallet, target = globalThis)`
+
+Sets `target.starknet_kamui`.
+
+### `@kamui/sdk/starknet-react`
+
+`new KamuiConnector(options | wallet)` is a starknet-react `Connector` over a `KamuiWallet` (`connector.wallet`). `useKamuiReconnect(connector)` completes the connection after a page load and returns `{ isResuming, error, lastApproved }`. Needs `@starknet-react/core` 5 and React 18, which the rest of the SDK does not.
 
 ## Reading an account
 
