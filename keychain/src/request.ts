@@ -1,5 +1,5 @@
 // The pending connect or execute request (survives the trip to the issuer), and the answer sent back.
-import { resultUrl, type ConnectRequest, type ExecuteRequest } from '../../sdk/src';
+import { POPUP_LEAVING, resultUrl, type ConnectRequest, type ExecuteRequest } from '../../sdk/src';
 
 export const REQUEST = 'kamui.keychain.request';
 
@@ -18,4 +18,19 @@ type Answer =
 export function answer(request: { id: string; redirectUri: string }, result: Answer) {
   sessionStorage.removeItem(REQUEST);
   location.assign(resultUrl(request, { v: 1, id: request.id, ...result }));
+}
+
+/**
+ * Popup mode (sdk/src/popup.ts): when an app opened this window for a request, tells the app's
+ * page that the window is about to visit the issuer. An issuer that sets
+ * Cross-Origin-Opener-Policy cuts the link between the two windows, and the app's page would
+ * otherwise take that for the user closing the popup. The note carries only the request's id
+ * and is addressed to the origin the answer goes to, so no other opener can read it.
+ */
+export function noteLeavingForIssuer() {
+  const pending = pendingRequest();
+  if (!pending || !window.opener) return;
+  try {
+    window.opener.postMessage({ kamui: POPUP_LEAVING, id: pending.request.id }, new URL(pending.request.redirectUri).origin);
+  } catch { /* the opener is gone: nothing to tell */ }
 }

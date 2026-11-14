@@ -11,6 +11,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 | Module | What it does |
 |---|---|
 | `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `sessionProblems`, `executeProblems`, `describeCall`. |
+| `popup` | The same two requests in a popup, so the app's page is not reloaded: `connectWithPopup`, `executeWithPopup` (promises, with a fallback to the redirect when the popup is blocked), `relayPopupResult` for the page the popup ends on, and `KeychainPopupError`. |
 | `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
 | `client-proving` | `browserRecoverBackend`, `ClientProver`, V2 facts/profile helpers: local proof orchestration, authenticated first deployment and durable relay polling. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |

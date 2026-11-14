@@ -61,6 +61,36 @@ Stores the pending request (`kamui.pending.execute`) and returns the keychain UR
 
 Reads the answer. Throws if the user denied or the keychain reported an error.
 
+## Popup mode
+
+The same two requests, in a popup, without leaving the page. See [Popup mode](/guide/popup).
+
+### `connectWithPopup(options, store, popup?): Promise<Connection>`
+
+Opens the keychain's `/connect` page in a popup and resolves with the connection, which is also stored (`kamui.connection`). `options` are those of `beginConnect`. The pending request stays in memory. Must be called synchronously from a user action.
+
+### `executeWithPopup({ keychainUrl, redirectUri, appName?, calls }, store, popup?): Promise<{ transactionHash }>`
+
+The same for one approved transaction.
+
+### `relayPopupResult(): boolean`
+
+Call first on the page `redirectUri` names. Returns `true` when the page is the end of a popup request: it has relayed the answer and is closing. Returns `false` otherwise.
+
+### `PopupOptions`
+
+| Option | Default | Meaning |
+|---|---|---|
+| `timeoutMs` | 10 minutes | How long to wait for the answer |
+| `signal` | none | An `AbortSignal`; aborting closes the popup and rejects with `aborted` |
+| `fallback` | `'redirect'` | What a blocked popup does: `'redirect'` navigates as `beginConnect` would (the promise never settles), `'none'` rejects with `blocked` |
+| `features` | `popup,width=480,height=720` | The `window.open` features. Never `noopener` or `noreferrer` |
+| `pollMs`, `closedGraceMs` | 500, 1000 | How often a closed popup is looked for, and how long an answer is still awaited after one |
+
+### `KeychainPopupError`
+
+Thrown when a popup request ends without an answer. `code` is `'blocked'`, `'closed'`, `'timeout'` or `'aborted'`.
+
 ## Reading an account
 
 ### `new KamuiReader(provider, account)`

@@ -5,6 +5,7 @@ export * from './login';
 export * from './outside';
 export * from './owners';
 export * from './pepper';
+export * from './popup';
 export * from './reader';
 export * from './registry';
 export * from './sessionAccount';
