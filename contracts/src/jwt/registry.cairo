@@ -213,8 +213,11 @@ pub mod JwkRegistry {
             self.accesscontrol.assert_only_role(REVOKER_ROLE);
             let iss = issuer.iss();
             let map_key = (slot(@iss), slot(@kid));
+            // Removing a kid that holds no key withdraws no trust, so it is not a revocation.
+            if self.keys.read(map_key).is_some() {
+                self.recovery_audience.bump_revocations();
+            }
             self.keys.write(map_key, None);
-            self.recovery_audience.bump_revocations();
             self.emit(KeyRemoved { iss, kid });
         }
 
