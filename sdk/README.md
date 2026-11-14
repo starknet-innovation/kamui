@@ -21,7 +21,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 | `owners` | `signNewOwner`, `addOwnerCall`, `removeOwnerCall`. |
 | `pepper` | `exportPepper`, `parsePepperFile`, `pepperFileMatchesLogin`: a recovery file holding the user's pepper. |
 | `sessions` | `createSessionCalls`, `addSessionCall`, `setSpendingPolicyCall`, `revokeSessionCall`, `revokeAllSessionsCall`, `sessionSignature`, and the checks `assertValidSession` and `unlimitedTokenCalls`. |
-| `tokens` | `readTokenInfo`, `formatTokenAmount`, `describeAmount`: a token's name and exact amounts for approval screens, with known, unverified and unknown tokens told apart. |
+| `tokens` | `readTokenInfo`, `formatTokenAmount`, `describeAmount`: a token's symbol and exact amounts for approval screens, read from the token contract. Only STRK is built in; there is no token list. |
 | `outside` | Sponsored calls: `ownerOutsideExecution`, `sessionOutsideExecution`, `nextSessionNonce`. |
 | `watch` | `watchSession`: tells an app once when its session ends (expiry timer, and the account's `SessionKeyRevoked` / `AllSessionsRevoked` / `SessionKeySet` events, polled or pushed over a WebSocket), with the reason. `checkSessionEnded` and `isSessionRefusal` for a failed call; `sessionEventTracker` and `SESSION_END_EVENT_KEYS` for your own event source. |
 | `sessionAccount` | `createSessionAccount`: a starknet.js `Account` that signs as a session, for self-paid transactions. |
