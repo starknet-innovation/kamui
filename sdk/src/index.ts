@@ -6,6 +6,7 @@ export * from './messages.js';
 export * from './outside.js';
 export * from './owners.js';
 export * from './pepper.js';
+export * from './popup.js';
 export * from './reader.js';
 export * from './registry.js';
 export * from './sessionAccount.js';

@@ -93,8 +93,8 @@ try {
   }
   writeFileSync(join(app, 'smoke.mjs'), `
 import * as sdk from '@kamui/sdk';
-import { beginConnect, checkSessionEnded, finishConnect, keyPairFromPrivateKey, sessionCall, sessionSignTypedData, sponsor, KamuiReader } from '@kamui/sdk';
-for (const [name, value] of Object.entries({ beginConnect, checkSessionEnded, finishConnect, sessionCall, sessionSignTypedData, sponsor, KamuiReader })) {
+import { beginConnect, checkSessionEnded, finishConnect, keyPairFromPrivateKey, sessionCall, sessionSignTypedData, sponsor, connectWithPopup, KamuiReader } from '@kamui/sdk';
+for (const [name, value] of Object.entries({ beginConnect, checkSessionEnded, finishConnect, sessionCall, sessionSignTypedData, sponsor, connectWithPopup, KamuiReader })) {
   if (typeof value !== 'function') throw new Error(name + ' is not exported as a function');
 }
 const pair = keyPairFromPrivateKey('0x1');

@@ -24,6 +24,17 @@ When the request itself cannot be read or trusted, the keychain shows the reason
 | `the redirect address must not have a fragment` | Remove `#…` from `redirectUri` |
 | `bad app name` | `appName` is longer than 60 characters |
 
+## From popup mode
+
+`connectWithPopup`, `executeWithPopup` and `signMessageWithPopup` reject with the errors above when the keychain answered, and with a `KeychainPopupError` when it did not. See [Popup mode](/guide/popup#when-it-does-not-answer).
+
+| `code` | Message | Cause |
+|---|---|---|
+| `closed` | `the popup was closed before answering` | The user closed the popup |
+| `timeout` | `no answer from the popup in time` | No answer within `timeoutMs`. Also how a popup closed after the sign-in ends |
+| `aborted` | `the request was cancelled` | The `signal` was aborted |
+| `blocked` | `the browser blocked the popup` | Only with `fallback: 'none'`; otherwise a blocked popup becomes a redirect |
+
 ## From the sponsor endpoint
 
 `sponsor()` throws `Error('sponsor: <CODE>')`. HTTP status in brackets.
