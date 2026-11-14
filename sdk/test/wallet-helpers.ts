@@ -1,5 +1,5 @@
-// A page, a keychain and a node, all in memory, for the wallet and connector tests.
-import type { ProviderInterface } from 'starknet';
+// A page, a keychain and a node, all in memory, for the wallet and wallet-standard adapter tests.
+import type { ProviderInterface, TypedData } from 'starknet';
 import {
   parseConnectRequest,
   parseExecuteRequest,
@@ -43,8 +43,27 @@ export function fakePage() {
 
 /** The account as a node reports it: is the session there, and which sponsored nonces are used. */
 export function fakeNode(over: { maxCalls?: number } = {}) {
-  const state = { alive: true, down: false, used: new Set<bigint>(), reads: [] as string[], base: NONCE_BASE, validUntil: FUTURE, maxCalls: over.maxCalls ?? 3 };
+  const state = {
+    alive: true,
+    down: false,
+    used: new Set<bigint>(),
+    reads: [] as string[],
+    base: NONCE_BASE,
+    validUntil: FUTURE,
+    maxCalls: over.maxCalls ?? 3,
+    /** The chain's height, and the account's events by block, for a session watcher. */
+    block: 100,
+    events: [] as { keys: string[]; data: string[]; block_number: number }[],
+  };
   const provider = {
+    async getBlockNumber() {
+      if (state.down) throw new Error('node unreachable');
+      return state.block;
+    },
+    async getEvents(filter: { from_block: { block_number: number }; to_block: { block_number: number } }) {
+      if (state.down) throw new Error('node unreachable');
+      return { events: state.events.filter((event) => event.block_number >= filter.from_block.block_number && event.block_number <= filter.to_block.block_number) };
+    },
     async callContract({ entrypoint, calldata = [] }: { entrypoint: string; calldata?: string[] }) {
       state.reads.push(entrypoint);
       if (state.down) throw new Error('node unreachable');
@@ -110,3 +129,22 @@ export function world(over: Partial<KamuiWalletOptions> = {}, node = fakeNode())
   };
   return { options, store, tab, node, relayed, relayer };
 }
+
+/** A sign-in message, as an app would ask a wallet to sign. */
+export const signInMessage = (chainId: string = 'SN_SEPOLIA'): TypedData => ({
+  types: {
+    StarknetDomain: [
+      { name: 'name', type: 'shortstring' },
+      { name: 'version', type: 'shortstring' },
+      { name: 'chainId', type: 'shortstring' },
+      { name: 'revision', type: 'shortstring' },
+    ],
+    SignIn: [
+      { name: 'statement', type: 'shortstring' },
+      { name: 'nonce', type: 'felt' },
+    ],
+  },
+  primaryType: 'SignIn',
+  domain: { name: 'Example Game', version: '1', chainId, revision: '1' },
+  message: { statement: 'Sign in', nonce: '0x1234' },
+});
