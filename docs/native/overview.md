@@ -34,7 +34,7 @@ An existing Kamui web app packaged in a native shell, using the browser-based fl
 
 ### Headless (app-managed keys)
 
-**Not supported today.** Every Kamui account is owned by a person who signed in with Google, and every session needs that person's approval in the keychain. There are no app-managed owner keys and no way to create a session from a server alone. Whether Kamui will add a headless mode has not been decided.
+**Not supported today.** Every Kamui account is owned by a person who signed in with Google, and every session needs that person's approval in the keychain. There are no app-managed owner keys and no way to create a session from a server alone. Kamui will not add a headless mode: a person approves every session.
 
 A server acting for a user uses a session approved once in a browser, through a localhost round trip: see [Node.js](/examples/node).
 

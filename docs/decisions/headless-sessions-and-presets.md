@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| Status | **Session presets: decided 2026-11-14.** Headless sessions: proposal, not decided. |
+| Status | **Decided 2026-11-14**, both questions. |
 | Issue | [#23](https://github.com/starknet-innovation/kamui/issues/23) |
 | Written | 2026-11-14 |
-| Decision | Presets: yes, on Cartridge's model. Headless: pending. See [Decision record](#decision-record). |
+| Decision | Presets: yes, on Cartridge's model. Headless: keep today's model (H0), and make the server path easier (H1) when an integrator asks. See [Decision record](#decision-record). |
 
 This page is an internal working document. It is excluded from the published developer docs (`srcExclude` in [`docs/.vitepress/config.ts`](../.vitepress/config.ts)).
 
@@ -108,7 +108,7 @@ Rough, in engineer-days, excluding audit and review time. Not measured against p
 
 ### Recommendation
 
-**This is a recommendation, not a decision.**
+**Adopted: the project owner decided on 2026-11-14 to keep today's model (H0) and to do H1 when an integrator asks. See the [Decision record](#decision-record).**
 
 - **Rule out H3.** It turns Kamui, or its apps, into a custodian of users' accounts and removes the one boundary the design is built on.
 - **Do not build H2 now.** It serves apps that want an account of their own, which any standard Starknet account already gives them; what Kamui would add is free gas, with a new abuse path and a second class to audit before the first one is final. Revisit if an approved app has a concrete need that H1 does not meet.
@@ -200,7 +200,7 @@ Main trade-off: until then, users approve raw addresses and entry point names fo
 
 This change makes the published docs state the current state only, in the same words on every page:
 
-- Headless: not supported today. Every session needs a person to approve it in the keychain.
+- Headless: not supported, and Kamui will not add it. Every session needs a person to approve it in the keychain.
 - The supported route for servers: one approval in a browser, through the localhost round trip.
 - Presets: not available today, and planned. Every request carries its full scope until they ship.
 
@@ -210,5 +210,5 @@ Before this change one page said headless was "not planned", which read as a dec
 
 | Question | Decision | Date | Follow-up issues |
 |---|---|---|---|
-| Headless sessions | _pending_ | | |
+| Headless sessions | **Keep today's model (H0).** Every account belongs to a person and every session is approved in the keychain; a bot or server gets its session through one browser approval. **H1** (an SDK helper for the round trip, a tested HTTPS-origin variant, a documented re-approval pattern; 2 to 4 days) is done when a server-side integrator asks. An app-owned account type (H2) and app-managed keys on users' accounts (H3) are not being built. | 2026-11-14 | None now. Open an issue for H1 when an integrator asks. |
 | Session presets | **Yes, as Cartridge does.** Reviewed preset files that list an app's origins and, per chain, its contracts and methods with names; an app names its preset in the connect request; preset policies take precedence over the request's unless the app overrides; a reviewed preset gets a trust indicator and a compact approval screen; the user still approves every session; methods can be marked as sponsored. This is P2 with P3. | 2026-11-14 | #45 registry and review process, #46 protocol and SDK, #47 keychain approval screen, #48 sponsorship by preset |

@@ -61,6 +61,6 @@ bun run main.ts
 
 ## No headless mode
 
-Headless sessions are **not supported today**. Every Kamui account belongs to a person who signed in with Google, and every session needs that person's approval in the keychain. There are no app-managed owner keys and no way to create a session from a server alone. Whether Kamui will add a headless mode has not been decided.
+Headless sessions are **not supported today**. Every Kamui account belongs to a person who signed in with Google, and every session needs that person's approval in the keychain. There are no app-managed owner keys and no way to create a session from a server alone. Kamui will not add a headless mode: a person approves every session.
 
 The localhost round trip on this page is the supported way for a server: one approval in a browser, then the process runs on its own until the session ends.
