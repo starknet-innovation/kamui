@@ -18,7 +18,7 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 
 - **The SDK is not published to npm.** Vendor `sdk/` from the repository, see [Quickstart](/guide/quickstart#_1-add-the-sdk).
 - **Wallet connectors are partial.** There is a [`starknet-react` connector](/examples/starknet-react) and a get-starknet-style wallet object (`KamuiWallet`), both limited to what a session can do: no message signing, no declare, one chain. Kamui does not register with the wallet standard that get-starknet v5 and later use for discovery. The connector is tested against `@starknet-react/core` 5.0.3 with mocked redirects, not yet against the hosted keychain.
-- **Redirects only.** Your page reloads on every connect and one-off approval. There is no popup or iframe mode.
+- **Redirects by default.** Your page reloads on every connect and one-off approval unless you opt in to [popup mode](/guide/popup), which has been tested in Chromium only and has [limits of its own](/guide/popup#limits). There is no iframe mode.
 - **One-off approvals are paid for by your app.** The keychain's `/execute` page signs the user's transaction and returns it unsent; your server sends it with your sponsorship credential. Not yet run against the hosted Sepolia backend. A request near the size limit (10 calls of 100 felts) is larger than the 600 felts the sponsor endpoint accepts.
 - **Message signing is not on hosted Sepolia yet.** `sessionSignTypedData` works against any deployed account. The keychain's `/sign` page (`beginSignMessage`) is in the code but only reaches the hosted keychain with its next release.
 - **No native SDKs** and no mobile support. See [Native](/native/overview).
