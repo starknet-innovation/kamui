@@ -2,6 +2,7 @@ export * from './address.js';
 export * from './constants.js';
 export * from './keychain.js';
 export * from './login.js';
+export * from './messages.js';
 export * from './outside.js';
 export * from './owners.js';
 export * from './pepper.js';

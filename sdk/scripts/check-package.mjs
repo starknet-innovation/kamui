@@ -93,8 +93,8 @@ try {
   }
   writeFileSync(join(app, 'smoke.mjs'), `
 import * as sdk from '@kamui/sdk';
-import { beginConnect, checkSessionEnded, finishConnect, keyPairFromPrivateKey, sessionCall, sponsor, KamuiReader } from '@kamui/sdk';
-for (const [name, value] of Object.entries({ beginConnect, checkSessionEnded, finishConnect, sessionCall, sponsor, KamuiReader })) {
+import { beginConnect, checkSessionEnded, finishConnect, keyPairFromPrivateKey, sessionCall, sessionSignTypedData, sponsor, KamuiReader } from '@kamui/sdk';
+for (const [name, value] of Object.entries({ beginConnect, checkSessionEnded, finishConnect, sessionCall, sessionSignTypedData, sponsor, KamuiReader })) {
   if (typeof value !== 'function') throw new Error(name + ' is not exported as a function');
 }
 const pair = keyPairFromPrivateKey('0x1');
@@ -112,10 +112,10 @@ console.log(Object.keys(sdk).length + ' exports, key derivation works');
   // declaration of ours that failed to resolve would still fail here: each name below comes
   // through index.d.ts from a different module, and a broken re-export loses the name.
   writeFileSync(join(app, 'types.ts'), `
-import { beginConnect, newKeyPair, type ConnectOptions, type KeyPair, type KeyValueStore, type SessionEnd } from '@kamui/sdk';
+import { beginConnect, newKeyPair, type ConnectOptions, type KeyPair, type KeyValueStore, type SessionEnd, type TypedDataField } from '@kamui/sdk';
 const pair: KeyPair = newKeyPair();
 const publicKey: string = pair.publicKey;
-export type { ConnectOptions, KeyValueStore, SessionEnd };
+export type { ConnectOptions, KeyValueStore, SessionEnd, TypedDataField };
 export { beginConnect, publicKey };
 `);
   typeCheck('types.ts', ['NodeNext', 'Bundler']);
