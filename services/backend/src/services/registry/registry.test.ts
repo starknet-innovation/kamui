@@ -228,6 +228,23 @@ describe('storage', () => {
     for (const suffix of ['', '-wal', '-shm', '-journal']) rmSync(path + suffix, { force: true });
     expect(() => new RegistryStore(':memory:', undefined, 'off')).toThrow('REGISTRY_JOURNAL_MODE');
   });
+
+  test('WAL is refused on a network volume; DELETE is fine there, and WAL is fine on a local disk', () => {
+    const path = `${import.meta.dir}/../../../data/test-net-${process.pid}.sqlite`;
+    const network = { isNetworkVolume: () => true };
+    try {
+      expect(() => new RegistryStore(path, undefined, 'WAL', network)).toThrow('network volume');
+      expect(() => new RegistryStore(path, undefined, 'wal', network)).toThrow('network volume');
+      const rollback = new RegistryStore(path, undefined, 'DELETE', network);
+      expect(rollback.journalMode).toBe('delete');
+      rollback.close();
+      const local = new RegistryStore(path, undefined, 'WAL', { isNetworkVolume: () => false });
+      expect(local.journalMode).toBe('wal');
+      local.close();
+    } finally {
+      for (const suffix of ['', '-wal', '-shm', '-journal']) rmSync(path + suffix, { force: true });
+    }
+  });
 });
 
 describe('entries', () => {

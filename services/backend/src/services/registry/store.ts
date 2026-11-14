@@ -4,6 +4,7 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { isNetworkVolume, type VolumeProbe } from '../../storage/volume';
 
 export type StoredSession = {
   publicKey: string;
@@ -22,6 +23,8 @@ export const DEFAULT_REGISTRY_DB = `${import.meta.dir}/../../../data/registry.sq
 export const MAX_SESSIONS_PER_ACCOUNT = 50;
 
 const JOURNAL_MODES = ['DELETE', 'TRUNCATE', 'WAL'];
+
+export type RegistryStoreOptions = { isNetworkVolume?: VolumeProbe };
 
 /** Stores may be synchronous locally or asynchronous over PostgreSQL. */
 export type Awaitable<T> = T | Promise<T>;
@@ -44,11 +47,23 @@ export class RegistryStore implements RegistryStorage {
    * The journal mode is set explicitly, to DELETE (a rollback journal) by default. WAL needs
    * shared memory between the processes that open the file, which a network volume (NFS, EFS)
    * does not give; on such a volume use DELETE and exactly one api process. WAL is only for a
-   * local disk (REGISTRY_JOURNAL_MODE=WAL).
+   * local disk (REGISTRY_JOURNAL_MODE=WAL), and asking for it on a network volume throws.
+   * `options.isNetworkVolume` replaces the statfs probe, so tests can fake the volume type.
    */
-  constructor(path: string = DEFAULT_REGISTRY_DB, readonly maxPerAccount = MAX_SESSIONS_PER_ACCOUNT, journalMode = 'DELETE') {
+  constructor(
+    path: string = DEFAULT_REGISTRY_DB,
+    readonly maxPerAccount = MAX_SESSIONS_PER_ACCOUNT,
+    journalMode = 'DELETE',
+    readonly options: RegistryStoreOptions = {},
+  ) {
     if (!JOURNAL_MODES.includes(journalMode.toUpperCase())) throw new Error(`REGISTRY_JOURNAL_MODE must be one of ${JOURNAL_MODES.join(', ')}`);
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+    if (path !== ':memory:') {
+      mkdirSync(dirname(path), { recursive: true });
+      const probe = this.options.isNetworkVolume ?? isNetworkVolume;
+      if (journalMode.toUpperCase() === 'WAL' && probe(dirname(path))) {
+        throw new Error(`REGISTRY_JOURNAL_MODE=WAL needs a local disk; ${dirname(path)} is on a network volume, so use DELETE`);
+      }
+    }
     this.db = new Database(path, { create: true, strict: true });
     this.db.exec(`PRAGMA journal_mode = ${journalMode.toUpperCase()}`);
     this.db.exec('PRAGMA synchronous = FULL');
