@@ -2,7 +2,9 @@
 // origin, a blocked popup falls back to the redirect, and a popup that goes away ends the wait.
 import { describe, expect, test } from 'bun:test';
 import {
+  KeychainAnswerError,
   KeychainPopupError,
+  KeychainRequestError,
   POPUP_CHANNEL,
   POPUP_LEAVING,
   POPUP_MARKER,
@@ -12,11 +14,13 @@ import {
   parseSignMessageRequest,
   finishConnect,
   fragmentId,
+  isReferrerMissing,
   loadConnection,
   parseConnectRequest,
   parseExecuteRequest,
   pendingRequestKind,
   popupRedirectUri,
+  referrerMissingUrl,
   relayPopupResult,
   toFragment,
   type ConnectOptions,
@@ -151,6 +155,34 @@ describe('popup mode: connecting', () => {
     expect(error.message).toBe('keychain: the user refused');
     expect(error).not.toBeInstanceOf(KeychainPopupError);
     expect(loadConnection(store)).toBeNull();
+  });
+
+  test('a popup opened with no referrer: the keychain\'s link back is relayed and rejects as referrer_missing', async () => {
+    const browser = fakeBrowser();
+    const store = memoryStore();
+    const connecting = connectWithPopup(options, store, { environment: browser.environment });
+    // The keychain reads the popup's request with no referrer and refuses it.
+    let refused: unknown;
+    try {
+      parseConnectRequest(new URL(browser.opened[0]!.url).hash, '');
+    } catch (error) {
+      refused = error;
+    }
+    expect(refused).toBeInstanceOf(KeychainRequestError);
+    // Its link back keeps the popup marker, so the app's page there relays instead of drawing.
+    const back = referrerMissingUrl(refused as KeychainRequestError);
+    expect(new URL(back).searchParams.has(POPUP_MARKER)).toBe(true);
+    expect(browser.relay(back)).toBe(true);
+
+    const error = await failure(connecting);
+    expect(error).toBeInstanceOf(KeychainAnswerError);
+    expect(error).not.toBeInstanceOf(KeychainPopupError);
+    expect(error.message).toBe('keychain: referrer_missing');
+    expect(isReferrerMissing(error)).toBe(true);
+    expect(loadConnection(store)).toBeNull();
+    expect(store.data.size).toBe(0);
+    expect(browser.popup.closed).toBe(true);
+    expect(browser.broadcastListeners.size).toBe(0);
   });
 
   test('an answer to another request is ignored, and the right one still arrives', async () => {
@@ -383,6 +415,26 @@ describe('popup mode: one signed message', () => {
     void signMessageWithPopup({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/play`, typedData }, store, { environment: blocked.environment });
     expect(blocked.navigated[0]!.startsWith(`${KEYCHAIN}/sign#kamui=`)).toBe(true);
     expect(pendingRequestKind(store)).toBe('signMessage');
+  });
+
+  test('with no referrer, the link back rejects the transaction and message popups as referrer_missing too', async () => {
+    const refusedBy = (read: () => unknown) => {
+      try {
+        read();
+      } catch (error) {
+        return error as KeychainRequestError;
+      }
+      throw new Error('the request was not refused');
+    };
+    const transaction = fakeBrowser();
+    const executing = executeWithPopup({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/play`, calls: [{ contractAddress: GAME, entrypoint: 'move', calldata: ['0x1'] }] }, memoryStore(), { environment: transaction.environment });
+    transaction.relay(referrerMissingUrl(refusedBy(() => parseExecuteRequest(new URL(transaction.opened[0]!.url).hash, ''))));
+    expect(isReferrerMissing(await failure(executing))).toBe(true);
+
+    const message = fakeBrowser();
+    const signing = signMessageWithPopup({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/play`, typedData }, memoryStore(), { environment: message.environment });
+    message.relay(referrerMissingUrl(refusedBy(() => parseSignMessageRequest(new URL(message.opened[0]!.url).hash, ''))));
+    expect(isReferrerMissing(await failure(signing))).toBe(true);
   });
 });
 

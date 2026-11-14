@@ -2,7 +2,7 @@
 // load, and what it refuses to send. The page, the keychain and the node are faked in memory.
 import { describe, expect, test } from 'bun:test';
 import { hash, type TypedData } from 'starknet';
-import { KamuiWallet, KamuiWalletError, callsOutsideSession, injectKamuiWallet, loadConnection, sessionSignTypedData, type KamuiWalletOptions, type SessionEnd } from '../src';
+import { KamuiWallet, KamuiWalletError, REFERRER_MISSING, callsOutsideSession, injectKamuiWallet, loadConnection, sessionSignTypedData, type KamuiWalletOptions, type SessionEnd } from '../src';
 import { ACCOUNT, FUTURE, GAME, KEYCHAIN, SEPOLIA, TOKEN, TX, fakeNode, keychainAnswers, sessionRequest, signInMessage, world } from './wallet-helpers';
 
 const move = { contractAddress: GAME, entrypoint: 'move', calldata: [] };
@@ -85,6 +85,22 @@ describe('connecting', () => {
     expect(wallet.error).toBe('keychain: denied by the user');
     expect(w.tab.fragment).toBe('');
     expect(w.tab.navigatedTo).toHaveLength(1);
+  });
+
+  test('coming back after a missing referrer is reported like any refusal', async () => {
+    const w = world();
+    void new KamuiWallet(w.options).connect();
+    await Bun.sleep(0);
+    // The keychain could not tell who sent the request; the user followed its link back.
+    w.tab.fragment = keychainAnswers(w.tab.navigatedTo[0]!, { error: REFERRER_MISSING });
+    const wallet = new KamuiWallet(w.options);
+    expect(await wallet.resume()).toBeNull();
+    expect(wallet.error).toBe('keychain: referrer_missing');
+    expect(w.tab.fragment).toBe('');
+    // The pending request is spent: a second page load reports nothing and can connect again.
+    const again = new KamuiWallet(w.options);
+    expect(await again.resume()).toBeNull();
+    expect(again.error).toBeNull();
   });
 
   test('an answer nobody asked for is reported and does not connect', async () => {

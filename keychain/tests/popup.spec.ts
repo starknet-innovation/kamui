@@ -69,7 +69,7 @@ async function start(page: Page, call: 'connect' | 'execute', popupOptions: Reco
             : kamui.executeWithPopup({ keychainUrl, redirectUri, appName: 'Example Game', calls: [{ contractAddress: game, entrypoint: 'move', calldata: ['0x1'] }] }, sessionStorage, popupOptions);
         request.then(
           (value: unknown) => ((window as any).outcome = { ok: true, value }),
-          (error: Error & { code?: string }) => ((window as any).outcome = { ok: false, message: error.message, code: error.code }),
+          (error: Error & { code?: string }) => ((window as any).outcome = { ok: false, message: error.message, code: error.code, referrerMissing: kamui.isReferrerMissing(error) }),
         );
       },
       { call, keychainUrl: KEYCHAIN, redirectUri: `${APP}/`, game: GAME, popupOptions },
@@ -146,6 +146,31 @@ test.describe('popup mode', () => {
     expect(result.message).toBe('keychain: denied by the user');
     expect(result.code).toBeUndefined();
     expect(await page.evaluate(() => sessionStorage.getItem('kamui.connection'))).toBeNull();
+  });
+
+  test('a popup opened with no referrer explains why, and its link back rejects as referrer_missing', async ({ page, context }) => {
+    await setup(context, page);
+    // The app's page asks the browser to send no referrer, as `Referrer-Policy: no-referrer` does.
+    await page.evaluate(() => {
+      const meta = document.createElement('meta');
+      meta.name = 'referrer';
+      meta.content = 'no-referrer';
+      document.head.append(meta);
+    });
+    const popup = await start(page, 'connect');
+    await expect(popup.getByText('cannot tell which site sent this request')).toBeVisible();
+    await expect(popup.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    await expect(popup.getByText('Example Game')).toHaveCount(0);
+    // Nothing is answered until the user chooses to go back.
+    expect(await page.evaluate(() => 'outcome' in window)).toBe(false);
+
+    // The link goes to the app's page in the popup, which relays the answer and closes.
+    await popup.getByRole('link', { name: `Go back to ${APP}` }).click().catch(() => {});
+    const result = await outcome(page);
+    expect(result).toMatchObject({ ok: false, message: 'keychain: referrer_missing', referrerMissing: true });
+    expect(result.code).toBeUndefined();
+    expect(await page.evaluate(() => sessionStorage.getItem('kamui.connection'))).toBeNull();
+    expect(await page.evaluate(() => (window as any).neverReloaded)).toBe(true);
   });
 
   test('closing the popup rejects with `closed`', async ({ page, context }) => {

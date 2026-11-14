@@ -22,3 +22,4 @@ label { display: block; font-weight: 600; font-size: 14px; margin: 12px 0 4px; }
 input[type="file"] { font: inherit; max-width: 100%; }
 .confirm { background: #f4f4f7; border: 1px solid #b9b9c4; padding: 10px 12px; border-radius: 6px; margin: 12px 0; }
 .confirm p { margin: 0 0 4px; }
+a.back { display: inline-block; margin: 4px 0 8px; font-weight: 600; word-break: break-all; }

@@ -13,6 +13,7 @@ import {
   exportPepper,
   finishConnect,
   finishExecute,
+  isReferrerMissing,
   parsePepperFile,
   pepperFileMatchesLogin,
   serializePepperFile,
@@ -376,13 +377,20 @@ test.describe('connection requests', () => {
     // Refused or not, the request does not linger in the address bar.
     expect(page.url()).toBe(`${KEYCHAIN}/connect`);
     expect(world.sponsorRequests).toHaveLength(0);
+    // The page says which site was named and which one sent the request, and how to fix it.
+    await expect(page.locator('#view .origin')).toHaveText([APP, OTHER_SITE]);
+    await expect(page.getByText('must be on the same origin')).toBeVisible();
+    // Nothing the request asked for is shown, and there is no way on to the site it names.
+    await expect(page.getByText('Example Game')).toHaveCount(0);
+    await expect(page.locator('#view a')).toHaveCount(0);
+    await expect(page.getByText('What usually causes this')).toHaveCount(0);
   });
 
-  test('a request opened with no referring site is refused', async ({ page, context }) => {
+  test('a request opened with no referring site is refused, and says why', async ({ page, context }) => {
     await setup(context);
     await signIn(page);
     const url = beginConnect(
-      { keychainUrl: KEYCHAIN, redirectUri: `${APP}/`, validUntil: Math.floor(Date.now() / 1000) + 3600, maxCalls: 5, calls: [{ to: GAME, entrypoint: 'move' }] },
+      { keychainUrl: KEYCHAIN, redirectUri: `${APP}/`, appName: 'Example Game', validUntil: Math.floor(Date.now() / 1000) + 3600, maxCalls: 5, calls: [{ to: GAME, entrypoint: 'move' }] },
       memoryStore(),
     );
     // Typed or pasted into the address bar: there is no referrer.
@@ -390,6 +398,97 @@ test.describe('connection requests', () => {
     await expect(page.getByText('cannot tell which site sent this request')).toBeVisible();
     expect(page.url()).toBe(`${KEYCHAIN}/connect`);
     await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    // The likely causes, each with what to do about it.
+    await expect(page.getByText('privacy or ad-blocking extension')).toBeVisible();
+    await expect(page.getByText('browser privacy setting')).toBeVisible();
+    await expect(page.getByText('address bar, a bookmark, an email')).toBeVisible();
+    await expect(page.getByText('its referrer policy')).toBeVisible();
+    await expect(page.getByText('Referrer-Policy: strict-origin-when-cross-origin')).toBeVisible();
+    // The request is unverified: its app name is not shown, only where it wants its answer.
+    await expect(page.getByText('Example Game')).toHaveCount(0);
+    await expect(page.locator('#view .origin')).toHaveText(APP);
+  });
+
+  test('with no referrer the user is not sent anywhere, and can choose to go back with only the error', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const store = memoryStore();
+    const url = beginConnect(
+      { keychainUrl: KEYCHAIN, redirectUri: `${APP}/play?room=7`, validUntil: Math.floor(Date.now() / 1000) + 3600, maxCalls: 5, calls: [{ to: GAME, entrypoint: 'move' }] },
+      store,
+    );
+    // The app's page tells the browser to send no referrer, as `Referrer-Policy: no-referrer` does.
+    await page.goto(`${APP}/`);
+    await page.evaluate((target) => {
+      const link = document.createElement('a');
+      link.href = target;
+      link.referrerPolicy = 'no-referrer';
+      link.textContent = 'connect';
+      document.body.append(link);
+      link.click();
+    }, url);
+    await page.waitForURL(`${KEYCHAIN}/connect`);
+    await expect(page.getByText('cannot tell which site sent this request')).toBeVisible();
+
+    // Nothing happens by itself: the keychain stays where it is.
+    await page.waitForTimeout(500);
+    expect(page.url()).toBe(`${KEYCHAIN}/connect`);
+
+    // The one way back is a link that names where it goes.
+    const back = page.locator('#view a');
+    await expect(back).toHaveCount(1);
+    await expect(back).toHaveText(`Go back to ${APP}`);
+    const href = new URL((await back.getAttribute('href'))!);
+    expect(href.origin + href.pathname + href.search).toBe(`${APP}/play?room=7`);
+    const payload = JSON.parse(Buffer.from(new URLSearchParams(href.hash.slice(1)).get('kamui')!, 'base64url').toString());
+    expect(Object.keys(payload).sort()).toEqual(['error', 'id', 'ok', 'v']);
+    expect(payload).toMatchObject({ v: 1, ok: false, error: 'referrer_missing' });
+    // Nothing about the signed-in account travels with it.
+    expect(href.toString()).not.toContain(ACCOUNT.slice(2));
+    expect(JSON.stringify(payload)).not.toContain(ACCOUNT.slice(2));
+
+    await back.click();
+    await page.waitForURL(`${APP}/play**`);
+    let thrown: unknown;
+    try {
+      finishConnect(new URL(page.url()).hash, store);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(isReferrerMissing(thrown)).toBe(true);
+    expect(world.sponsorRequests).toHaveLength(0);
+  });
+
+  test('a transaction request with no referrer gets the same explanation and way back', async ({ page, context }) => {
+    await setup(context);
+    await signIn(page);
+    const store = memoryStore();
+    const url = beginExecute(
+      { keychainUrl: KEYCHAIN, redirectUri: `${APP}/`, calls: [{ contractAddress: GAME, entrypoint: 'move', calldata: ['0x1'] }] },
+      store,
+    );
+    await page.goto(url);
+    await expect(page.getByText('cannot tell which site sent this request')).toBeVisible();
+    expect(page.url()).toBe(`${KEYCHAIN}/execute`);
+    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    await page.getByRole('link', { name: `Go back to ${APP}` }).click();
+    await page.waitForURL(`${APP}/**`);
+    let thrown: unknown;
+    try {
+      finishExecute(new URL(page.url()).hash, store);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(isReferrerMissing(thrown)).toBe(true);
+  });
+
+  test('a request with no referrer and an address the keychain would never answer gets no way back', async ({ page, context }) => {
+    await setup(context);
+    await signIn(page);
+    const request = { v: 1, id: '0x1', redirectUri: 'javascript:alert(1)', session: {} };
+    await page.goto(`${KEYCHAIN}/connect#kamui=${Buffer.from(JSON.stringify(request)).toString('base64url')}`);
+    await expect(page.getByText('the redirect address must be https')).toBeVisible();
+    await expect(page.locator('#view a')).toHaveCount(0);
   });
 
   test('an app name is shown as text, never run as markup', async ({ page, context }) => {
@@ -1438,6 +1537,43 @@ test.describe('message requests', () => {
     await expect(page.getByText('this request was not sent by the site it names')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Sign', exact: true })).toHaveCount(0);
     expect(page.url()).toBe(`${KEYCHAIN}/sign`);
+    expect(world.signatureChecks).toHaveLength(0);
+    // The refusal names both sites, shows nothing of the message, and offers no way on.
+    await expect(page.locator('#view .origin')).toHaveText([APP, OTHER_SITE]);
+    await expect(page.getByText('Sign in to Example Game')).toHaveCount(0);
+    await expect(page.locator('#view a')).toHaveCount(0);
+  });
+
+  test('a message request with no referrer says why, shows nothing of the message, and offers a way back with only the error', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const store = memoryStore();
+    const url = beginSignMessage({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/`, appName: 'Example Game', typedData: signInMessage() }, store);
+    // Typed or pasted into the address bar: there is no referrer.
+    await page.goto(url);
+    await expect(page.getByText('cannot tell which site sent this request')).toBeVisible();
+    expect(page.url()).toBe(`${KEYCHAIN}/sign`);
+    await expect(page.getByText('privacy or ad-blocking extension')).toBeVisible();
+    await expect(page.getByText('its referrer policy')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign', exact: true })).toHaveCount(0);
+    await expect(page.getByText('Sign in to Example Game')).toHaveCount(0);
+    await expect(page.getByText('Example Game')).toHaveCount(0);
+
+    const back = page.getByRole('link', { name: `Go back to ${APP}` });
+    const href = new URL((await back.getAttribute('href'))!);
+    const payload = JSON.parse(Buffer.from(new URLSearchParams(href.hash.slice(1)).get('kamui')!, 'base64url').toString());
+    expect(Object.keys(payload).sort()).toEqual(['error', 'id', 'ok', 'v']);
+    expect(payload).toMatchObject({ v: 1, ok: false, error: 'referrer_missing' });
+
+    await back.click();
+    await page.waitForURL(`${APP}/**`);
+    let thrown: unknown;
+    try {
+      finishSignMessage(new URL(page.url()).hash, store);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(isReferrerMissing(thrown)).toBe(true);
     expect(world.signatureChecks).toHaveLength(0);
   });
 

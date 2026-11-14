@@ -10,7 +10,7 @@ Creates a session key pair, stores the pending request in `store` (`kamui.pendin
 
 ### `finishConnect(fragment, store): Connection | null`
 
-Reads the keychain's answer from `location.hash`. Returns `null` when the fragment holds no answer. Throws when the user denied, the keychain reported an error, or the answer does not match the pending request. On success stores the connection (`kamui.connection`).
+Reads the keychain's answer from `location.hash`. Returns `null` when the fragment holds no answer. Throws when the user denied, the keychain reported an error, or the answer does not match the pending request. A refusal from the keychain is a `KeychainAnswerError` with the keychain's `reason`. On success stores the connection (`kamui.connection`).
 
 ```ts
 type Connection = {
@@ -32,6 +32,10 @@ type Connection = {
 ### `beginExtend(connection, options, store): string`
 
 Like `beginConnect`, but for the session key `connection` already holds: the user is asked to renew that session instead of approving a new key. Same options, same answer, read by `finishConnect`. The stored connection is replaced only when the user approves. See [Renewing a session](/guide/sessions#renewing-a-session).
+
+### `isReferrerMissing(error): boolean`
+
+Whether an error thrown by `finishConnect`, `finishExecute` or `finishSignMessage` is the keychain's `referrer_missing`: the request reached it with no referrer and the user chose to come back. See [Troubleshooting: the referrer](/reference/errors#troubleshooting-the-referrer).
 
 ### `loadConnection(store): Connection | null`
 
@@ -125,7 +129,7 @@ Stores the pending request (`kamui.pending.execute`) and returns the keychain UR
 
 ### `finishExecute(fragment, store): { transactionHash } | null`
 
-Reads the answer. Throws if the user denied or the keychain reported an error.
+Reads the answer. Throws if the user denied or the keychain reported an error, with the same `KeychainAnswerError` as `finishConnect`.
 
 ## Signing messages
 

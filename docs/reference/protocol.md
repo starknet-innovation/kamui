@@ -52,6 +52,8 @@ The keychain redirects to `redirectUri#kamui=<answer>`:
 
 Check that `id` matches the request you sent before trusting the answer.
 
+If the request arrives with no referrer, the keychain does not redirect. It explains the refusal to the user and offers a link they may click to `redirectUri#kamui=<answer>` with `"error": "referrer_missing"`. That answer carries the `id` the request named and nothing else. See [Troubleshooting: the referrer](/reference/errors#troubleshooting-the-referrer).
+
 ### Renewing
 
 A connect request whose `session.publicKey` already has a session on the account is a renewal. There is no separate message: the keychain reads the account, shows the request as a renewal, and on approval the account replaces the session under the same key. The nonce base changes, the call count and the spending periods start again, and anything signed for the previous session is refused. The keychain refuses a renewal whose origin differs from the one it recorded for that key.

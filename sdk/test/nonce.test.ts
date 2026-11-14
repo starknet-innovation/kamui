@@ -4,12 +4,15 @@
 import { describe, expect, test } from 'bun:test';
 import type { ProviderInterface } from 'starknet';
 import {
+  KeychainRequestError,
   beginConnect,
   beginExtend,
   finishConnect,
+  isReferrerMissing,
   loadConnection,
   nextSessionNonce,
   parseConnectRequest,
+  referrerMissingUrl,
   resultUrl,
   sessionCall,
   type ConnectOptions,
@@ -286,6 +289,34 @@ describe('renewing a session', () => {
     const request = parseConnectRequest(new URL(beginExtend(connection, options({ maxCalls: 500 }), store)).hash, `${APP}/`)!;
     const back = resultUrl(request, { v: 1, id: request.id, ok: false, error: 'denied by the user' });
     expect(() => finishConnect(new URL(back).hash, store)).toThrow(/denied by the user/);
+    expect(loadConnection(store)).toEqual(connection);
+  });
+
+  test('a renewal that reaches the keychain with no referrer is refused like any request, and leaves the connection as it was', () => {
+    const store = memoryStore();
+    const connection = connect(store);
+    const fragment = new URL(beginExtend(connection, options({ maxCalls: 500 }), store)).hash;
+    const refusal = (referrer: string): KeychainRequestError => {
+      try {
+        parseConnectRequest(fragment, referrer);
+      } catch (error) {
+        expect(error).toBeInstanceOf(KeychainRequestError);
+        return error as KeychainRequestError;
+      }
+      throw new Error('the renewal was not refused');
+    };
+    expect(refusal('https://evil.example/').code).toBe('referrer_mismatch');
+    const missing = refusal('');
+    expect(missing.code).toBe('referrer_missing');
+
+    // The user follows the keychain's link back: the app can tell why, and the session it has stays.
+    let thrown: unknown;
+    try {
+      finishConnect(new URL(referrerMissingUrl(missing)).hash, store);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(isReferrerMissing(thrown)).toBe(true);
     expect(loadConnection(store)).toEqual(connection);
   });
 

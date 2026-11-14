@@ -84,7 +84,7 @@ const connection = finishConnect(location.hash, localStorage) ?? loadConnection(
 history.replaceState(null, '', location.pathname); // take the answer out of the address bar
 ```
 
-`finishConnect` throws if the user denied the request or the answer does not match the pending request.
+`finishConnect` throws if the user denied the request or the answer does not match the pending request. If the user's browser hid the referrer, they may come back with `referrer_missing`; `isReferrerMissing(error)` recognises it so you can say what to change (see [Troubleshooting: the referrer](/reference/errors#troubleshooting-the-referrer)).
 
 ## 5. Send a sponsored call
 
@@ -100,6 +100,6 @@ That is the whole loop. Next: [what a session can and cannot do](/guide/sessions
 ## Requirements for your page
 
 - **HTTPS**, or `http://localhost` in development. Any other `http:` redirect is refused.
-- **Send a referrer.** The keychain refuses a request unless `document.referrer` has the same origin as `redirectUri`. Do not serve `Referrer-Policy: no-referrer` (or `same-origin`) on the page that calls `location.assign`, do not add `<meta name="referrer" content="no-referrer">`, and do not open the keychain with `rel="noreferrer"`. The browser default (`strict-origin-when-cross-origin`) is fine.
+- **Send a referrer.** The keychain refuses a request unless `document.referrer` has the same origin as `redirectUri`. Do not serve `Referrer-Policy: no-referrer` (or `same-origin`) on the page that calls `location.assign`, do not add `<meta name="referrer" content="no-referrer">`, and do not open the keychain with `rel="noreferrer"`. The browser default (`strict-origin-when-cross-origin`) is fine. [Troubleshooting: the referrer](/reference/errors#troubleshooting-the-referrer) lists every cause and its fix.
 - **Navigate from your page.** Open the keychain with `location.assign(url)` from a page on the same origin as `redirectUri`. A server-side `302` to the keychain works only if the original navigation already carries your origin as referrer.
 - **No fragment in `redirectUri`.** The answer goes there.

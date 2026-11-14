@@ -44,6 +44,8 @@ While the popup is open, the keychain (and an issuer that does not isolate its p
 | `aborted` | You aborted the `signal` you passed |
 | `blocked` | The browser blocked the popup and you passed `fallback: 'none'` |
 
+If your page sends no referrer, the popup shows the keychain's explanation. When the user follows its link back, the promise rejects with the keychain's `referrer_missing`, which `isReferrerMissing(error)` recognises; when they close the popup, with `closed`. See [Troubleshooting: the referrer](/reference/errors#troubleshooting-the-referrer).
+
 ## Limits
 
 - **A closed popup is only noticed before the sign-in.** Once the popup has gone to the issuer, your page can no longer tell whether it is open. If the user closes it after that, the promise settles on the timeout. Give the user a cancel button wired to an `AbortSignal`.

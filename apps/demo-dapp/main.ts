@@ -6,6 +6,7 @@ import {
   beginExecute,
   finishConnect,
   finishExecute,
+  isReferrerMissing,
   forgetConnection,
   isConnectionAlive,
   loadConnection,
@@ -155,6 +156,7 @@ try {
   else button('Connect with Kamui', connect);
 } catch (error) {
   history.replaceState(null, '', '/');
-  log(`not connected: ${(error as Error).message}`);
+  if (isReferrerMissing(error)) log('not connected: your browser or an extension hides which site you come from, so Kamui refused the request. Allow referrers for this site and try again.');
+  else log(`not connected: ${(error as Error).message}`);
   button('Connect with Kamui', connect);
 }
