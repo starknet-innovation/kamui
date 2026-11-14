@@ -47,6 +47,8 @@ export type World = {
   recoverRequests: any[];
   sponsorRequests: { endpoint: string; account: string; calls: { to: string; selector: bigint; data: string[] }[] }[];
   pepperRequests: any[];
+  /** Every signature the account was asked about (`is_valid_signature`). */
+  signatureChecks: { hash: string; signature: string[] }[];
   issuerVisits: number;
   /** The query of each visit to Apple's sign-in page. */
   appleVisits: Record<string, string>[];
@@ -67,7 +69,7 @@ export type World = {
 };
 
 export function newWorld(): World {
-  return { deployed: false, owners: [], anchor: 0n, epoch: 0, sessions: new Map(), tokens: new Map(), recoverRequests: [], sponsorRequests: [], pepperRequests: [], issuerVisits: 0, appleVisits: [], registry: new Map(), registryRequests: [] };
+  return { deployed: false, owners: [], anchor: 0n, epoch: 0, sessions: new Map(), tokens: new Map(), recoverRequests: [], sponsorRequests: [], pepperRequests: [], signatureChecks: [], issuerVisits: 0, appleVisits: [], registry: new Map(), registryRequests: [] };
 }
 
 function ownersChanged(world: World) {
@@ -91,6 +93,17 @@ function token(nonce: string, claims: { iss: string; aud: string; sub: string } 
 const isAccount = (contract: string) => same(contract, ACCOUNT) || same(contract, APPLE_ACCOUNT);
 const u256 = (value: bigint) => [hex(value & ((1n << 128n) - 1n)), hex(value >> 128n)];
 
+/** Whether `[r, s]` is the signature of `messageHash` by the key whose public x coordinate is `publicKey`. */
+export function signedBy(messageHash: string, r: string, s: string, publicKey: string): boolean {
+  for (const bit of [0, 1]) {
+    try {
+      const point = new ec.starkCurve.Signature(BigInt(r), BigInt(s)).addRecoveryBit(bit).recoverPublicKey(BigInt(messageHash).toString(16).padStart(64, '0'));
+      if (BigInt(`0x${point.toHex(true).slice(2)}`) === BigInt(publicKey)) return true;
+    } catch { /* no point for this recovery bit */ }
+  }
+  return false;
+}
+
 function contractCall(world: World, contract: string, entry: bigint, calldata: string[]): string[] {
   if (!isAccount(contract)) {
     const token = world.tokens.get(BigInt(contract));
@@ -101,6 +114,13 @@ function contractCall(world: World, contract: string, entry: bigint, calldata: s
   switch (entry) {
     case selector('is_owner'):
       return [world.owners.some((o) => same(o, calldata[0]!)) ? '0x1' : '0x0'];
+    case selector('is_valid_signature'): {
+      // Owner signatures only, as the real account checks them: `[r, s]` by any owner key.
+      const [messageHash, length, ...signature] = calldata as [string, string, ...string[]];
+      world.signatureChecks.push({ hash: messageHash, signature });
+      const valid = BigInt(length) === 2n && signature.length === 2 && world.owners.some((owner) => signedBy(messageHash, signature[0]!, signature[1]!, owner));
+      return [valid ? '0x56414c4944' : '0x0']; // 'VALID'
+    }
     case selector('get_owners'):
       return [hex(world.owners.length), ...world.owners];
     case selector('get_owners_anchor'):
