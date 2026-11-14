@@ -23,6 +23,8 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 | `outside` | Sponsored calls: `ownerOutsideExecution`, `sessionOutsideExecution`, `nextSessionNonce`. |
 | `watch` | `watchSession`: tells an app once when its session ends (expiry timer, and the account's `SessionKeyRevoked` / `AllSessionsRevoked` / `SessionKeySet` events, polled or pushed over a WebSocket), with the reason. `checkSessionEnded` and `isSessionRefusal` for a failed call; `sessionEventTracker` and `SESSION_END_EVENT_KEYS` for your own event source. |
 | `sessionAccount` | `createSessionAccount`: a starknet.js `Account` that signs as a session, for self-paid transactions. |
+| `wallet` | `KamuiWallet`: the app side of `keychain` behind the get-starknet wallet-object interface (`request`, `on`, `off`). Resumes after the redirect, routes `execute` through `sessionCall` and refuses calls outside the session with a `KamuiWalletError`. |
+| `starknet-react` | `KamuiConnector` and `useKamuiReconnect`, for `@starknet-react/core` 5. Not part of the main entry point: import `@kamui/sdk/starknet-react`. React and starknet-react are optional peers. |
 
 ## Client-side login proving
 
