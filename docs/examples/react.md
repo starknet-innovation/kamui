@@ -85,6 +85,6 @@ With Vite only, run any small server for it, or use Vite's `server.proxy` during
 - Don't set a `no-referrer` policy on your app. The keychain refuses requests it cannot attribute to your origin. See [Requirements for your page](/guide/quickstart#requirements-for-your-page).
 - The first sign-in on a new device makes a zero-knowledge proof in the browser. It needs a recent **desktop Chromium** browser and takes tens of seconds. See [limitations](/guide/limitations).
 
-## starknet-react
+## Starknet Start
 
-If your app already uses starknet-react, skip the provider above and use the connector: `useAccount`, `useConnect` and `useSendTransaction` then see the Kamui session. See [starknet-react](/examples/starknet-react).
+If your app uses [Starknet Start](https://github.com/starknet-innovation/starknet-start) (`@starknetfoundation/starknet-start-react`), skip the provider above and pass Kamui as a wallet: `useAccount`, `useConnect`, `useSendTransaction` and `useSignTypedData` then see the Kamui session. See [Starknet Start](/examples/starknet-start).

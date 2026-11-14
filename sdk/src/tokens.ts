@@ -1,28 +1,21 @@
 // What a token is called and how its amounts read, for approval screens.
 //
-// A token's name comes from the token contract itself, so any contract can claim any name. That
-// is why there are three outcomes and the screen must treat them differently:
+// A token's symbol and decimals are read from the token contract. This SDK keeps no list of
+// tokens and vouches for none: the name shown is the one the contract gives itself, so the
+// address is what identifies a token. STRK is the one exception. It is built in, because fees
+// are paid in it and its amounts must read correctly without a node.
 //
-//   known        the address is one this SDK lists; its symbol and decimals are built in
-//   unverified   the contract answered `symbol()` and `decimals()`, but anyone could deploy a
-//                contract that answers the same; show what it claims, and say it is a claim
-//   unknown      the contract did not answer like a token; only raw amounts can be shown
+//   named     the contract answered `symbol()` and `decimals()` (or it is STRK)
+//   unknown   the contract did not answer like a token; only raw amounts can be shown
 import type { ProviderInterface } from 'starknet';
 import { sameFelt } from './utils.js';
 
 export type TokenInfo =
-  | { status: 'known'; address: string; symbol: string; decimals: number }
-  | { status: 'unverified'; address: string; symbol: string; decimals: number }
+  | { status: 'named'; address: string; symbol: string; decimals: number }
   | { status: 'unknown'; address: string };
 
-/**
- * Tokens recognised by address. STRK and ETH have the same address on Starknet mainnet and
- * Sepolia. Anything else is at best "unverified".
- */
-export const KNOWN_TOKENS: readonly { address: string; symbol: string; decimals: number }[] = [
-  { address: '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d', symbol: 'STRK', decimals: 18 },
-  { address: '0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7', symbol: 'ETH', decimals: 18 },
-];
+/** STRK, at the same address on Starknet mainnet and Sepolia. The only token built in. */
+export const STRK_ADDRESS = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
 
 /** Largest values an "unlimited" allowance is usually written as. */
 const MAX_U256 = (1n << 256n) - 1n;
@@ -82,10 +75,9 @@ function decodeSymbol(result: string[]): string | null {
   }
 }
 
-/** Looks a token up: by address first, then by asking the contract. Never throws. */
+/** Looks a token up by asking its contract for `symbol()` and `decimals()`. STRK is answered without asking. Never throws. */
 export async function readTokenInfo(provider: ProviderInterface, address: string): Promise<TokenInfo> {
-  const known = KNOWN_TOKENS.find((token) => sameFelt(token.address, address));
-  if (known) return { status: 'known', address, symbol: known.symbol, decimals: known.decimals };
+  if (sameFelt(STRK_ADDRESS, address)) return { status: 'named', address, symbol: 'STRK', decimals: 18 };
   try {
     const [symbolResult, decimalsResult] = await Promise.all([
       provider.callContract({ contractAddress: address, entrypoint: 'symbol', calldata: [] }),
@@ -94,15 +86,15 @@ export async function readTokenInfo(provider: ProviderInterface, address: string
     const symbol = decodeSymbol(symbolResult);
     const decimals = decimalsResult.length === 1 ? Number(BigInt(decimalsResult[0]!)) : NaN;
     if (!symbol || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) return { status: 'unknown', address };
-    return { status: 'unverified', address, symbol, decimals };
+    return { status: 'named', address, symbol, decimals };
   } catch {
     return { status: 'unknown', address };
   }
 }
 
 /**
- * An amount as an approval screen should say it. For a known token "1.5 STRK"; for an
- * unverified one the same with the claimed symbol; for an unknown one the raw number of units.
+ * An amount as an approval screen should say it: "1.5 STRK" for a token that gave a symbol and
+ * decimals, the raw number of units for one that did not.
  */
 export function describeAmount(amount: bigint, token: TokenInfo): string {
   if (isUnlimitedAmount(amount)) return token.status === 'unknown' ? 'an unlimited amount' : `an unlimited amount of ${token.symbol}`;

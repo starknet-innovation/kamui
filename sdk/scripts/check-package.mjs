@@ -6,10 +6,10 @@
 // Checks, in order:
 //   - the tarball's file list, and that every relative import in dist/ names its ".js" file;
 //   - `import '@kamui/sdk'` under plain Node (and Bun, if on PATH) with only `starknet` installed,
-//     so the main entry point cannot come to need React or starknet-react;
+//     so the main entry point cannot come to need React, Starknet Start or get-starknet;
 //   - its type declarations under NodeNext and Bundler resolution;
-//   - `import '@kamui/sdk/starknet-react'` under Node and Bun once the optional peers are
-//     installed, and its declarations under Bundler resolution.
+//   - `import '@kamui/sdk/starknet-start'` under Node and Bun once the optional peers are
+//     installed, and its declarations under both resolutions.
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,8 +48,8 @@ try {
   run('npm', ['install', '--no-audit', '--no-fund', '--silent',
     join(work, packed.filename), `starknet@${starknet}`, `typescript@${typescript}`], app);
 
-  // The build does not insist on the ".js" extension plain Node needs (see tsconfig.build.json),
-  // so look for a relative import without one in what was installed.
+  // The build rejects a relative import without the ".js" extension plain Node needs. Look for
+  // one in what was installed anyway: it is cheap, and it still holds if the build settings change.
   const dist = join(app, 'node_modules', manifest.name, 'dist');
   const bare = [];
   for (const file of readdirSync(dist, { recursive: true }).filter((f) => /\.(js|d\.ts)$/.test(f))) {
@@ -82,7 +82,7 @@ try {
   };
 
   // Runtime, with the optional peers absent: every import inside dist/ has to resolve without a
-  // bundler, and the main entry point must not reach React or starknet-react.
+  // bundler, and the main entry point must not reach React, Starknet Start or get-starknet.
   for (const peer of Object.keys(manifest.peerDependenciesMeta ?? {})) {
     try {
       readFileSync(join(app, 'node_modules', peer, 'package.json'));
@@ -120,36 +120,32 @@ export { beginConnect, publicKey };
 `);
   typeCheck('types.ts', ['NodeNext', 'Bundler']);
 
-  // The starknet-react entry point, with its optional peers at the versions the SDK tests with.
+  // The Starknet Start entry point, with its optional peers at the versions the SDK tests with.
+  // npm installs Starknet Start's own peers (the other get-starknet packages) with it.
   const peers = Object.keys(manifest.peerDependenciesMeta ?? {}).map((peer) => `${peer}@${manifest.devDependencies[peer]}`);
-  // --legacy-peer-deps: @starknet-react/core 5.0.3 declares starknet ^8 as its peer, and npm
-  // refuses to install it next to starknet 10 otherwise. Apps installing with npm hit the same.
-  run('npm', ['install', '--no-audit', '--no-fund', '--silent', '--legacy-peer-deps', ...peers], app);
-  writeFileSync(join(app, 'smoke-react.mjs'), `
-import { KamuiConnector, KamuiWallet, useKamuiReconnect } from '@kamui/sdk/starknet-react';
+  run('npm', ['install', '--no-audit', '--no-fund', '--silent', ...peers], app);
+  writeFileSync(join(app, 'smoke-start.mjs'), `
+import { KamuiStandardWallet, KamuiWallet, useKamuiReconnect } from '@kamui/sdk/starknet-start';
 import { KamuiWallet as fromRoot } from '@kamui/sdk';
-import { Connector } from '@starknet-react/core';
 if (KamuiWallet !== fromRoot) throw new Error('the two entry points load separate copies of the wallet');
-if (!(KamuiConnector.prototype instanceof Connector)) throw new Error('KamuiConnector does not extend the installed Connector');
-if (typeof useKamuiReconnect !== 'function') throw new Error('useKamuiReconnect is not exported as a function');
-console.log('@kamui/sdk/starknet-react loads, KamuiConnector extends Connector');
+for (const [name, value] of Object.entries({ KamuiStandardWallet, useKamuiReconnect })) {
+  if (typeof value !== 'function') throw new Error(name + ' is not exported as a function');
+}
+console.log('@kamui/sdk/starknet-start loads and shares KamuiWallet with the main entry point');
 `);
   for (const [runtime, version] of runtimes) {
-    console.log(`${runtime} ${version}: ${run(runtime, ['smoke-react.mjs'], app).trim()}`);
+    console.log(`${runtime} ${version}: ${run(runtime, ['smoke-start.mjs'], app).trim()}`);
   }
-  // Bundler resolution only. Under NodeNext, eventemitter3's declarations resolve as CommonJS
-  // and @starknet-react/core's own Connector loses its emitter methods; that is theirs to fix.
-  writeFileSync(join(app, 'types-react.ts'), `
-import { KamuiConnector, useKamuiReconnect, type KamuiReconnect, type KamuiWalletOptions } from '@kamui/sdk/starknet-react';
-export function make(options: KamuiWalletOptions): string {
-  const connector = new KamuiConnector(options);
-  connector.on('disconnect', () => {});
-  return connector.id;
+  writeFileSync(join(app, 'types-start.ts'), `
+import type { WalletWithStarknetFeatures } from '@starknet-io/get-starknet-core';
+import { KamuiStandardWallet, useKamuiReconnect, type KamuiReconnect, type KamuiWalletOptions } from '@kamui/sdk/starknet-start';
+export function make(options: KamuiWalletOptions): WalletWithStarknetFeatures {
+  return new KamuiStandardWallet(options, { watch: false });
 }
 export type { KamuiReconnect };
 export { useKamuiReconnect };
 `);
-  typeCheck('types-react.ts', ['Bundler']);
+  typeCheck('types-start.ts', ['NodeNext', 'Bundler']);
 
   if (process.argv[2]) {
     const out = resolve(process.argv[2]);
