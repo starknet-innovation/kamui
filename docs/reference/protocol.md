@@ -52,6 +52,10 @@ The keychain redirects to `redirectUri#kamui=<answer>`:
 
 Check that `id` matches the request you sent before trusting the answer.
 
+### Renewing
+
+A connect request whose `session.publicKey` already has a session on the account is a renewal. There is no separate message: the keychain reads the account, shows the request as a renewal, and on approval the account replaces the session under the same key. The nonce base changes, the call count and the spending periods start again, and anything signed for the previous session is refused. The keychain refuses a renewal whose origin differs from the one it recorded for that key.
+
 ## Execute
 
 Send the user to `GET {keychainUrl}/execute#kamui=<payload>`:
@@ -129,7 +133,7 @@ The requests and answers above are unchanged when the keychain runs in a popup; 
 
 A sponsored session call is an SNIP-9 v2 outside execution (`execute_from_outside_v2`) on the user's account.
 
-1. **Nonce.** Call `get_session_nonce_base(session_pubkey)` on the account and pick the first `base + i`, `0 ≤ i < maxCalls`, for which `is_valid_outside_execution_nonce` returns true. Any other nonce is refused.
+1. **Nonce.** Call `get_session_nonce_base(session_pubkey)` on the account and pick a `base + i`, `0 ≤ i < maxCalls`, for which `is_valid_outside_execution_nonce` returns true. Any other nonce is refused. The account accepts the range in any order and keeps no count of it; if you use it in order, the used nonces are a prefix and a binary search finds the first free one. The base changes whenever the session is renewed, so read it each time.
 2. **Hash.** The SNIP-12 (revision 1) message hash of the `OutsideExecution` struct for the account, with `caller` = `ANY_CALLER` (`0x414e595f43414c4c4552`), `execute_after` = 0, `execute_before` ≤ `validUntil`, your nonce and calls. starknet.js: `outsideExecution.getTypedData(..., OutsideExecutionVersion.V2)`.
 3. **Signature.** Stark ECDSA over the hash with the session private key, sent as `[session_pubkey, r, s, valid_until]`.
 4. **Call.** `execute_from_outside_v2(outside_execution, signature)` on the account. Post `{ account, calldata }` to the [sponsor endpoint](/guide/sponsorship).

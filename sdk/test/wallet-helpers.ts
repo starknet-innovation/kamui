@@ -47,16 +47,16 @@ export function fakePage() {
 
 /** The account as a node reports it: is the session there, and which sponsored nonces are used. */
 export function fakeNode(over: { maxCalls?: number } = {}) {
-  const state = { alive: true, down: false, used: new Set<bigint>(), reads: [] as string[] };
+  const state = { alive: true, down: false, used: new Set<bigint>(), reads: [] as string[], base: NONCE_BASE, validUntil: FUTURE, maxCalls: over.maxCalls ?? 3 };
   const provider = {
     async callContract({ entrypoint, calldata = [] }: { entrypoint: string; calldata?: string[] }) {
       state.reads.push(entrypoint);
       if (state.down) throw new Error('node unreachable');
       switch (entrypoint) {
         case 'get_session_data':
-          return state.alive ? [`0x${FUTURE.toString(16)}`, `0x${(over.maxCalls ?? 3).toString(16)}`, '0x0', '0x1'] : ['0x0', '0x0', '0x0', '0x0'];
+          return state.alive ? [`0x${state.validUntil.toString(16)}`, `0x${state.maxCalls.toString(16)}`, '0x0', '0x1'] : ['0x0', '0x0', '0x0', '0x0'];
         case 'get_session_nonce_base':
-          return [`0x${NONCE_BASE.toString(16)}`];
+          return [`0x${state.base.toString(16)}`];
         case 'is_valid_outside_execution_nonce':
           return [state.used.has(BigInt(calldata[0]!)) ? '0x0' : '0x1'];
         default:
@@ -64,7 +64,7 @@ export function fakeNode(over: { maxCalls?: number } = {}) {
       }
     },
   } as unknown as ProviderInterface;
-  return { provider, state, nonce: (offset: number) => NONCE_BASE + BigInt(offset) };
+  return { provider, state, nonce: (offset: number) => state.base + BigInt(offset) };
 }
 
 export const sessionRequest = (over: Partial<KamuiSessionRequest> = {}): KamuiSessionRequest => ({
