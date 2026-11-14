@@ -12,7 +12,7 @@
 | `the keychain could not complete the request` | Sign-in or the transaction failed, and the user went back to your site |
 | `an answer arrived but nothing was asked` | No pending request in the store (other tab, cleared storage, different store) |
 | `the answer is not for this request` | The answer's `id` does not match the pending request |
-| `the answer is malformed` | The answer is missing a field |
+| `the answer is malformed` | The answer is missing a field, or an approved transaction is not `{ account, calldata }` (a keychain and an SDK of different versions) |
 
 When the request itself cannot be read or trusted, the keychain shows the reason to the user and does not answer, so your app sees only that the user did not come back:
 

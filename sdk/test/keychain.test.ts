@@ -5,6 +5,7 @@ import { ec, outsideExecution, OutsideExecutionVersion, shortString, type TypedD
 import {
   MAX_EXECUTE_CALLDATA,
   MAX_EXECUTE_CALLS,
+  MAX_EXECUTE_RESULT_CALLDATA,
   MAX_SIGN_MESSAGE_BYTES,
   MAX_SIGN_MESSAGE_FIELDS,
   beginConnect,
@@ -28,6 +29,7 @@ import {
   pendingRequestKind,
   forgetConnection,
   loadConnection,
+  ownerOutsideExecution,
   parseConnectRequest,
   resultUrl,
   sessionFromWire,
@@ -273,20 +275,55 @@ describe('transaction requests', () => {
     expect(describeCall({ to: TOKEN, entrypoint: 'transfer', calldata: [GAME] })).toEqual({ kind: 'other' });
   });
 
-  test('an approval returns the transaction hash to the request it belongs to', () => {
+  test('an approval returns the signed transaction, unsent, to the request it belongs to', async () => {
     const store = memoryStore();
     const { request } = executeFrom(store);
-    const back = new URL(resultUrl(request, { v: 1, id: request.id, ok: true, transactionHash: '0xabc' }));
+    const back = new URL(resultUrl(request, { v: 1, id: request.id, ok: true, account: ACCOUNT, calldata: ['0x1', '0x2'] }));
     expect(back.origin + back.pathname).toBe(`${APP}/play`);
-    expect(finishExecute(back.hash, store)).toEqual({ transactionHash: '0xabc' });
+    const approved = finishExecute(back.hash, store)!;
+    expect(approved).toEqual({ account: ACCOUNT, call: { contractAddress: ACCOUNT, entrypoint: 'execute_from_outside_v2', calldata: ['0x1', '0x2'] } });
     expect(pendingRequestKind(store)).toBeNull();
     expect(() => finishExecute(back.hash, store)).toThrow(/nothing was asked/);
+
+    // The app has it sent through its own sponsor route, where its server adds the credential.
+    let sent: any;
+    const hash = await sponsor(`${APP}/api/sponsor`, approved.call, async (url, init) => {
+      sent = { url, body: JSON.parse(init.body) };
+      return Response.json({ transaction_hash: '0xabc' });
+    });
+    expect(hash).toBe('0xabc');
+    expect(sent).toEqual({ url: `${APP}/api/sponsor`, body: { account: ACCOUNT, calldata: ['0x1', '0x2'] } });
+  });
+
+  test('an approval that is not a signed transaction is refused', () => {
+    const malformed = (answer: Record<string, unknown>) => {
+      const store = memoryStore();
+      const { request } = executeFrom(store);
+      expect(() => finishExecute(toFragment({ v: 1, id: request.id, ok: true, ...answer } as any), store)).toThrow(/malformed/);
+    };
+    // What the keychain answered before it stopped sending the transaction itself.
+    malformed({ transactionHash: '0xabc' });
+    malformed({ account: ACCOUNT });
+    malformed({ account: ACCOUNT, calldata: [] });
+    malformed({ account: 'x', calldata: ['0x1'] });
+    malformed({ account: ACCOUNT, calldata: ['0x1', 'drop table'] });
+    malformed({ account: ACCOUNT, calldata: Array.from({ length: MAX_EXECUTE_RESULT_CALLDATA + 1 }, () => '0x1') });
+  });
+
+  test('the largest request the keychain accepts fits in an approval', () => {
+    const store = memoryStore();
+    const big = { contractAddress: GAME, entrypoint: 'move', calldata: Array.from({ length: MAX_EXECUTE_CALLDATA }, () => '0x1') };
+    const { request } = executeFrom(store, Array.from({ length: MAX_EXECUTE_CALLS }, () => big));
+    const call = ownerOutsideExecution({ chainId: '0x534e5f5345504f4c4941', account: ACCOUNT, calls: callsFromWire(request.calls), ownerPrivateKey: '0x1', window: { executeBefore: 1 } });
+    expect(call.calldata).toHaveLength(MAX_EXECUTE_RESULT_CALLDATA);
+    const back = resultUrl(request, { v: 1, id: request.id, ok: true, account: ACCOUNT, calldata: call.calldata as string[] });
+    expect(finishExecute(new URL(back).hash, store)!.call).toEqual(call);
   });
 
   test('a refusal, and an answer for another request, both throw', () => {
     const store = memoryStore();
     const { request } = executeFrom(store);
-    expect(() => finishExecute(toFragment({ v: 1, id: '0xabc', ok: true, transactionHash: '0x1' }), store)).toThrow(/not for this request/);
+    expect(() => finishExecute(toFragment({ v: 1, id: '0xabc', ok: true, account: ACCOUNT, calldata: ['0x1'] }), store)).toThrow(/not for this request/);
     expect(() => finishExecute(toFragment({ v: 1, id: request.id, ok: false, error: 'denied by the user' }), store)).toThrow(/denied by the user/);
   });
 });

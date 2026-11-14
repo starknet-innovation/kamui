@@ -53,7 +53,7 @@ export type KamuiWalletErrorCode =
   | 'SESSION_EXHAUSTED'
   /** The session is past its `validUntil`. Connect again for a new one. */
   | 'SESSION_EXPIRED'
-  /** A wallet request a session cannot serve (declaring, deploying, another chain, a message for another chain). */
+  /** A wallet request a session cannot serve (declaring, deploying, another chain, a message for another chain), or a one-off approval with no `sponsor` to send it. */
   | 'UNSUPPORTED';
 
 /** Why the wallet refused, as a `code` to branch on. `name` is always `KamuiWalletError`. */
@@ -106,6 +106,9 @@ export type KamuiWalletOptions = {
    * function hands the signed outside execution to your own relayer and returns the transaction
    * hash. Leave it out for self-paid session transactions, which need `maxFeePerTx` above zero
    * and STRK on the account.
+   *
+   * A transaction approved in the keychain (`approveInKeychain`) comes back signed and unsent,
+   * and goes through this too: it has no self-paid path.
    */
   sponsor?: string | ((call: Call) => Promise<string>);
   /** Where the session key and connection are kept. Defaults to `localStorage`. */
@@ -180,7 +183,10 @@ export class KamuiWallet {
     return this.ended;
   }
 
-  /** Hash of the transaction the user approved in the keychain just before this page load. */
+  /**
+   * Hash of the transaction the user approved in the keychain just before this page load, once
+   * `resume()` has sent it through `sponsor`. Null if sending failed: the reason is in `error`.
+   */
   get lastApproved(): string | null {
     return this.approved;
   }
@@ -189,7 +195,9 @@ export class KamuiWallet {
    * Picks up where the page left off. Run once per page load (later calls return the same
    * result): reads the keychain's answer from the URL fragment if the user just came back, removes
    * it from the address bar, loads the stored connection and checks on chain that the session is
-   * still alive. Never redirects and never throws: a refusal is in `error`.
+   * still alive. If the answer is a transaction the user approved (`approveInKeychain`), it is
+   * sent here, once, through `sponsor`. Never redirects and never throws: a refusal, or a
+   * failure to send, is in `error`.
    */
   resume(): Promise<Connection | null> {
     this.resuming ??= this.readPage().then((connection) => (this.current = connection));
@@ -201,16 +209,28 @@ export class KamuiWallet {
     const { store, page } = this;
     const fragment = page.fragment();
     let fresh: Connection | null = null;
+    let approved: Call | null = null;
     try {
       if (pendingRequestKind(store) === 'execute') {
-        this.approved = finishExecute(fragment, store)?.transactionHash ?? null;
+        approved = finishExecute(fragment, store)?.call ?? null;
       } else {
         fresh = finishConnect(fragment, store);
       }
     } catch (error) {
       this.resumeError = (error as Error).message;
     }
+    // Before sending: a reload must not find the approval again.
     if (fragment.includes('kamui=')) page.clearFragment();
+    // The keychain signed the transaction and sent nothing: the app that asked pays for it.
+    if (approved) {
+      const { sponsor: route } = this.options;
+      try {
+        if (route === undefined) throw new Error('no sponsor is configured');
+        this.approved = typeof route === 'string' ? await sponsor(route, approved) : await route(approved);
+      } catch (error) {
+        this.resumeError = `could not send the approved transaction: ${(error as Error).message}`;
+      }
+    }
 
     const connection = fresh ?? loadConnection(store);
     if (!connection) return null;
@@ -398,10 +418,15 @@ export class KamuiWallet {
   /**
    * Sends the user to the keychain to approve one transaction with the account's full
    * authority: the way to make a call the session does not cover. Leaves the page and never
-   * settles; after the user is back, `resume()` puts the transaction hash in `lastApproved`.
+   * settles. The keychain signs the transaction and returns it unsent; after the user is back,
+   * `resume()` sends it through `sponsor` and puts the transaction hash in `lastApproved`.
+   * Refused with `UNSUPPORTED` when no `sponsor` is configured: nothing could send the approval.
    */
   approveInKeychain(calls: Call[], appName?: string): Promise<never> {
     this.connected();
+    if (this.options.sponsor === undefined) {
+      throw new KamuiWalletError('UNSUPPORTED', 'kamui: a transaction approved in the keychain is sent through `sponsor`, and none is configured');
+    }
     const url = beginExecute({ keychainUrl: this.options.keychainUrl, redirectUri: this.page.redirectUri(), appName, calls }, this.store);
     this.page.navigate(url);
     return new Promise<never>(() => {});

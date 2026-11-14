@@ -1,6 +1,8 @@
 // A page, a keychain and a node, all in memory, for the wallet and wallet-standard adapter tests.
 import type { ProviderInterface, TypedData } from 'starknet';
 import {
+  callsFromWire,
+  ownerOutsideExecution,
   parseConnectRequest,
   parseExecuteRequest,
   toFragment,
@@ -18,6 +20,8 @@ export const TOKEN = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4
 export const SEPOLIA = '0x534e5f5345504f4c4941';
 export const CLASS_HASH = '0x1234';
 export const TX = '0xabc';
+/** The outside-execution nonce of a transaction the fake keychain approves. */
+export const APPROVAL_NONCE = 0x777n;
 export const FUTURE = Math.floor(Date.now() / 1000) + 3600;
 const NONCE_BASE = 1000n;
 
@@ -96,7 +100,10 @@ export function keychainAnswers(url: string, answer: 'approve' | { error: string
   if (target.origin !== KEYCHAIN) throw new Error(`not the keychain: ${url}`);
   if (target.pathname === '/execute') {
     const request = parseExecuteRequest(target.hash, `${APP}/play`)!;
-    return toFragment(answer === 'approve' ? { v: 1, id: request.id, ok: true, transactionHash: TX } : { v: 1, id: request.id, ok: false, error: answer.error });
+    if (answer !== 'approve') return toFragment({ v: 1, id: request.id, ok: false, error: answer.error });
+    // Signed by an owner key and not sent: the wallet's sponsor sends it.
+    const signed = ownerOutsideExecution({ chainId: SEPOLIA, account: ACCOUNT, calls: callsFromWire(request.calls), ownerPrivateKey: '0x1', window: { executeBefore: FUTURE }, nonce: APPROVAL_NONCE });
+    return toFragment({ v: 1, id: request.id, ok: true, account: ACCOUNT, calldata: signed.calldata as string[] });
   }
   const request = parseConnectRequest(target.hash, `${APP}/play`)!;
   return toFragment(

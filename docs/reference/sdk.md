@@ -123,9 +123,9 @@ A starknet.js `Account` that signs as the session and pays its own fees (needs `
 
 Stores the pending request (`kamui.pending.execute`) and returns the keychain URL that asks the user to approve `calls` with the account's full authority.
 
-### `finishExecute(fragment, store): { transactionHash } | null`
+### `finishExecute(fragment, store): { account, call } | null`
 
-Reads the answer. Throws if the user denied or the keychain reported an error.
+Reads the answer. Throws if the user denied or the keychain reported an error. Nothing has been sent: `call` is the owner-signed `execute_from_outside_v2` call on `account`. Pass it to `sponsor(url, call)` with your own sponsor route to send it. It can be sent once, within `EXECUTE_APPROVAL_SECONDS` of the approval.
 
 ## Signing messages
 
@@ -159,17 +159,17 @@ A get-starknet-style wallet object (`id`, `name`, `version`, `icon`, `request`, 
 
 | Member | |
 |---|---|
-| `resume(): Promise<Connection \| null>` | Once per page load: reads the keychain's answer, loads the stored connection, checks it on chain. Never redirects, never throws. |
+| `resume(): Promise<Connection \| null>` | Once per page load: reads the keychain's answer, sends an approved one-off transaction through `sponsor`, loads the stored connection, checks it on chain. Never redirects, never throws. |
 | `connect(): Promise<Connection>` | Settles at once with a live session. Otherwise navigates to the keychain and never settles. |
 | `renew(): Promise<never>` | Navigates to the keychain to renew the session under the same key, with the `session` option's terms. `resume()` picks up the renewed session. Use it on `SESSION_EXHAUSTED`, or before the session expires. |
 | `disconnect(): void` | Forgets the session key and emits `accountsChanged` with `[]`. |
 | `execute(calls): Promise<{ transaction_hash }>` | Sends calls inside the session, sponsored if `sponsor` is set. Sponsored calls are sent one at a time; the place in the session's nonces is kept on the connection and in `store`. |
 | `signTypedData(typedData): string[]` | Signs a SNIP-12 message with the session key (`sessionSignTypedData`), no prompt. Refuses a message whose domain names another chain. |
 | `watch(onEnded?, options?): () => void` | `watchSession` for the live session. When it ends the wallet disconnects (emitting `accountsChanged` with `[]`), keeps the reason in `lastEnd` and calls `onEnded`. A renewal stored by this app is carried on with, not reported. Returns a stop function. |
-| `approveInKeychain(calls, appName?): Promise<never>` | Navigates to the keychain's `/execute` page. |
+| `approveInKeychain(calls, appName?): Promise<never>` | Navigates to the keychain's `/execute` page. The approval comes back signed and unsent; `resume()` sends it. Throws `UNSUPPORTED` without a `sponsor`. |
 | `account(provider?)` | A starknet.js account whose `execute` is the wallet's. |
 | `request({ type, params })` | The wallet API. See the walkthrough for what is answered. |
-| `connection`, `error`, `lastApproved`, `lastEnd` | The live session, why the last trip to the keychain failed, the hash of a one-off transaction just approved, and how a watched session ended. |
+| `connection`, `error`, `lastApproved`, `lastEnd` | The live session, why the last trip to the keychain (or sending an approved transaction) failed, the hash of a one-off transaction just approved and sent, and how a watched session ended. |
 
 `page` replaces how the wallet reads the URL fragment and navigates (`fragment`, `clearFragment`, `redirectUri`, `navigate`); the default uses `window`. Tests pass their own.
 
@@ -210,9 +210,9 @@ The keychain's requests, in a popup, without leaving the page. See [Popup mode](
 
 Opens the keychain's `/connect` page in a popup and resolves with the connection, which is also stored (`kamui.connection`). `options` are those of `beginConnect`. The pending request stays in memory. Must be called synchronously from a user action.
 
-### `executeWithPopup({ keychainUrl, redirectUri, appName?, calls }, store, popup?): Promise<{ transactionHash }>`
+### `executeWithPopup({ keychainUrl, redirectUri, appName?, calls }, store, popup?): Promise<{ account, call }>`
 
-The same for one approved transaction.
+The same for one approved transaction. Resolves with what `finishExecute` returns: the owner-signed call, not sent. Pass `call` to `sponsor(url, call)` with your own sponsor route.
 
 ### `signMessageWithPopup({ keychainUrl, redirectUri, appName?, typedData }, store, popup?): Promise<{ account, chainId, signature }>`
 
@@ -260,5 +260,7 @@ Symbol and exact amounts for display. The symbol and decimals are read from the 
 | `KEYCHAIN_PROTOCOL_VERSION` | `1` |
 | `MAX_EXECUTE_CALLS` | `10` |
 | `MAX_EXECUTE_CALLDATA` | `100` |
+| `MAX_EXECUTE_RESULT_CALLDATA` | `1038` |
+| `EXECUTE_APPROVAL_SECONDS` | `600` |
 | `MAX_SESSION_SCOPE_ENTRIES` | `64` |
 | `SPENDING_ENTRYPOINTS` | `transfer`, `approve`, `increase_allowance`, `increaseAllowance` |

@@ -23,13 +23,13 @@ type KamuiState = {
   connection: Connection | null;
   /** The last keychain answer that was not a success, e.g. "denied by the user" or "cancelled by the user". */
   error: string | null;
-  /** Hash of a one-off transaction the user just approved in the keychain. */
+  /** Hash of a one-off transaction the user just approved in the keychain, once your sponsor route has sent it. */
   lastExecuted: string | null;
   connect(): void;
   disconnect(): void;
   /** Sends calls inside the session, signed here and paid for by your sponsor route. */
   send(calls: Call[]): Promise<string>;
-  /** Sends the user to the keychain to approve calls outside the session. Leaves the page. */
+  /** Sends the user to the keychain to approve calls outside the session. Leaves the page; they are sent on return. */
   execute(calls: Call[]): void;
 };
 
@@ -43,14 +43,15 @@ const here = () => `${window.location.origin}${window.location.pathname}`;
  * Reads the keychain's answer from the URL fragment, once per page load, and removes it from the
  * address bar. Kept outside React so StrictMode's double effects cannot read it twice.
  */
-let answer: { connection: Connection | null; executed: string | null; error: string | null } | undefined;
+let answer: { connection: Connection | null; approved: Call | null; error: string | null } | undefined;
 function readAnswer() {
   if (answer) return answer;
-  answer = { connection: null, executed: null, error: null };
+  answer = { connection: null, approved: null, error: null };
   const fragment = window.location.hash;
   try {
     if (pendingRequestKind(store()) === 'execute') {
-      answer.executed = finishExecute(fragment, store())?.transactionHash ?? null;
+      // Signed by the user's account in the keychain, and not sent yet.
+      answer.approved = finishExecute(fragment, store())?.call ?? null;
     } else {
       answer.connection = finishConnect(fragment, store());
     }
@@ -68,9 +69,13 @@ export function KamuiProvider({ children }: { children: ReactNode }) {
   const [lastExecuted, setLastExecuted] = useState<string | null>(null);
 
   useEffect(() => {
-    const { connection: fresh, executed, error } = readAnswer();
+    const read = readAnswer();
+    const { connection: fresh, approved, error } = read;
     setError(error);
-    setLastExecuted(executed);
+    // Send an approved one-off transaction through your sponsor route. It can be sent once:
+    // take it out of the answer so StrictMode's second effect does not send it again.
+    read.approved = null;
+    if (approved) sponsor(SPONSOR_URL, approved).then(setLastExecuted, (failure: Error) => setError(failure.message));
     const current = fresh ?? loadConnection(store());
     if (!current) return setStatus('disconnected');
     // A session ends when it expires, when it is revoked, and when the user adds or removes a device.

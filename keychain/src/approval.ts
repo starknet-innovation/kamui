@@ -2,6 +2,7 @@
 // signed message (sign).
 import { shortString } from 'starknet';
 import {
+  EXECUTE_APPROVAL_SECONDS,
   KamuiReader,
   callsFromWire,
   createSessionCalls,
@@ -175,19 +176,22 @@ export async function showTransaction(request: ExecuteRequest, device: KeyPair, 
   }
 
   nodes.push(
-    button('Approve', async () => {
-      status('Sending the transaction…');
+    el('p', `If you approve, Kamui signs this transaction and hands it back to the site, which sends it and pays the network fee. It can be sent once, exactly as shown, within ${EXECUTE_APPROVAL_SECONDS / 60} minutes.`, 'note'),
+  );
+
+  nodes.push(
+    button('Approve', () => {
+      // Signed here, sent by the site that asked. Kamui funds only the account's own
+      // management calls (/wallet/sponsor) and holds no app's sponsorship credential, so it
+      // cannot have an arbitrary call paid for; the site's server can, from its own budget.
       const call = ownerOutsideExecution({
         chainId: record.chainId,
         account: record.account,
         calls: callsFromWire(request.calls),
         ownerPrivateKey: device.privateKey,
-        window: { executeBefore: Math.floor(Date.now() / 1000) + 600 },
+        window: { executeBefore: Math.floor(Date.now() / 1000) + EXECUTE_APPROVAL_SECONDS },
       });
-      const transactionHash = await sponsor(`${config.apiUrl}/sponsor`, call);
-      status('Waiting for the network…');
-      await provider.waitForTransaction(transactionHash);
-      answer(request, { ok: true, transactionHash });
+      answer(request, { ok: true, account: record.account, calldata: call.calldata as string[] });
     }, true),
     button('Deny', () => answer(request, { ok: false, error: 'denied by the user' })),
   );

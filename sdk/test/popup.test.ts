@@ -327,9 +327,9 @@ describe('popup mode: when the popup goes away', () => {
 
 describe('popup mode: one transaction', () => {
   const calls = [{ contractAddress: GAME, entrypoint: 'move', calldata: ['0x1'] }];
-  const sent = (id: string): ExecuteResult => ({ v: 1, id, ok: true, transactionHash: '0xabc' });
+  const sent = (id: string): ExecuteResult => ({ v: 1, id, ok: true, account: ACCOUNT, calldata: ['0x1', '0x2'] });
 
-  test('the answer comes back as the transaction hash, and the store is not touched', async () => {
+  test('the answer comes back as the signed transaction, unsent, and the store is not touched', async () => {
     const browser = fakeBrowser();
     const store = memoryStore();
     const executing = executeWithPopup({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/play`, calls }, store, { environment: browser.environment });
@@ -338,7 +338,8 @@ describe('popup mode: one transaction', () => {
     const request = parseExecuteRequest(new URL(url).hash, `${APP}/`)!;
     expect(request.redirectUri).toBe(`${APP}/play?${POPUP_MARKER}=1`);
     browser.relay(request.redirectUri + toFragment(sent(request.id)));
-    expect(await executing).toEqual({ transactionHash: '0xabc' });
+    // The app sends it through its own sponsor route: `sponsor(url, call)`.
+    expect(await executing).toEqual({ account: ACCOUNT, call: { contractAddress: ACCOUNT, entrypoint: 'execute_from_outside_v2', calldata: ['0x1', '0x2'] } });
     expect(store.data.size).toBe(0);
   });
 

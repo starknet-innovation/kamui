@@ -1,5 +1,5 @@
 // Popup mode: connect and approve without leaving the page.
-import { KeychainPopupError, connectWithPopup, executeWithPopup, finishConnect, loadConnection, relayPopupResult, type Connection } from '@kamui/sdk';
+import { KeychainPopupError, connectWithPopup, executeWithPopup, finishConnect, loadConnection, relayPopupResult, sponsor, type Connection } from '@kamui/sdk';
 
 const KEYCHAIN_URL = 'https://sepolia.kamui.page';
 const GAME = '0x2f8ce9fcc5f6e165ab5dcccf865c4c08e7d752d6b930938195683eef9f43dfc';
@@ -38,11 +38,14 @@ export async function connect(): Promise<Connection | null> {
   }
 }
 
-/** One transaction outside the session, approved in a popup. */
+/**
+ * One transaction outside the session, approved in a popup. The keychain signs it and sends
+ * nothing: your sponsor route (see "Sponsorship") sends it. Returns the transaction hash.
+ */
 export async function upgrade(): Promise<string> {
-  const { transactionHash } = await executeWithPopup(
+  const { call } = await executeWithPopup(
     { keychainUrl: KEYCHAIN_URL, redirectUri, appName: 'My game', calls: [{ contractAddress: GAME, entrypoint: 'upgrade', calldata: [] }] },
     localStorage,
   );
-  return transactionHash;
+  return sponsor('/api/kamui/sponsor', call);
 }

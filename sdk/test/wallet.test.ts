@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'bun:test';
 import { hash, type TypedData } from 'starknet';
 import { KamuiWallet, KamuiWalletError, callsOutsideSession, injectKamuiWallet, loadConnection, sessionSignTypedData, type KamuiWalletOptions, type SessionEnd } from '../src';
-import { ACCOUNT, FUTURE, GAME, KEYCHAIN, SEPOLIA, TOKEN, TX, fakeNode, keychainAnswers, sessionRequest, signInMessage, world } from './wallet-helpers';
+import { ACCOUNT, APPROVAL_NONCE, FUTURE, GAME, KEYCHAIN, SEPOLIA, TOKEN, TX, fakeNode, keychainAnswers, sessionRequest, signInMessage, world } from './wallet-helpers';
 
 const move = { contractAddress: GAME, entrypoint: 'move', calldata: [] };
 
@@ -330,18 +330,69 @@ describe('sending calls', () => {
 describe('one-off approvals', () => {
   const approve = { contractAddress: TOKEN, entrypoint: 'approve', calldata: [GAME, '0x1', '0x0'] };
 
-  test('approveInKeychain leaves the page; the next load reports the transaction', async () => {
+  test('approveInKeychain leaves the page; the next load sends the signed transaction through the sponsor', async () => {
     const w = await connected();
     const leaving = w.wallet.approveInKeychain([approve], 'Example Game');
     expect(await isPending(leaving)).toBe(true);
     expect(w.tab.navigatedTo[1]).toStartWith(`${KEYCHAIN}/execute#kamui=`);
+    expect(w.relayed).toHaveLength(0);
 
     w.tab.fragment = keychainAnswers(w.tab.navigatedTo[1]!);
     const back = new KamuiWallet(w.options);
     expect((await back.resume())?.account).toBe(ACCOUNT);
+    // The keychain sent nothing: the wallet's sponsor got the owner-signed call, once.
+    expect(w.relayed).toEqual([{ contractAddress: ACCOUNT, entrypoint: 'execute_from_outside_v2', nonce: APPROVAL_NONCE }]);
     expect(back.lastApproved).toBe(TX);
     expect(back.error).toBeNull();
     expect(w.tab.fragment).toBe('');
+
+    // Another page load finds no approval left to send.
+    const later = new KamuiWallet(w.options);
+    await later.resume();
+    expect(later.lastApproved).toBeNull();
+    expect(w.relayed).toHaveLength(1);
+  });
+
+  test('a sponsor URL gets the approved transaction as { account, calldata }', async () => {
+    const posted: { url: string; body: any }[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: { body: string }) => {
+      posted.push({ url, body: JSON.parse(init.body) });
+      return Response.json({ transaction_hash: TX });
+    }) as unknown as typeof fetch;
+    try {
+      const w = await connected({ sponsor: 'https://game.example/api/sponsor' });
+      void w.wallet.approveInKeychain([approve]);
+      w.tab.fragment = keychainAnswers(w.tab.navigatedTo[1]!);
+      const back = new KamuiWallet(w.options);
+      await back.resume();
+      expect(back.lastApproved).toBe(TX);
+      expect(posted).toHaveLength(1);
+      expect(posted[0]!.url).toBe('https://game.example/api/sponsor');
+      expect(posted[0]!.body.account).toBe(ACCOUNT);
+      expect(BigInt(posted[0]!.body.calldata[1])).toBe(APPROVAL_NONCE);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test('an approval the sponsor refuses is reported, and the session stays', async () => {
+    const w = await connected();
+    void w.wallet.approveInKeychain([approve]);
+    w.tab.fragment = keychainAnswers(w.tab.navigatedTo[1]!);
+    w.relayer.fail = true;
+    const back = new KamuiWallet(w.options);
+    expect((await back.resume())?.account).toBe(ACCOUNT);
+    expect(back.lastApproved).toBeNull();
+    expect(back.error).toBe('could not send the approved transaction: relayer down');
+    expect(w.tab.fragment).toBe('');
+  });
+
+  test('without a sponsor nothing could send an approval: refused before leaving the page', async () => {
+    const w = await connected({ sponsor: undefined });
+    const error = await refusal(async () => w.wallet.approveInKeychain([approve]));
+    expect(error.code).toBe('UNSUPPORTED');
+    expect(w.tab.navigatedTo).toHaveLength(1);
   });
 
   test('a refused approval is reported and the session stays', async () => {

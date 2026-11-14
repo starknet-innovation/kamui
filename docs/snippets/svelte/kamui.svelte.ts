@@ -36,9 +36,10 @@ class Kamui {
     if (this.#initialised) return;
     this.#initialised = true;
     let fresh: Connection | null = null;
+    let approved: Call | null = null;
     try {
       if (pendingRequestKind(localStorage) === 'execute') {
-        this.lastExecuted = finishExecute(location.hash, localStorage)?.transactionHash ?? null;
+        approved = finishExecute(location.hash, localStorage)?.call ?? null;
       } else {
         fresh = finishConnect(location.hash, localStorage);
       }
@@ -46,6 +47,13 @@ class Kamui {
       this.error = (error as Error).message;
     }
     if (location.hash.includes('kamui=')) history.replaceState(history.state, '', here() + location.search);
+    // The keychain signed the one-off transaction and sent nothing: your sponsor route sends it.
+    if (approved) {
+      sponsor(SPONSOR_URL, approved).then(
+        (hash) => (this.lastExecuted = hash),
+        (error) => (this.error = (error as Error).message),
+      );
+    }
 
     const current = fresh ?? loadConnection(localStorage);
     if (current && (await isConnectionAlive(current, provider))) {
@@ -91,7 +99,7 @@ class Kamui {
     return sponsor(SPONSOR_URL, prepared.call);
   }
 
-  /** Outside the session: the user approves these calls in the keychain. Leaves the page. */
+  /** Outside the session: the user approves these calls in the keychain. Leaves the page; `init()` sends them on return. */
   execute(calls: Call[]) {
     location.assign(beginExecute({ keychainUrl: KEYCHAIN_URL, redirectUri: here(), appName: 'My game', calls }, localStorage));
   }

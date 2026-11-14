@@ -164,8 +164,12 @@ test.describe('popup mode', () => {
     await popup.getByRole('button', { name: 'Approve' }).click();
     const result = await outcome(page);
     expect(result.ok).toBe(true);
-    expect(result.value.transactionHash).toMatch(/^0x[0-9a-f]+$/);
-    expect(world.sponsorRequests).toHaveLength(1);
+    // The signed transaction, for the app to send through its own sponsor route. The keychain sent nothing.
+    expect(BigInt(result.value.account)).toBe(BigInt(ACCOUNT));
+    expect(result.value.call.contractAddress).toBe(result.value.account);
+    expect(result.value.call.entrypoint).toBe('execute_from_outside_v2');
+    expect(result.value.call.calldata.length).toBeGreaterThan(5);
+    expect(world.sponsorRequests).toHaveLength(0);
     expect(await page.evaluate(() => (window as any).neverReloaded)).toBe(true);
   });
 

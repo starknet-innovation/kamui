@@ -47,7 +47,7 @@ One wallet for the app, outside any component. It takes the keychain, a provider
 | `keychainUrl` | The keychain to send the user to. |
 | `provider` | Reads the account: is the session alive, which sponsored nonce is next. |
 | `session` | What to ask for. A function is called when the user connects. |
-| `sponsor` | A URL (your sponsor route) or `(call) => Promise<transactionHash>`. Leave it out for [self-paid](/guide/sessions#self-paid-session-transactions) session transactions. |
+| `sponsor` | A URL (your sponsor route) or `(call) => Promise<transactionHash>`. Leave it out for [self-paid](/guide/sessions#self-paid-session-transactions) session transactions; [one-off approvals](#calls-outside-the-session) need it. |
 | `store` | Where the session key is kept. Defaults to `localStorage`. |
 
 A second argument, `{ watch }`, controls [watching the session](#when-the-session-ends).
@@ -65,10 +65,11 @@ Pass the wallet as `extraWallets`. `useConnect().connectors` then lists it after
 Connecting is a full-page redirect. `connect()` sends the user to the keychain and never returns to the code that called it; the page that finishes the connection is the one the keychain sends the user back to. `useKamuiReconnect(wallet)` does that on every page load:
 
 1. reads the keychain's answer from the URL fragment, if the user just came back, and removes it from the address bar;
+1. if the answer is a [one-off transaction](#calls-outside-the-session) the user approved, sends it through `sponsor`;
 2. loads the stored session and checks on chain that it is still alive;
 3. connects the wallet through Starknet Start, without a redirect, if there is a live session.
 
-It returns `isResuming`, the keychain's `error` if the user refused, and `lastApproved`, the hash of a [one-off transaction](#calls-outside-the-session) the user just approved. It never redirects by itself. Starknet Start does not reconnect a wallet on its own after a reload, so without the hook the user would have to click connect again on every visit.
+It returns `isResuming`, the keychain's `error` if the user refused, and `lastApproved`, the hash of a [one-off transaction](#calls-outside-the-session) the user just approved, once it has been sent. If sending fails, `error` says why and `lastApproved` stays `null`. It never redirects by itself. Starknet Start does not reconnect a wallet on its own after a reload, so without the hook the user would have to click connect again on every visit.
 
 In Next.js, mark the providers file `'use client'`. On the server the wallet finds no session and does nothing.
 
@@ -98,10 +99,12 @@ A session lives on the keychain's chain. If that is not the first of your `chain
 
 ### Calls outside the session
 
-`wallet.wallet.approveInKeychain(calls, appName)` sends the user to the keychain to approve one transaction with the account's full authority. Like connecting, it leaves the page; `useKamuiReconnect` reports the transaction hash as `lastApproved` on the way back.
+`wallet.wallet.approveInKeychain(calls, appName)` sends the user to the keychain to approve one transaction with the account's full authority. Like connecting, it leaves the page.
 
-::: danger One-off approvals on hosted Sepolia
-The keychain's `/execute` page currently fails on the hosted backend with `APP_AUTH_REQUIRED`. See [Status and limitations](/guide/limitations).
+The keychain signs the transaction and does not send it. On the way back the wallet sends it, once, through the same `sponsor` as session calls, so your app's sponsorship budget pays for it, and `useKamuiReconnect` reports the transaction hash as `lastApproved`. Without a `sponsor`, `approveInKeychain` throws `UNSUPPORTED` before leaving the page. The approval is good for 10 minutes and no session limit applies to it: your [sponsor route](/guide/sponsorship#your-sponsor-route) decides whether to pay.
+
+::: warning One-off approvals on hosted Sepolia
+Not yet run against the hosted backend. See [Status and limitations](/guide/limitations).
 :::
 
 ## When the session ends

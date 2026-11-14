@@ -1,6 +1,6 @@
 # Ping, a Kamui demo app
 
-A small app that connects through the Kamui keychain. It asks for a session limited to `ping()` on one test contract, then pings with sponsored calls, and shows that a call outside the session is refused. Development only.
+A small app that connects through the Kamui keychain. It asks for a session limited to `ping()` on one test contract, then pings with sponsored calls, and shows that a call outside the session is refused. It also asks the keychain to approve one-off calls, which come back signed and unsent and go through this app's own `/api/sponsor`, like its session calls. Development only.
 
 ```sh
 # with the keychain, the backend api, the pepper service and the prover running locally

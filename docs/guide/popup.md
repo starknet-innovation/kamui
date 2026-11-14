@@ -35,6 +35,8 @@ While the popup is open, the keychain (and an issuer that does not isolate its p
 
 ## When it does not answer
 
+`executeWithPopup` resolves with `{ account, call }`, like `finishExecute`: the keychain signs the transaction and does not send it. Send `call` through your [sponsor route](/guide/sponsorship#your-sponsor-route) with `sponsor(url, call)`, once, within 10 minutes; see [one-off approvals](/guide/sessions#outside-the-session-one-off-approvals).
+
 `connectWithPopup`, `executeWithPopup` and `signMessageWithPopup` reject with the keychain's reason (`keychain: denied by the user`, …) when there is an answer, and with a `KeychainPopupError` when there is none. Its `code` is one of:
 
 | `code` | Meaning |

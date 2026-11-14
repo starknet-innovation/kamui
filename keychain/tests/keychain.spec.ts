@@ -13,13 +13,14 @@ import {
   exportPepper,
   finishConnect,
   finishExecute,
+  sponsor,
   parsePepperFile,
   pepperFileMatchesLogin,
   serializePepperFile,
   type ConnectOptions,
   type KeyValueStore,
 } from '../../sdk/src';
-import { ACCOUNT, APPLE_ACCOUNT, APPLE_CLAIMS, CHAIN_ID, CLAIMS, CLASS_HASH, KEYCHAIN, PEPPER, installApp, installFakes, newWorld, selectorOf, signedBy, type World } from './fakes';
+import { ACCOUNT, APPLE_ACCOUNT, APPLE_CLAIMS, CHAIN_ID, CLAIMS, CLASS_HASH, KEYCHAIN, PEPPER, installApp, installAppSponsorRoute, installFakes, newWorld, outsideCalls, selectorOf, signedBy, type World } from './fakes';
 
 const APP = 'http://localhost:5199';
 const OTHER_SITE = 'http://localhost:5198';
@@ -447,7 +448,14 @@ test.describe('transaction requests', () => {
     }
   }
 
-  test('an approved transaction is sent as asked and its hash returned', async ({ page, context }) => {
+  /** The app's page hands an approved transaction to its own server's sponsor route. */
+  const sendFromApp = (page: Page, call: Parameters<typeof sponsor>[1]) =>
+    page.evaluate(async ({ account, calldata }) => {
+      const response = await fetch('/api/sponsor', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account, calldata }) });
+      return { status: response.status, body: await response.json() };
+    }, { account: call.contractAddress, calldata: call.calldata as string[] });
+
+  test('an approved transaction is signed as asked and handed back unsent', async ({ page, context }) => {
     const world = await setup(context);
     await signIn(page);
     const store = await transactionFrom(page, APP);
@@ -460,16 +468,71 @@ test.describe('transaction requests', () => {
     await expect(page.getByRole('cell', { name: TOKEN })).toBeVisible();
     await expect(page.getByRole('cell', { name: GAME })).toBeVisible();
 
+    await expect(page.getByText('hands it back to the site, which sends it and pays the network fee')).toBeVisible();
+
+    const before = Math.floor(Date.now() / 1000);
     await page.getByRole('button', { name: 'Approve' }).click();
     const answer = await transactionAnswer(page, store);
-    expect(answer).toEqual({ ok: true, transactionHash: '0xbbb' });
+    if (!answer.ok) throw new Error(answer.error);
+    expect(BigInt(answer.account)).toBe(BigInt(ACCOUNT));
+    expect(answer.call.contractAddress).toBe(answer.account);
+    expect(answer.call.entrypoint).toBe('execute_from_outside_v2');
 
+    // The keychain holds no app's sponsorship credential: it asks no relayer to pay.
+    expect(world.sponsorRequests).toHaveLength(0);
+    const calldata = answer.call.calldata as string[];
+    const calls = outsideCalls(calldata);
+    expect(calls).toHaveLength(1);
+    expect(BigInt(calls[0]!.to)).toBe(BigInt(TOKEN));
+    expect(calls[0]!.selector).toBe(selectorOf('transfer'));
+    expect(calls[0]!.data.map(BigInt)).toEqual([BigInt(GAME), 1_500_000_000_000_000_000n, 0n]);
+    // Signed by one owner key (two felts), and good for ten minutes, not longer.
+    expect(BigInt(calldata[calldata.length - 3]!)).toBe(2n);
+    const executeBefore = Number(BigInt(calldata[3]!));
+    expect(executeBefore).toBeGreaterThanOrEqual(before + 600);
+    expect(executeBefore).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 600);
+  });
+
+  test('with app-only sponsorship (PostgreSQL funding mode), the approved app has the transaction paid for', async ({ page, context }) => {
+    const world = await setup(context);
+    // The hosted backend: /sponsor pays only when an approved app's server presents its credential.
+    world.approvedApp = { key: 'example_game_app_key', token: 'synthetic-server-fixture-credential' };
+    await installAppSponsorRoute(context, APP, world, world.approvedApp);
+    await signIn(page);
+    const store = await transactionFrom(page, APP);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    const answer = await transactionAnswer(page, store);
+    if (!answer.ok) throw new Error(answer.error);
+
+    // The keychain did not ask the backend to pay: it has no credential to ask with.
+    expect(world.sponsorRefusals).toHaveLength(0);
+    expect(world.sponsorRequests).toHaveLength(0);
+
+    // The app's page sends the approval through its own server, which adds the credential.
+    expect(await sendFromApp(page, answer.call)).toEqual({ status: 200, body: { transaction_hash: '0xbbb' } });
+    expect(world.sponsorRefusals).toHaveLength(0);
     expect(world.sponsorRequests).toHaveLength(1);
+    expect(world.sponsorRequests[0]!.endpoint).toBe('/api/sponsor');
+    expect(BigInt(world.sponsorRequests[0]!.account)).toBe(BigInt(ACCOUNT));
     const [call] = world.sponsorRequests[0]!.calls;
     expect(world.sponsorRequests[0]!.calls).toHaveLength(1);
     expect(BigInt(call!.to)).toBe(BigInt(TOKEN));
     expect(call!.selector).toBe(selectorOf('transfer'));
     expect(call!.data.map(BigInt)).toEqual([BigInt(GAME), 1_500_000_000_000_000_000n, 0n]);
+  });
+
+  test('with app-only sponsorship, an app without a credential gets the approval but no payment', async ({ page, context }) => {
+    const world = await setup(context);
+    world.approvedApp = { key: 'example_game_app_key', token: 'synthetic-server-fixture-credential' };
+    await installAppSponsorRoute(context, APP, world);
+    await signIn(page);
+    const store = await transactionFrom(page, APP);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    const answer = await transactionAnswer(page, store);
+    if (!answer.ok) throw new Error(answer.error);
+    expect(await sendFromApp(page, answer.call)).toEqual({ status: 403, body: { error: 'APP_AUTH_REQUIRED' } });
+    expect(world.sponsorRefusals).toHaveLength(1);
+    expect(world.sponsorRequests).toHaveLength(0);
   });
 
   test('an allowance is described as letting someone else spend', async ({ page, context }) => {
@@ -518,9 +581,10 @@ test.describe('transaction requests', () => {
     await expect(page.getByRole('cell', { name: '0x7, 0x9' })).toBeVisible();
     await expect(page.getByRole('cell', { name: 'end_turn' })).toBeVisible();
     await page.getByRole('button', { name: 'Approve' }).click();
-    expect((await transactionAnswer(page, store)).ok).toBe(true);
-    expect(world.sponsorRequests[0]!.endpoint).toBe('/api/sponsor');
-    expect(world.sponsorRequests[0]!.calls.map((call) => call.selector)).toEqual([selectorOf('move'), selectorOf('end_turn')]);
+    const answer = await transactionAnswer(page, store);
+    if (!answer.ok) throw new Error(answer.error);
+    expect(outsideCalls(answer.call.calldata as string[]).map((call) => call.selector)).toEqual([selectorOf('move'), selectorOf('end_turn')]);
+    expect(world.sponsorRequests).toHaveLength(0);
   });
 
   test('a denied transaction tells the app and sends nothing', async ({ page, context }) => {
@@ -575,7 +639,8 @@ test.describe('transaction requests', () => {
     await expect(page.getByRole('heading', { name: 'Transaction request' })).toBeVisible();
     await page.getByRole('button', { name: 'Approve' }).click();
     expect((await transactionAnswer(page, store)).ok).toBe(true);
-    expect(world.sponsorRequests).toHaveLength(1);
+    // Signing in went through the recovery relay; the approval itself asked no relayer to pay.
+    expect(world.sponsorRequests).toHaveLength(0);
   });
 });
 

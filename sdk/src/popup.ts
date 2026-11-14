@@ -257,15 +257,17 @@ export function connectWithPopup(options: ConnectOptions, store: KeyValueStore, 
 }
 
 /**
- * App side: asks the user to approve one transaction in a popup. Resolves with the transaction
- * hash once the network has accepted it. Same rules and failures as `connectWithPopup`; with
+ * App side: asks the user to approve one transaction in a popup. Resolves with the approved
+ * transaction, as `finishExecute` does: `call` is the owner-signed `execute_from_outside_v2`
+ * call, and nothing has been sent. Hand it to your own sponsor route with `sponsor(url, call)`,
+ * once, within `EXECUTE_APPROVAL_SECONDS`. Same rules and failures as `connectWithPopup`; with
  * the redirect fallback the app finishes with `finishExecute` when the user comes back.
  */
 export function executeWithPopup(
   options: { keychainUrl: string; redirectUri: string; appName?: string; calls: Call[] },
   store: KeyValueStore,
   popup: PopupOptions = {},
-): Promise<{ transactionHash: string }> {
+): Promise<{ account: string; call: Call }> {
   return viaPopup((redirectUri, pending) => beginExecute({ ...options, redirectUri }, pending), finishExecute, options.redirectUri, store, popup);
 }
 

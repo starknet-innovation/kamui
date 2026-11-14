@@ -54,6 +54,13 @@ export type World = {
   appleVisits: Record<string, string>[];
   /** Make the next /sponsor fail with this error. */
   sponsorError?: string;
+  /**
+   * The backend's PostgreSQL funding mode: /sponsor pays only for this approved app, identified
+   * by its public key and its server's private token. /wallet/sponsor takes no credential.
+   */
+  approvedApp?: { key: string; token: string };
+  /** Requests /sponsor refused for want of the approved app's credential. */
+  sponsorRefusals: { endpoint: string; account: string }[];
   /** Apple answers with this error instead of a token. */
   appleError?: string;
   /** Google's page sets Cross-Origin-Opener-Policy, which cuts a popup off from the page that opened it. */
@@ -71,7 +78,7 @@ export type World = {
 };
 
 export function newWorld(): World {
-  return { deployed: false, owners: [], anchor: 0n, epoch: 0, sessions: new Map(), tokens: new Map(), recoverRequests: [], sponsorRequests: [], pepperRequests: [], signatureChecks: [], issuerVisits: 0, appleVisits: [], registry: new Map(), registryRequests: [] };
+  return { deployed: false, owners: [], anchor: 0n, epoch: 0, sessions: new Map(), tokens: new Map(), recoverRequests: [], sponsorRequests: [], sponsorRefusals: [], pepperRequests: [], signatureChecks: [], issuerVisits: 0, appleVisits: [], registry: new Map(), registryRequests: [] };
 }
 
 function ownersChanged(world: World) {
@@ -187,7 +194,7 @@ function rpc(world: World, method: string, params: any): unknown {
 }
 
 /** Splits `execute_from_outside_v2` calldata into its calls. */
-function outsideCalls(calldata: string[]) {
+export function outsideCalls(calldata: string[]) {
   const calls: { to: string; selector: bigint; data: string[] }[] = [];
   let at = 5;
   for (let i = 0; i < Number(BigInt(calldata[4]!)); i++) {
@@ -260,6 +267,27 @@ function registryRefusal(world: World, action: RegistryAction, body: any, subjec
 }
 
 /**
+ * The backend's POST /sponsor and /wallet/sponsor, as the keychain's /api proxy reaches them.
+ * With `world.approvedApp` set, /sponsor answers as PostgreSQL funding mode does
+ * (services/backend/src/services/sponsor/funding.ts): no app key and token, no payment.
+ */
+function backendSponsor(world: World, endpoint: string, request: { account: string; calldata: string[] }, credential: { appKey?: string; token?: string }) {
+  if (world.sponsorError) {
+    const error = world.sponsorError;
+    world.sponsorError = undefined;
+    return { status: 400, body: { error } };
+  }
+  if (world.approvedApp && endpoint === '/api/sponsor' && (credential.appKey !== world.approvedApp.key || credential.token !== world.approvedApp.token)) {
+    world.sponsorRefusals.push({ endpoint, account: request.account });
+    return { status: 403, body: { error: 'APP_AUTH_REQUIRED' } };
+  }
+  const calls = outsideCalls(request.calldata);
+  world.sponsorRequests.push({ endpoint, account: request.account, calls });
+  applySponsored(world, calls);
+  return { status: 200, body: { transaction_hash: '0xbbb' } };
+}
+
+/**
  * The issuer's page sending the user back. A page that navigates, not a 302: WebKit cannot be
  * given a redirect as a faked answer.
  */
@@ -309,16 +337,12 @@ export async function installFakes(context: BrowserContext, world: World) {
   });
 
   await context.route(new RegExp(`^${KEYCHAIN}/api/(wallet/)?sponsor$`), async (route) => {
-    const request = route.request().postDataJSON();
-    if (world.sponsorError) {
-      const error = world.sponsorError;
-      world.sponsorError = undefined;
-      return json(route, { error }, 400);
-    }
-    const calls = outsideCalls(request.calldata);
-    world.sponsorRequests.push({ endpoint: new URL(route.request().url()).pathname, account: request.account, calls });
-    applySponsored(world, calls);
-    return json(route, { transaction_hash: '0xbbb' });
+    const headers = route.request().headers();
+    const { status, body } = backendSponsor(world, new URL(route.request().url()).pathname, route.request().postDataJSON(), {
+      appKey: headers['x-kamui-app-key'],
+      token: headers['x-kamui-sponsor-token'],
+    });
+    return json(route, body, status);
   });
 
   const registry = (path: string, action: RegistryAction, handle: (body: any) => unknown, subjectOf: (body: any) => string | undefined) =>
@@ -373,6 +397,18 @@ export async function installApp(context: BrowserContext, origin: string) {
   await context.route(`${origin}/**`, (route) =>
     route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>app</title><p>app</p>' }),
   );
+}
+
+/**
+ * An approved app's own server: its page posts `{ account, calldata }` to `{origin}/api/sponsor`,
+ * and the server adds its credential and forwards to the backend's /sponsor. The credential is
+ * the server's; a token the page sends is ignored. Install it after `installApp`.
+ */
+export async function installAppSponsorRoute(context: BrowserContext, origin: string, world: World, credential?: { key: string; token: string }) {
+  await context.route(`${origin}/api/sponsor`, async (route) => {
+    const { status, body } = backendSponsor(world, '/api/sponsor', route.request().postDataJSON(), { appKey: credential?.key, token: credential?.token });
+    return json(route, body, status);
+  });
 }
 
 export const selectorOf = selector;

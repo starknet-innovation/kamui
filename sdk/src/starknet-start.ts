@@ -165,7 +165,7 @@ export type KamuiReconnect = {
   isResuming: boolean;
   /** Why the last trip to the keychain did not succeed, e.g. "keychain: denied by the user". */
   error: string | null;
-  /** Hash of a transaction the user approved in the keychain just before this page load. */
+  /** Hash of a transaction the user approved in the keychain just before this page load, once the wallet's `sponsor` has sent it. */
   lastApproved: string | null;
 };
 

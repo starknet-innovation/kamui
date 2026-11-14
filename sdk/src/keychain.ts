@@ -2,7 +2,8 @@
 // helpers that build one and read the other.
 //
 //   connect   approve a session: what a key held by the app may do without asking again
-//   execute   approve one transaction, with the account's full authority
+//   execute   approve one transaction, with the account's full authority. The keychain signs it
+//             and hands it back; the app that asked has it sent, and pays for it
 //   sign      sign one message (SNIP-12 typed data) with an owner key, outside any session
 //
 // Version 1 uses full-page redirects, like an OAuth login: the app sends the user to the
@@ -67,8 +68,13 @@ export type ExecuteRequest = {
   calls: WireCall[];
 };
 
+/**
+ * An approval is the transaction itself, signed by the owner and not yet sent: the calldata of
+ * `execute_from_outside_v2` on `account`. The keychain holds no sponsorship credential, so it
+ * does not send it; the app that asked does, through its own server.
+ */
 export type ExecuteResult =
-  | { v: 1; id: string; ok: true; transactionHash: string }
+  | { v: 1; id: string; ok: true; account: string; calldata: string[] }
   | { v: 1; id: string; ok: false; error: string };
 
 export type SignMessageRequest = {
@@ -93,6 +99,10 @@ export const MAX_SIGN_MESSAGE_FIELDS = 200;
 /** Bounds on an execute request, so the approval screen can show all of it. */
 export const MAX_EXECUTE_CALLS = 10;
 export const MAX_EXECUTE_CALLDATA = 100;
+/** The longest calldata an approval can carry: the window and nonce, every call in full, and an owner signature. */
+export const MAX_EXECUTE_RESULT_CALLDATA = 5 + MAX_EXECUTE_CALLS * (3 + MAX_EXECUTE_CALLDATA) + 3;
+/** How long an approved transaction can still be sent, in seconds. */
+export const EXECUTE_APPROVAL_SECONDS = 600;
 
 const FRAGMENT_KEY = 'kamui';
 const isHex = (value: unknown): value is string => typeof value === 'string' && /^0x[0-9a-fA-F]{1,64}$/.test(value);
@@ -588,11 +598,15 @@ export function beginExecute(
 }
 
 /**
- * App side: reads the keychain's answer to an execute request. Returns the transaction hash, or
- * null when the fragment is not an answer. Throws if the user refused or the keychain reported
- * an error. The transaction has been accepted by the network when the user comes back.
+ * App side: reads the keychain's answer to an execute request. Returns the approved transaction,
+ * or null when the fragment is not an answer. Throws if the user refused or the keychain
+ * reported an error.
+ *
+ * Nothing has been sent yet. `call` is the owner-signed `execute_from_outside_v2` call: hand it
+ * to your own sponsor route with `sponsor(url, call)`, which returns the transaction hash. It
+ * can be sent once, as approved, within `EXECUTE_APPROVAL_SECONDS` of the approval.
  */
-export function finishExecute(fragment: string, store: KeyValueStore): { transactionHash: string } | null {
+export function finishExecute(fragment: string, store: KeyValueStore): { account: string; call: Call } | null {
   const data = fromFragment(fragment) as any;
   if (data === null) return null;
   const pendingText = store.getItem(PENDING_EXECUTE);
@@ -603,8 +617,10 @@ export function finishExecute(fragment: string, store: KeyValueStore): { transac
   }
   store.removeItem(PENDING_EXECUTE);
   if (data.ok !== true) throw new Error(`keychain: ${typeof data.error === 'string' ? data.error : 'refused'}`);
-  if (!isHex(data.transactionHash)) throw new Error('keychain: the answer is malformed');
-  return { transactionHash: data.transactionHash };
+  if (!isHex(data.account) || !Array.isArray(data.calldata) || data.calldata.length === 0 || data.calldata.length > MAX_EXECUTE_RESULT_CALLDATA || !data.calldata.every(isHex)) {
+    throw new Error('keychain: the answer is malformed');
+  }
+  return { account: data.account, call: { contractAddress: data.account, entrypoint: 'execute_from_outside_v2', calldata: [...data.calldata] } };
 }
 
 /**

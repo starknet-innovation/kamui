@@ -137,8 +137,17 @@ try {
   if (pendingRequestKind(sessionStorage) === 'execute') {
     // A declined or failed one-off call says nothing about the session: keep the connection.
     try {
-      const sent = finishExecute(location.hash, sessionStorage);
-      if (sent) log(`you approved the one-off call in Kamui: ${sent.transactionHash}`);
+      const approved = finishExecute(location.hash, sessionStorage);
+      // Take the answer out of the address bar before sending: a reload must not find it again.
+      history.replaceState(null, '', '/');
+      if (approved) {
+        // The keychain signed it and sent nothing. This app's server pays, like for a session call.
+        log('you approved the one-off call in Kamui; sending it');
+        const transaction = await sponsor(config.sponsorUrl, approved.call);
+        log(`one-off call: sent ${transaction}`);
+        await provider.waitForTransaction(transaction);
+        log('one-off call: confirmed');
+      }
     } catch (error) {
       log(`one-off call not sent: ${(error as Error).message}`);
     }

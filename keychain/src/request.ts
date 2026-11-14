@@ -16,7 +16,7 @@ export function pendingRequest(): Pending | null {
 
 type Answer =
   | { ok: true; account: string; chainId: string; classHash: string }
-  | { ok: true; transactionHash: string }
+  | { ok: true; account: string; calldata: string[] }
   | { ok: true; account: string; chainId: string; signature: string[] }
   | { ok: false; error: string };
 
