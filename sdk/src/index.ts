@@ -10,5 +10,6 @@ export * from './registry.js';
 export * from './sessionAccount.js';
 export * from './sessions.js';
 export * from './tokens.js';
+export * from './watch.js';
 export { keyPairFromPrivateKey, newKeyPair, randomFelt, signHash, type KeyPair } from './utils.js';
 export * from './client-proving.js';

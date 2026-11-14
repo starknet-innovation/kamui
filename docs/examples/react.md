@@ -40,6 +40,8 @@ Keep the keychain URL, your RPC and the session you ask for in one module, outsi
 2. loads the stored connection;
 3. checks on chain that the session is still alive (it ends when the user adds a device, revokes it, or it expires).
 
+While connected, it also runs [`watchSession`](/guide/sessions#being-told-when-it-ends), which tells it once when the session ends later on.
+
 <<< @/snippets/react/KamuiProvider.tsx
 
 ::: tip StrictMode and SSR

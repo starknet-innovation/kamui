@@ -21,6 +21,7 @@ Not audited, like the contracts. It builds as the npm package `@kamui/sdk` (ESM 
 | `sessions` | `createSessionCalls`, `addSessionCall`, `setSpendingPolicyCall`, `revokeSessionCall`, `revokeAllSessionsCall`, `sessionSignature`, and the checks `assertValidSession` and `unlimitedTokenCalls`. |
 | `tokens` | `readTokenInfo`, `formatTokenAmount`, `describeAmount`: a token's name and exact amounts for approval screens, with known, unverified and unknown tokens told apart. |
 | `outside` | Sponsored calls: `ownerOutsideExecution`, `sessionOutsideExecution`, `nextSessionNonce`. |
+| `watch` | `watchSession`: tells an app once when its session ends (expiry timer, and the account's `SessionKeyRevoked` / `AllSessionsRevoked` / `SessionKeySet` events, polled or pushed over a WebSocket), with the reason. `checkSessionEnded` and `isSessionRefusal` for a failed call; `sessionEventTracker` and `SESSION_END_EVENT_KEYS` for your own event source. |
 | `sessionAccount` | `createSessionAccount`: a starknet.js `Account` that signs as a session, for self-paid transactions. |
 
 ## Client-side login proving
