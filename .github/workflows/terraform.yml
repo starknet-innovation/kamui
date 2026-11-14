@@ -1,11 +1,15 @@
-# Terraform for the two AWS test accounts, run from this repository through OIDC. No AWS access
-# key is stored in GitHub; each job exchanges its GitHub token for a short-lived AWS session.
+# Read-only Terraform plan of github-oidc, the module that defines this repository's own AWS
+# access, in both test accounts, run through OIDC. No AWS access key is stored in GitHub; each job
+# exchanges its GitHub token for a short-lived session of the read-only plan role.
 #
-# A pull request, or a manual run left on its default `plan`, gets a read-only plan of every root
-# module. Applying is a manual run with `action: apply`, never something a merge does on its own: this tree still describes the retired Fargate design, while the live
-# Sepolia deployment is the operator-run lean package. Applying a root module here would create
-# or change real infrastructure that the lean deployment does not use. Point apply at a root
-# module only once you mean it. See infra/aws/terraform/github-oidc/README.md.
+# Nothing here applies. github-oidc is applied by an operator, never by CI, because it defines
+# CI's own access (infra/aws/terraform/github-oidc/README.md). The backend/ and pepper/ root
+# modules describe the retired Fargate design and are not planned: the live Sepolia deployment is
+# the operator-run lean package (infra/aws/lean). A plan that is not "No changes" means the live
+# roles drifted from this tree, or this tree changes them and an operator still has to apply it.
+#
+# Account-specific values (account ids, state buckets, the protected pepper key ARN) come from
+# repository variables, never from committed files.
 
 name: terraform
 
@@ -13,30 +17,12 @@ on:
   pull_request:
     paths: ['infra/aws/terraform/**', '.github/workflows/terraform.yml']
   workflow_dispatch:
-    inputs:
-      action:
-        description: plan (read-only, every root module) or apply (the module and account below)
-        required: true
-        default: plan
-        type: choice
-        options: [plan, apply]
-      root_module:
-        description: 'apply only: root module under infra/aws/terraform'
-        required: true
-        type: choice
-        options: [github-oidc, backend, pepper]
-      account:
-        description: "apply only: which account's credentials and state to use"
-        required: true
-        type: choice
-        options: [backend, pepper]
 
 permissions:
   contents: read
 
 concurrency:
-  # One Terraform run at a time per account: concurrent applies fight over the state lock.
-  group: terraform-${{ inputs.action == 'apply' && inputs.account || 'plan' }}
+  group: terraform-plan-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -45,22 +31,18 @@ env:
 
 jobs:
   plan:
-    if: github.event_name == 'pull_request' || inputs.action == 'plan'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write          # required to request the OIDC token
-      pull-requests: write     # to post the plan summary
     strategy:
       fail-fast: false
       matrix:
         include:
-          - root_module: github-oidc
-            account: backend
-          - root_module: backend
-            account: backend
-          - root_module: pepper
-            account: pepper
+          - account: backend
+            release_repository_names: '["kamui-sepolia/keychain","kamui-sepolia/backend","kamui-sepolia/pepper","kamui-sepolia/postgres","kamui-sepolia/caddy"]'
+          - account: pepper
+            release_repository_names: '[]'
     steps:
       - uses: actions/checkout@v4.2.2
 
@@ -79,70 +61,42 @@ jobs:
           role-session-name: gha-plan-${{ github.run_id }}
 
       - name: Plan
-        working-directory: infra/aws/terraform/${{ matrix.root_module }}
+        working-directory: infra/aws/terraform/github-oidc
         env:
           STATE_BUCKET: ${{ matrix.account == 'backend' && vars.AWS_BACKEND_STATE_BUCKET || vars.AWS_PEPPER_STATE_BUCKET }}
           TF_VAR_aws_account_id: ${{ matrix.account == 'backend' && vars.AWS_BACKEND_ACCOUNT_ID || vars.AWS_PEPPER_ACCOUNT_ID }}
           TF_VAR_aws_region: ${{ env.AWS_REGION }}
+          TF_VAR_service: ${{ matrix.account }}
+          TF_VAR_github_repository: ${{ github.repository }}
+          # This repository uses GitHub's immutable OIDC subjects (owner and repository ids).
+          TF_VAR_github_immutable_subject_prefix: repo:starknet-innovation@258895906/kamui@1455036596
+          TF_VAR_apply_environment: aws-${{ matrix.account }}-apply
+          TF_VAR_state_bucket_name: ${{ matrix.account == 'backend' && vars.AWS_BACKEND_STATE_BUCKET || vars.AWS_PEPPER_STATE_BUCKET }}
+          TF_VAR_release_repository_names: ${{ matrix.release_repository_names }}
+          TF_VAR_protected_kms_key_arns: ${{ matrix.account == 'pepper' && vars.AWS_PEPPER_PROTECTED_KMS_KEY_ARNS || '[]' }}
         run: |
           set -euo pipefail
+          if [ "${{ matrix.account }}" = pepper ] && [ "$TF_VAR_protected_kms_key_arns" = '[]' ]; then
+            echo "Set the repository variable AWS_PEPPER_PROTECTED_KMS_KEY_ARNS (a JSON list) first." >&2; exit 1
+          fi
           terraform init -input=false \
             -backend-config="bucket=$STATE_BUCKET" \
-            -backend-config="key=${{ matrix.root_module }}/terraform.tfstate" \
+            -backend-config="key=github-oidc/terraform.tfstate" \
             -backend-config="region=$AWS_REGION" \
             -backend-config="encrypt=true" \
             -backend-config="use_lockfile=true"
-          # The plan role cannot write anything, so a failure here is a plan that would need
-          # permissions the apply role may also lack. Read the error, do not widen the role to
-          # make it pass.
-          terraform plan -input=false -lock-timeout=5m -no-color -out=tfplan | tee plan.txt
+          # The plan role cannot write anything. A failure here is a plan that needs a permission
+          # the role lacks: read the error, do not widen the role to make it pass.
+          terraform plan -input=false -lock=false -detailed-exitcode -no-color > plan.txt || code=$?
           {
-            echo "### terraform plan — ${{ matrix.root_module }} (${{ matrix.account }} account)"
+            echo "### terraform plan — github-oidc (${{ matrix.account }} account)"
             echo '```'
-            tail -c 60000 plan.txt
+            sed -E 's/[0-9]{12}/<account>/g' plan.txt | tail -c 60000
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-      # The plan file can name real account ids and ARNs, so it is not kept as an artifact.
-      - name: Remove plan file
-        if: always()
-        run: rm -f infra/aws/terraform/${{ matrix.root_module }}/tfplan
-
-  apply:
-    if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
-    runs-on: ubuntu-latest
-    # Set this environment up with required reviewers. The apply role can additionally be bound
-    # to it, so approval gates the AWS credential and not just the job.
-    environment: aws-${{ inputs.account }}-apply
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4.2.2
-
-      - uses: hashicorp/setup-terraform@v3.1.2
-        with:
-          terraform_version: 1.10.5
-          terraform_wrapper: false
-
-      - uses: aws-actions/configure-aws-credentials@v4.0.2
-        with:
-          role-to-assume: ${{ inputs.account == 'backend' && vars.AWS_BACKEND_APPLY_ROLE_ARN || vars.AWS_PEPPER_APPLY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: gha-apply-${{ github.run_id }}
-
-      - name: Apply
-        working-directory: infra/aws/terraform/${{ inputs.root_module }}
-        env:
-          STATE_BUCKET: ${{ inputs.account == 'backend' && vars.AWS_BACKEND_STATE_BUCKET || vars.AWS_PEPPER_STATE_BUCKET }}
-          TF_VAR_aws_account_id: ${{ inputs.account == 'backend' && vars.AWS_BACKEND_ACCOUNT_ID || vars.AWS_PEPPER_ACCOUNT_ID }}
-          TF_VAR_aws_region: ${{ env.AWS_REGION }}
-        run: |
-          set -euo pipefail
-          terraform init -input=false \
-            -backend-config="bucket=$STATE_BUCKET" \
-            -backend-config="key=${{ inputs.root_module }}/terraform.tfstate" \
-            -backend-config="region=$AWS_REGION" \
-            -backend-config="encrypt=true" \
-            -backend-config="use_lockfile=true"
-          terraform apply -input=false -lock-timeout=5m -no-color -auto-approve
+          rm -f plan.txt
+          case "${code:-0}" in
+            0) echo "No changes: the live roles match this tree." ;;
+            2) echo "::warning::Changes pending: an operator must review and apply github-oidc in the ${{ matrix.account }} account." ;;
+            *) exit "$code" ;;
+          esac
