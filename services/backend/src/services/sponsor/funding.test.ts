@@ -38,7 +38,7 @@ function sponsorContext(sql: SQL, p: FundingPolicy, execute: () => Promise<{ tra
   } as unknown as SponsorContext;
 }
 
-test('funding policy is explicitly disabled by default and malformed configuration fails closed', () => {
+test('funding policy is explicitly disabled by default and malformed configuration fails closed', async () => {
   const off = disabledFundingPolicy();
   expect(off.global.txPerPeriod).toBe(0);
   expect(off.operations.deployment.txPerPeriod).toBe(0);
@@ -54,7 +54,7 @@ test('funding policy is explicitly disabled by default and malformed configurati
   expect(() => parseFundingPolicy(invalid)).toThrow('FUNDING_POLICY_INVALID');
   const overlong = 'x'.repeat(4097);
   const p = policy(); p.apps[appKey]!.credentialHash = createHash('sha256').update(overlong).digest('hex');
-  expect(() => new PostgresFunding({} as SQL, p).authorizeApp(appKey, overlong)).toThrow('APP_AUTH_REQUIRED');
+  await expect(new PostgresFunding({} as SQL, p).authorizeApp(appKey, overlong)).rejects.toThrow('APP_AUTH_REQUIRED');
 });
 
 describe.skipIf(!url)('PostgreSQL spending controls (explicit disposable database)', () => {

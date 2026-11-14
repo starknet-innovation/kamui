@@ -8,7 +8,7 @@
 //      status and an error code. Never the body, the client address or a free-form message.
 import { RpcError } from 'starknet';
 import { HttpError } from '../../http';
-import { MINUTE, type Limiter } from '../../limiter';
+import { HOUR, MINUTE, type Limiter } from '../../limiter';
 import { errorCode, log } from '../../log';
 import { metrics, renderMetrics } from '../../metrics';
 import { clientAddress } from '../../net';
@@ -20,11 +20,14 @@ import { listSessions, putSession, removeSession, type RegistryContext } from '.
 import { type RecoveryJobsService, RecoveryJobs } from '../recovery/jobs';
 import { prepareDeployment } from '../recovery/authenticated-deploy';
 import { APP_KEY_HEADER } from '../sponsor/budgets';
+import { SPONSOR_TOKEN_HEADER, type SponsorSelfService } from '../sponsor/funding';
 import { sponsorWalletManagement } from '../recovery/wallet-sponsor';
 
 /** Attempts per minute: one client, and everyone together. */
 export type RouteLimit = { perClient: number; global: number };
-export type RouteName = 'recover' | 'poll' | 'relay' | 'deploy' | 'sponsor' | 'registry';
+export type RouteName = 'recover' | 'poll' | 'relay' | 'deploy' | 'sponsor' | 'registry' | 'selfserve';
+/** Self-serve credential changes (rotations and revocations together) one app may make per hour. */
+export const CREDENTIAL_CHANGES_PER_APP_PER_HOUR = 5;
 
 /**
  * Defaults. They bound attempts, not successes: budgets and hourly caps sit behind them.
@@ -37,6 +40,8 @@ export const DEFAULT_LIMITS: Record<RouteName, RouteLimit> = {
   deploy: { perClient: 6, global: 60 },
   sponsor: { perClient: 30, global: 600 },
   registry: { perClient: 60, global: 1200 },
+  // An app's own server reading its usage or replacing its credential: few callers, cheap reads.
+  selfserve: { perClient: 20, global: 300 },
 };
 
 /** Reads RATE_LIMITS: `route=perClient/global` pairs separated by commas, e.g. `recover=3/30,sponsor=60/1200`. */
@@ -59,6 +64,8 @@ export type AppDeps = {
   /** Restore fence, checked before any POST work, including status/replay reads. */
   admissionGuard?: () => void | Promise<void>;
   sponsor: SponsorContext;
+  /** Usage and credential rotation for approved apps. Needs PostgreSQL funding; absent, the routes answer 503. */
+  selfServe?: SponsorSelfService;
   registry: RegistryContext;
   limiter: Limiter;
   limits?: Record<RouteName, RouteLimit>;
@@ -106,6 +113,20 @@ export function buildApp(deps: AppDeps) {
   const limits = deps.limits ?? DEFAULT_LIMITS;
   const hops = deps.trustedProxyHops ?? 0;
 
+  /** A self-serve route: the app's server proves itself with the same two headers as on /sponsor. */
+  const selfServe = (work: (service: SponsorSelfService, appKey: string | null, credential: string | null, body: any) => Promise<unknown>): Handler => async (body, _client, req) => {
+    if (!deps.selfServe) throw new HttpError(503, 'DURABLE_FUNDING_REQUIRED');
+    return work(deps.selfServe, req.headers.get(APP_KEY_HEADER), req.headers.get(SPONSOR_TOKEN_HEADER), body);
+  };
+  /** Rotation and revocation: authenticated first, then bounded per app, then done and noted without the key or the credential. */
+  const credentialChange = (event: string, change: (service: SponsorSelfService, appKey: string | null, credential: string | null) => Promise<unknown>) => selfServe(async (service, appKey, credential) => {
+    await service.authorizeApp(appKey, credential);
+    if (!(await deps.limiter.take(`credential:${appKey}`, CREDENTIAL_CHANGES_PER_APP_PER_HOUR, HOUR))) throw new HttpError(429, 'CREDENTIAL_CHANGE_LIMIT');
+    const result = await change(service, appKey, credential);
+    log('info', event, { budget: deps.sponsor.budgets.byKey.get(appKey!)?.name });
+    return result;
+  });
+
   const posts: Record<string, Route> = {
     '/recover': { limit: 'recover', fields: ['jobId', 'jwt', 'account', 'newPubkey', 'blinding', 'pepper'], status: 202, handler: async (b: RecoverRequest & { jobId: string }) => {
       if (!deps.enableServerProving) throw new HttpError(410, 'CLIENT_PROVING_REQUIRED');
@@ -140,6 +161,9 @@ export function buildApp(deps: AppDeps) {
     } },
     '/wallet/sponsor': { limit: 'sponsor', fields: ['account'], handler: (b: SponsorRequest) => sponsorWalletManagement(b, { ...deps.sponsor, chainId: deps.registry.chainId }) },
     '/sponsor': { limit: 'sponsor', fields: ['account'], handler: (b: SponsorRequest, _client, req) => sponsorOutsideExecution(b, req.headers.get(APP_KEY_HEADER), deps.sponsor, req.headers.get('x-kamui-sponsor-token')) },
+    '/sponsor/usage': { limit: 'selfserve', fields: [], handler: selfServe((service, appKey, credential, b) => service.appUsage(appKey, credential, b.account)) },
+    '/sponsor/token/rotate': { limit: 'selfserve', fields: [], handler: credentialChange('sponsor_credential_rotated', (service, appKey, credential) => service.rotateAppCredential(appKey, credential)) },
+    '/sponsor/token/revoke': { limit: 'selfserve', fields: [], handler: credentialChange('sponsor_credential_revoked', (service, appKey, credential) => service.revokeAppCredential(appKey, credential)) },
     '/registry/sessions': { limit: 'registry', fields: ['account'], handler: (b) => putSession(b, deps.registry) },
     '/registry/sessions/list': { limit: 'registry', fields: ['account'], handler: (b) => listSessions(b, deps.registry) },
     '/registry/sessions/remove': { limit: 'registry', fields: ['account', 'publicKey'], handler: (b) => removeSession(b, deps.registry) },
@@ -207,7 +231,7 @@ export function buildApp(deps: AppDeps) {
         log('error', 'request_failed', { route: path, status: 500, error: errorCode(e) });
         response = json({ error: 'INTERNAL' }, 500);
       }
-      if (['/recover', '/recover/status', '/relay', '/deploy/authenticated'].includes(path)) response.headers.set('cache-control', 'no-store');
+      if (['/recover', '/recover/status', '/relay', '/deploy/authenticated', '/sponsor/usage', '/sponsor/token/rotate', '/sponsor/token/revoke'].includes(path)) response.headers.set('cache-control', 'no-store');
       if (path !== '/metrics' && path !== '/live') metrics.requests.inc({ route: path, outcome: outcome(response.status) });
       return response;
     },

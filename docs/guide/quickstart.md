@@ -41,7 +41,7 @@ export default defineConfig({
 
 ## 2. Get sponsorship credentials
 
-Session calls are paid for by Kamui on behalf of **approved apps**. Ask the Kamui team to register your app. You receive:
+Session calls are paid for by Kamui on behalf of **approved apps**. Ask the Kamui team to register your app (see [Getting approved](/guide/sponsorship#getting-approved)). You receive:
 
 - a public **app key** (`KAMUI_APP_KEY`), and
 - a private **sponsor token** (`KAMUI_SPONSOR_TOKEN`) that only your server may hold.

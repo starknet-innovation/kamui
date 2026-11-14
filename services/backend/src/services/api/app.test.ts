@@ -290,3 +290,112 @@ test('wallet maintenance HTTP path uses owner authorization and its separate fun
   const response=await post('/wallet/sponsor',{account:ACCOUNT,calldata});
   expect(response.status).toBe(200);expect(debits).toBe(1);expect(sends).toBe(1);
 });
+
+describe('self-serve sponsorship routes', () => {
+  const credential = 'synthetic-server-fixture-credential';
+  const issued = 'synthetic-newly-issued-fixture-credential';
+  const auth = { 'x-kamui-app-key': APP_KEY, 'x-kamui-sponsor-token': credential };
+  const PATHS = ['/sponsor/usage', '/sponsor/token/rotate', '/sponsor/token/revoke'];
+  function service() {
+    const seen = { usage: [] as unknown[], rotations: 0, revocations: 0, authorizations: 0 };
+    const check = (key: string | null | undefined, token: string | null | undefined) => { if (key !== APP_KEY || token !== credential) throw new HttpError(403, 'APP_AUTH_REQUIRED'); };
+    const selfServe = {
+      authorizeApp: async (key: any, token: any) => { seen.authorizations++; check(key, token); },
+      appUsage: async (key: any, token: any, account?: string) => { check(key, token); seen.usage.push(account); return { limits: {}, usage: { tx: 1 }, paused: false, credentialRotatedAt: null } as any; },
+      rotateAppCredential: async (key: any, token: any) => { check(key, token); seen.rotations++; return { token: issued, rotatedAt: 1 }; },
+      revokeAppCredential: async (key: any, token: any) => { check(key, token); seen.revocations++; return { revokedAt: 2 }; },
+    };
+    return { selfServe, seen };
+  }
+
+  test('without durable funding the routes answer 503 and do nothing', async () => {
+    const { post } = app();
+    await quietly(async () => {
+      for (const path of PATHS) {
+        const response = await post(path, {}, auth);
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'DURABLE_FUNDING_REQUIRED' });
+      }
+    });
+  });
+
+  test('each route needs the app key and its credential, is POST only and is never cached', async () => {
+    const { selfServe, seen } = service();
+    const { post, get } = app({ selfServe }, { selfserve: { perClient: 1000, global: 1000 } });
+    await quietly(async () => {
+      for (const path of PATHS) {
+        for (const headers of [{}, { 'x-kamui-app-key': APP_KEY }, { 'x-kamui-sponsor-token': credential }, { ...auth, 'x-kamui-sponsor-token': 'wrong' }, { ...auth, 'x-kamui-app-key': 'kamui_app_someone_else_0001' }] as Record<string, string>[]) {
+          const response = await post(path, {}, headers);
+          expect(response.status).toBe(403);
+          expect(await response.json()).toEqual({ error: 'APP_AUTH_REQUIRED' });
+          expect(response.headers.get('cache-control')).toBe('no-store');
+        }
+        expect((await get(path, auth)).status).toBe(405);
+      }
+    });
+    expect(seen.usage).toEqual([]); expect(seen.rotations).toBe(0); expect(seen.revocations).toBe(0);
+  });
+
+  test('usage passes the optional account through; rotation returns the new credential once; nothing secret is logged', async () => {
+    const { selfServe, seen } = service();
+    const { post } = app({ selfServe });
+    const { lines } = await quietly(async () => {
+      const usage = await post('/sponsor/usage', { account: ACCOUNT }, auth);
+      expect(usage.status).toBe(200);
+      expect(usage.headers.get('cache-control')).toBe('no-store');
+      expect((await usage.json()).usage).toEqual({ tx: 1 });
+      expect((await post('/sponsor/usage', {}, auth)).status).toBe(200);
+      const rotated = await post('/sponsor/token/rotate', {}, auth);
+      expect(rotated.status).toBe(200);
+      expect(rotated.headers.get('cache-control')).toBe('no-store');
+      expect(await rotated.json()).toEqual({ token: issued, rotatedAt: 1 });
+      expect(await (await post('/sponsor/token/revoke', {}, auth)).json()).toEqual({ revokedAt: 2 });
+      await post('/sponsor/token/rotate', {}, { ...auth, 'x-kamui-sponsor-token': 'wrong-fixture-credential' });
+    });
+    expect(seen.usage).toEqual([ACCOUNT, undefined]);
+    const logged = lines.join('\n');
+    expect(logged).toContain('"event":"sponsor_credential_rotated","budget":"demo"');
+    expect(logged).toContain('"event":"sponsor_credential_revoked","budget":"demo"');
+    for (const secret of [credential, issued, 'wrong-fixture-credential', APP_KEY]) expect(logged).not.toContain(secret);
+  });
+
+  test('one app may change its credential a few times an hour; refused attempts do not use that up', async () => {
+    const { selfServe, seen } = service();
+    const { post } = app({ selfServe }, { selfserve: { perClient: 1000, global: 1000 } });
+    await quietly(async () => {
+      // Someone who knows only the public app key cannot lock the app out of rotating.
+      for (let i = 0; i < 20; i++) expect((await post('/sponsor/token/rotate', {}, { 'x-kamui-app-key': APP_KEY, 'x-kamui-sponsor-token': 'guess' })).status).toBe(403);
+      for (let i = 0; i < 4; i++) expect((await post('/sponsor/token/rotate', {}, auth)).status).toBe(200);
+      expect((await post('/sponsor/token/revoke', {}, auth)).status).toBe(200);
+      for (const path of ['/sponsor/token/rotate', '/sponsor/token/revoke']) {
+        const refused = await post(path, {}, auth, '203.0.113.77');
+        expect(refused.status).toBe(429);
+        expect(await refused.json()).toEqual({ error: 'CREDENTIAL_CHANGE_LIMIT' });
+      }
+      // Reading usage is not a credential change.
+      expect((await post('/sponsor/usage', {}, auth)).status).toBe(200);
+    });
+    expect(seen.rotations).toBe(4); expect(seen.revocations).toBe(1);
+  });
+
+  test('a client over the route limit is refused before the credential is looked at', async () => {
+    const { selfServe, seen } = service();
+    const { post } = app({ selfServe }, { selfserve: { perClient: 2, global: 100 } });
+    await quietly(async () => {
+      for (const path of ['/sponsor/usage', '/sponsor/token/rotate']) expect((await post(path, {}, { 'x-kamui-app-key': APP_KEY, 'x-kamui-sponsor-token': 'guess' })).status).toBe(403);
+      const before = { ...seen };
+      for (const path of PATHS) {
+        const refused = await post(path, {}, auth);
+        expect(refused.status).toBe(429);
+        expect(await refused.json()).toEqual({ error: 'RATE_LIMITED' });
+      }
+      expect(seen).toEqual(before);
+      expect((await post('/sponsor/usage', {}, auth, '203.0.113.2')).status).toBe(200);
+    });
+  });
+
+  test('RATE_LIMITS can set the self-serve limit', () => {
+    expect(parseLimits('selfserve=3/30').selfserve).toEqual({ perClient: 3, global: 30 });
+    expect(DEFAULT_LIMITS.selfserve.perClient).toBeGreaterThan(0);
+  });
+});

@@ -78,7 +78,7 @@ export function requireSignedFeeBounds(estimate: { overall_fee: bigint | string 
 export async function sponsorOutsideExecution(body: SponsorRequest, appKey: string | null, ctx: SponsorContext, credential?: string | null): Promise<SponsorResult> {
   const req = parseSponsorRequest(body);
   await ctx.assertPaidAvailable?.();
-  ctx.funding?.authorizeApp(appKey, credential);
+  await ctx.funding?.authorizeApp(appKey, credential);
   const execution = ctx.paymaster?.prepare(req.calldata);
   const budget = budgetFor(ctx.budgets, appKey);
   if (!budget) {

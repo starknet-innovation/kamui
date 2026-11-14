@@ -9,6 +9,8 @@
 // POST /recover and legacy /deploy are disabled in this process (410).
 // POST /wallet/sponsor {account, calldata}: owner-authorized, self-management calls only.
 // Kamui: POST /sponsor {account, calldata}, optional x-kamui-app-key header => { transaction_hash }. See recovery/sponsor.ts.
+// Kamui: POST /sponsor/usage {account?}, /sponsor/token/rotate {}, /sponsor/token/revoke {}: an approved app's own
+//   usage against its limits and its credential, authenticated like /sponsor. See sponsor/funding.ts.
 // Kamui: POST /registry/sessions, /registry/sessions/list, /registry/sessions/remove. See registry/registry.ts.
 // GET /health/api => { ok: true, chain, deploys, pepper_service, sponsor, proving: "browser" }
 // GET /health/prover => { ok: false, reason: "not configured" } (historical health route)
@@ -104,6 +106,7 @@ async function main(): Promise<void> {
     chain,
     ctx,
     sponsor: { ...ctx, budgets: storage.fundingPolicy ? sponsorBudgetsFromFundingPolicy(storage.fundingPolicy) : loadBudgets(chain, { file: process.env.SPONSOR_BUDGETS_FILE, sponsoredPerHour: process.env.SPONSORED_PER_HOUR }), ledger, paymaster: paymasterFromEnvironment(chainId) },
+    selfServe: storage.funding,
     registry: { provider, classHash: ctx.classHash, chainId, store },
     limiter,
     limits: parseLimits(process.env.RATE_LIMITS),

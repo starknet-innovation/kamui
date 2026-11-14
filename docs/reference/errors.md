@@ -44,6 +44,18 @@ When the request itself cannot be read or trusted, the keychain shows the reason
 
 Budget is debited **before** a transaction is sent and is not refunded for timeouts or reverts.
 
+### From the usage and token routes
+
+`/api/sponsor/usage`, `/api/sponsor/token/rotate` and `/api/sponsor/token/revoke` ([guide](/guide/sponsorship#usage-and-limits)) answer `{ "error": "<CODE>" }` like the sponsor endpoint.
+
+| Code | Meaning |
+|---|---|
+| `APP_AUTH_REQUIRED` (403) | Missing or wrong app key or token, or a token that was rotated or revoked |
+| `BAD_ACCOUNT` (400) | `account` in a usage request is not a Starknet address |
+| `CREDENTIAL_CHANGE_LIMIT` (429) | The app changed its token 5 times in the last hour |
+| `RATE_LIMITED` (429) | Too many requests from this client. Retry after a minute |
+| `DURABLE_FUNDING_REQUIRED` (503) | This deployment has no durable funding store, so there is nothing to report or rotate |
+
 ## On chain
 
 A sponsored call that passes the sponsor checks can still revert. The account refuses, among others, a call outside the session's scope, an amount above a spending limit, an expired or revoked session, and a nonce outside the session's range.
