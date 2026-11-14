@@ -29,6 +29,40 @@ The stored connection, without checking it on chain.
 
 Whether the session still exists on the account and has not expired. It ends on any change of devices.
 
+### `watchSession(connection, provider, onEnded, options?): () => void`
+
+Calls `onEnded({ reason, transactionHash?, blockNumber? })` once when the session ends, then stops. Returns a function that stops it early. Expiry is a local timer; revocation and device changes come from the account's events, polled with `starknet_getEvents` or pushed over a WebSocket. See [Being told when it ends](/guide/sessions#being-told-when-it-ends).
+
+| Option | Default | |
+|---|---|---|
+| `pollIntervalMs` | `30000` | Time between two reads of the account's events |
+| `channel` | none | A starknet.js `WebSocketChannel`. Events are pushed and nothing is polled; falls back to polling if the subscription cannot be opened |
+| `onError` | none | Called with a failed read. The watcher retries at the next interval |
+| `now`, `timers` | system | Clock (unix seconds) and timers, for tests |
+
+`reason` is one of:
+
+| | |
+|---|---|
+| `expired` | `validUntil` passed |
+| `revoked` | The user revoked this session |
+| `all-revoked` | The user revoked every session |
+| `owners-changed` | The user added or removed a device |
+| `replaced` | The same session key was registered again with another expiry |
+| `gone` | The account no longer has the session, and the cause was not seen |
+
+### `checkSessionEnded(connection, provider, now?): Promise<SessionEnd | null>`
+
+One look: `null` while the session is alive, else `{ reason }` with `expired` (decided locally), `replaced` or `gone`. For use after a failed call.
+
+### `isSessionRefusal(error): boolean`
+
+Whether an error carries the account's `Kamui: invalid session` refusal, as text or as the felt a node prints. The account gives it for an ended session, a call outside the scope and a nonce outside the session's range; follow it with `checkSessionEnded`. `false` proves nothing: a relayer may not pass the reason on, and a self-paid transaction is refused at validation without it.
+
+### `sessionEventTracker(session)`, `SESSION_END_EVENT_KEYS`
+
+For your own event source. `SESSION_END_EVENT_KEYS` is the `keys` filter for `starknet_getEvents` or `starknet_subscribeEvents` on the account's address. `sessionEventTracker({ publicKey, validUntil })` returns `{ push(event), ended }`: push the events in the order they were emitted and read `ended` (`null`, or the reason).
+
 ### `forgetConnection(store): void`
 
 Removes the connection and any pending request. Does not revoke the session on chain; the user does that from the keychain.
