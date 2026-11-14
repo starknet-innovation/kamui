@@ -28,6 +28,7 @@ export default defineConfig({
           { text: 'Quickstart', link: '/guide/quickstart' },
           { text: 'Sessions', link: '/guide/sessions' },
           { text: 'Sponsorship', link: '/guide/sponsorship' },
+          { text: 'Popup mode', link: '/guide/popup' },
           { text: 'Status and limitations', link: '/guide/limitations' },
         ],
       },

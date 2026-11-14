@@ -13,6 +13,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 | `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `beginSignMessage` and `finishSignMessage` for one owner-signed message, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `parseSignMessageRequest`, `sessionProblems`, `executeProblems`, `signMessageProblems`, `describeCall`. |
 | `messages` | SNIP-12 typed data signed as the account: `sessionSignTypedData` (a session, `[session_pubkey, r, s, valid_until]`), `ownerSignTypedData` (`[r, s]`), `verifyMessageSignature` (the account's `is_valid_signature`), `typedDataHash`, `typedDataFields`. |
 | `native` | Native apps through a bounce page on the app's own HTTPS domain: `beginNativeConnect` and `finishNativeConnect` for the page, `newNativeHandoff`, `nativeStartUrl` and `openNativeHandoff` for the app. The session key is made in the page and reaches the app sealed, over an https app link. Unit-tested; not run on devices. See `../docs/native/bounce-page.md`. |
+| `popup` | The keychain's requests in a popup, so the app's page is not reloaded: `connectWithPopup`, `executeWithPopup`, `signMessageWithPopup` (promises, with a fallback to the redirect when the popup is blocked), `relayPopupResult` for the page the popup ends on, and `KeychainPopupError`. |
 | `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
 | `client-proving` | `browserRecoverBackend`, `ClientProver`, V2 facts/profile helpers: local proof orchestration, authenticated first deployment and durable relay polling. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |
@@ -138,7 +139,7 @@ bun test test/vectors.test.ts         # 14 tests, no network; the published vect
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0
 (cd ../contracts && scarb build)
-bun test test/devnet.test.ts          # 8 tests against the devnet
+bun test test/devnet.test.ts          # 9 tests against the devnet
 ```
 
 `test/vectors/session-signing.json` holds test vectors for session signing in other languages (`../docs/reference/session-signing.md`). Regenerate it with `bun run test/vectors/generate.ts` after a deliberate change to what the SDK signs; `test/vectors.test.ts` fails until it matches.
