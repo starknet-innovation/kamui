@@ -20,7 +20,7 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 - **No wallet connectors.** No `starknet-react` connector, no get-starknet / wallet-standard support. Apps use the redirect helpers directly.
 - **Redirects only.** Your page reloads on every connect and one-off approval. There is no popup or iframe mode.
 - **One-off approvals fail on hosted Sepolia.** The keychain's `/execute` page posts the user's transaction to the sponsor endpoint without app credentials, and the hosted backend refuses it with `APP_AUTH_REQUIRED`.
-- **No message signing API.** Sessions can sign SNIP-12 messages as the account on chain, but the SDK has no helper for it and the keychain has no `signMessage` request.
+- **Message signing is not on hosted Sepolia yet.** `sessionSignTypedData` works against any deployed account. The keychain's `/sign` page (`beginSignMessage`) is in the code but only reaches the hosted keychain with its next release.
 - **No native SDKs** and no mobile support. See [Native](/native/overview).
 
 ### Sponsorship

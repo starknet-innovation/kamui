@@ -80,9 +80,40 @@ if (!(await isConnectionAlive(connection, provider))) {
 | `kamui.pending` | The request in flight and its session key pair, until the answer arrives |
 | `kamui.connection` | The account, chain, class hash and session key pair |
 | `kamui.pending.execute` | The id of a one-off transaction request in flight |
+| `kamui.pending.sign` | The id of a sign-message request in flight |
 
 - `localStorage` keeps the session across reloads and tabs. Any script running on your origin can read it, so it is only as safe as your page. The session's scope and limits cap the damage.
 - `sessionStorage` forgets it when the tab closes. The user approves a new session in each tab.
+
+## Signing messages
+
+A session can sign SNIP-12 typed data as the account, for example to prove to your server who is playing. `sessionSignTypedData` returns the signature in the format the account accepts, with no prompt:
+
+```ts
+import { sessionSignTypedData, verifyMessageSignature } from '@kamui/sdk';
+
+const signature = sessionSignTypedData(connection, typedData); // [session_pubkey, r, s, valid_until]
+
+// on your server:
+const ok = await verifyMessageSignature(provider, connection.account, typedData, signature);
+```
+
+The session's scope and limits do not apply to messages: while the session lasts it can sign any message. The signature stops verifying when the session expires, is revoked, or the user adds or removes a device. Put a nonce and an expiry in the message, and do not treat a session signature as the user's own consent to anything the session could not do.
+
+Without a session, or when the user themself must sign (a sign-in), send them to the keychain with `beginSignMessage`. They see your origin, the domain and every value of the message, and sign with their account's owner key:
+
+```ts
+import { beginSignMessage, finishSignMessage, pendingRequestKind } from '@kamui/sdk';
+
+location.assign(beginSignMessage({ keychainUrl, redirectUri: `${location.origin}/`, appName: 'My game', typedData }, localStorage));
+
+// after the redirect back:
+if (pendingRequestKind(localStorage) === 'signMessage') {
+  const signed = finishSignMessage(location.hash, localStorage); // { account, chainId, signature } or throws if denied
+}
+```
+
+The typed data must be SNIP-12 revision 1 with the account's `chainId` in its domain. The keychain never signs an outside execution as a message. Verify the answer with `verifyMessageSignature` before relying on it.
 
 ## Outside the session: one-off approvals
 

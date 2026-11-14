@@ -33,9 +33,9 @@ Whether the session still exists on the account and has not expired. It ends on 
 
 Removes the connection and any pending request. Does not revoke the session on chain; the user does that from the keychain.
 
-### `pendingRequestKind(store): 'connect' | 'execute' | null`
+### `pendingRequestKind(store): 'connect' | 'execute' | 'signMessage' | null`
 
-Which answer the app is waiting for. Call it before `finishConnect`/`finishExecute` to pick the right one.
+Which answer the app is waiting for. Call it before `finishConnect`/`finishExecute`/`finishSignMessage` to pick the right one.
 
 ## Sending
 
@@ -60,6 +60,28 @@ Stores the pending request (`kamui.pending.execute`) and returns the keychain UR
 ### `finishExecute(fragment, store): { transactionHash } | null`
 
 Reads the answer. Throws if the user denied or the keychain reported an error.
+
+## Signing messages
+
+### `sessionSignTypedData(connection, typedData): string[]`
+
+Signs SNIP-12 typed data with the session key, as the connected account: `[session_pubkey, r, s, valid_until]`. No prompt and no transaction. The account's `is_valid_signature` accepts it while the session exists and has not expired; the session's scope and limits do not apply to messages.
+
+### `beginSignMessage({ keychainUrl, redirectUri, appName?, typedData }, store): string`
+
+Stores the pending request (`kamui.pending.sign`) and returns the keychain URL that asks the user to sign `typedData` with their account's owner key. Needs no session. The typed data must be SNIP-12 revision 1 and its domain must name the account's network.
+
+### `finishSignMessage(fragment, store): { account, chainId, signature } | null`
+
+Reads the answer. `signature` is the owner's `[r, s]`. Throws if the user denied or the keychain reported an error.
+
+### `verifyMessageSignature(provider, account, typedData, signature): Promise<boolean>`
+
+Asks the account whether it accepts the signature for that message (`is_valid_signature`). Works for owner and session signatures. Run it on your server before trusting a sign-in.
+
+### `typedDataHash(typedData, account): string`
+
+The SNIP-12 message hash the account signs. It commits to the account address.
 
 ## Reading an account
 
