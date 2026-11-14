@@ -43,13 +43,17 @@ export default defineConfig({
       },
       {
         text: 'Native',
-        items: [{ text: 'Overview', link: '/native/overview' }],
+        items: [
+          { text: 'Overview', link: '/native/overview' },
+          { text: 'Bounce page', link: '/native/bounce-page' },
+        ],
       },
       {
         text: 'Reference',
         items: [
           { text: 'SDK (app side)', link: '/reference/sdk' },
           { text: 'Keychain protocol', link: '/reference/protocol' },
+          { text: 'Session signing', link: '/reference/session-signing' },
           { text: 'Errors', link: '/reference/errors' },
         ],
       },
