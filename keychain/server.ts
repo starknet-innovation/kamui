@@ -160,7 +160,7 @@ Bun.serve({
         return new Response(response.body, { status: response.status, headers: { ...security, 'content-type': 'application/json' } });
       } catch { return new Response('{"error":"API_UNAVAILABLE"}', { status: 502, headers: { ...security, 'content-type': 'application/json' } }); }
     }
-    if (url.pathname === '/' || url.pathname === '/connect' || url.pathname === '/execute' || url.pathname === '/callback' || url.pathname === '/link') {
+    if (url.pathname === '/' || url.pathname === '/connect' || url.pathname === '/execute' || url.pathname === '/sign' || url.pathname === '/callback' || url.pathname === '/link') {
       return respond(page, 'text/html; charset=utf-8');
     }
     return new Response('not found', { status: 404 });

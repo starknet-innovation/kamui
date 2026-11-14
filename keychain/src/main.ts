@@ -3,6 +3,7 @@
 // Pages:
 //   /connect   an app asks to connect; the request is in the URL fragment
 //   /execute   an app asks for one transaction to be approved
+//   /sign      an app asks for one message to be signed
 //   /callback  the issuer returns here after a sign-in
 //   /link      a signed-in device's link, opened on a device to be added without a sign-in
 //   /          this device's account: owners, sessions, recovery file
@@ -16,16 +17,16 @@
 //   tokens.ts    tokens and limits as the pages show them
 //   login.ts     sign-in
 //   sessions.ts  the session registry, and what the account says
-//   approval.ts  the connect and execute approval pages
+//   approval.ts  the connect, execute and sign-message approval pages
 //   home.ts      the account page
 //   link.ts      adding a device from one that is already signed in
 //   main.ts      routing (this file)
 import { finishLogin, showSignIn } from './login';
-import { KamuiReader, parseConnectRequest, parseExecuteRequest } from '../../sdk/src';
+import { KamuiReader, parseConnectRequest, parseExecuteRequest, parseSignMessageRequest } from '../../sdk/src';
 import { loadLogin, loadPendingLink } from './vault';
 import { provider } from './context';
 import { REQUEST, answer, pendingRequest, type Pending } from './request';
-import { showApproval, showTransaction } from './approval';
+import { showApproval, showMessage, showTransaction } from './approval';
 import { showHome } from './home';
 import { showLinkInvite, showLinkWaiting } from './link';
 import { button, el, show, status } from './ui';
@@ -48,6 +49,7 @@ async function resume() {
   const pending = pendingRequest();
   if (pending?.kind === 'connect') return showApproval(pending.request, login.device, login.account);
   if (pending?.kind === 'execute') return showTransaction(pending.request, login.device, login.account);
+  if (pending?.kind === 'signMessage') return showMessage(pending.request, login.device, login.account);
   return showHome(login.device, login.account, resume);
 }
 
@@ -64,6 +66,11 @@ async function main() {
     history.replaceState(null, '', '/execute');
     const request = parseExecuteRequest(fragment, document.referrer);
     if (request) sessionStorage.setItem(REQUEST, JSON.stringify({ kind: 'execute', request } satisfies Pending));
+  } else if (location.pathname === '/sign') {
+    const fragment = location.hash;
+    history.replaceState(null, '', '/sign');
+    const request = parseSignMessageRequest(fragment, document.referrer);
+    if (request) sessionStorage.setItem(REQUEST, JSON.stringify({ kind: 'signMessage', request } satisfies Pending));
   } else if (location.pathname === '/callback') {
     await finishLogin();
   } else if (location.pathname === '/link') {

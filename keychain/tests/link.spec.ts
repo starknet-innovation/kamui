@@ -3,7 +3,10 @@
 // the same engine with memory64 turned off, standing in for a browser that cannot prove. This
 // shows the flow needs no proof and no sign-in on the new device; it is not a run on a phone.
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { ACCOUNT, CHAIN_ID, CLASS_HASH, KEYCHAIN, installFakes, newWorld, selectorOf, type World } from './fakes';
+import { beginSignMessage, finishSignMessage, typedDataHash, type KeyValueStore } from '../../sdk/src';
+import { ACCOUNT, CHAIN_ID, CLASS_HASH, KEYCHAIN, installApp, installFakes, newWorld, selectorOf, signedBy, type World } from './fakes';
+
+const APP = 'http://localhost:5199';
 
 async function signIn(page: Page) {
   await page.goto('/');
@@ -259,4 +262,42 @@ test('a browser signed in to the same account is sent home by a link, and makes 
   await expect(page.getByRole('heading', { name: 'Your account' })).toBeVisible();
   expect(await vaultKeys(page)).not.toContain('pending-link');
   expect(world.owners).toHaveLength(1);
+});
+
+test('a device added from another one, which holds no pepper or recovery file, signs a message for an app', async ({ page, context, browser }) => {
+  const world = newWorld();
+  await installFakes(context, world);
+  await signIn(page);
+  const other = await browserThatCannotProve(browser, world);
+  await installApp(other.context, APP);
+  const code = await makeCode(other.page, await makeLink(page));
+  await page.locator('#link-code').fill(code);
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Yes, add this device' }).click();
+  await expect(other.page.getByRole('heading', { name: 'Your account' })).toBeVisible();
+  await expect(other.page.getByText(/holds no recovery file/)).toBeVisible();
+
+  const typedData = {
+    types: {
+      StarknetDomain: [{ name: 'name', type: 'shortstring' }, { name: 'version', type: 'shortstring' }, { name: 'chainId', type: 'shortstring' }, { name: 'revision', type: 'shortstring' }],
+      SignIn: [{ name: 'statement', type: 'string' }],
+    },
+    primaryType: 'SignIn',
+    domain: { name: 'Example Game', version: '1', chainId: CHAIN_ID, revision: '1' },
+    message: { statement: 'Sign in to Example Game' },
+  };
+  const data = new Map<string, string>();
+  const store: KeyValueStore = { getItem: (k) => data.get(k) ?? null, setItem: (k, v) => void data.set(k, v), removeItem: (k) => void data.delete(k) };
+  const url = beginSignMessage({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/`, appName: 'Example Game', typedData }, store);
+  await other.page.goto(`${APP}/`);
+  await other.page.evaluate((target) => location.assign(target), url);
+  await expect(other.page.getByRole('heading', { name: 'Signature request' })).toBeVisible();
+  await other.page.getByRole('button', { name: 'Sign', exact: true }).click();
+  await other.page.waitForURL(`${APP}/**`);
+  const answer = finishSignMessage(new URL(other.page.url()).hash, store)!;
+  expect(BigInt(answer.account)).toBe(BigInt(ACCOUNT));
+  // Signed by the linked device's key, the account's second owner.
+  expect(world.owners).toHaveLength(2);
+  expect(signedBy(typedDataHash(typedData, ACCOUNT), answer.signature[0]!, answer.signature[1]!, world.owners[1]!)).toBe(true);
+  await other.context.close();
 });

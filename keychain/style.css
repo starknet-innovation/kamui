@@ -9,6 +9,7 @@ table { border-collapse: collapse; width: 100%; margin: 8px 0; }
 td, th { text-align: left; padding: 5px 12px 5px 0; vertical-align: top; border-bottom: 1px solid #ececf0; }
 th { font-weight: 600; color: #5c5c66; font-size: 13px; }
 code { font: 13px/1.5 ui-monospace, monospace; word-break: break-all; }
+pre { font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; margin: 8px 0; }
 .origin { font-size: 18px; font-weight: 600; }
 .note { color: #5c5c66; font-size: 14px; }
 .warn { background: #fff7e0; border: 1px solid #e8c766; padding: 10px 12px; border-radius: 6px; margin: 12px 0; }
