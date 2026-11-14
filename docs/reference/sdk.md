@@ -236,7 +236,7 @@ Thrown when a popup request ends without an answer. `code` is `'blocked'`, `'clo
 
 ### `readTokenInfo(provider, token)`, `formatTokenAmount(amount, decimals)`, `describeAmount(...)`
 
-Name, symbol and exact amounts for display. STRK and ETH are recognised by address; anything else is reported as unverified.
+Symbol and exact amounts for display. The symbol and decimals are read from the token contract; only STRK (`STRK_ADDRESS`) is built in. The SDK keeps no token list and vouches for no token.
 
 ## Constants
 
