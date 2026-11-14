@@ -23,7 +23,7 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 - **Message signing is not on hosted Sepolia yet.** `sessionSignTypedData` works against any deployed account. The keychain's `/sign` page (`beginSignMessage`) is in the code but only reaches the hosted keychain with its next release.
 - **No native SDKs** and no mobile support. See [Native](/native/overview).
 - **No headless mode.** Every session needs a person to approve it in the keychain. There are no app-managed owner keys. A bot or server gets its session through one browser approval and a localhost round trip, see [Node.js](/examples/node). Whether Kamui will add a headless mode has not been decided.
-- **No session presets.** Every connect request carries its full scope: contracts, functions and spending limits. An app cannot refer to a reviewed set of policies by name. See [Sessions](/guide/sessions#what-you-ask-for). Whether Kamui will add presets has not been decided.
+- **No session presets.** Every connect request carries its full scope: contracts, functions and spending limits. An app cannot refer to a reviewed set of policies by name. See [Sessions](/guide/sessions#what-you-ask-for). Presets are planned.
 
 ### Sponsorship
 

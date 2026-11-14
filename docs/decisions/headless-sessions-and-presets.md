@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| Status | **Proposal. Not decided.** Merging this file records the proposal, not a decision. |
+| Status | **Session presets: decided 2026-11-14.** Headless sessions: proposal, not decided. |
 | Issue | [#23](https://github.com/starknet-innovation/kamui/issues/23) |
 | Written | 2026-11-14 |
-| Decision | _To be filled in by the team: see [Decision record](#decision-record)._ |
+| Decision | Presets: yes, on Cartridge's model. Headless: pending. See [Decision record](#decision-record). |
 
 This page is an internal working document. It is excluded from the published developer docs (`srcExclude` in [`docs/.vitepress/config.ts`](../.vitepress/config.ts)).
 
@@ -70,7 +70,12 @@ A "device code" flow, where the script prints a keychain link that works from an
 
 What the app gets is a plain Starknet account it fully controls, plus Kamui paying its fees. Sessions add little: the app holds the owner key, so nobody else is limiting it.
 
-For comparison, Cartridge documents a native headless Controller in which the app creates the owner from a private key it generates and registers the account itself: [Native Headless Controller](https://docs.cartridge.gg/controller/native/headless) (read 2026-11-14). That is the H2 model.
+For comparison, Cartridge documents two things under "headless" (both read 2026-11-14):
+
+- [Headless Authentication](https://docs.cartridge.gg/controller/headless-authentication), in the browser: the app calls `connect({ username, signer, password? })` and the user's own signer (passkey, password, OAuth login or wallet) authenticates in a hidden keychain iframe, with no login modal. The approval screen still opens when the session's policies are unverified or include spending limits, and their sessions page says every session creation needs user approval. It is browser only. This is H0/H1 without the redirect, not an account with no person.
+- [Native Headless Controller](https://docs.cartridge.gg/controller/native/headless), for servers: the app creates the owner from a private key it generates, creates the account with `new_headless` and registers it with `signup`. That is the H2 model.
+
+Their docs describe nothing like H3.
 
 **H3. App-managed keys on users' accounts.** The app's server, or Kamui's, holds an owner key of a user's account, or can create sessions on it without the user. This needs no new contract: a server-held key would be added as an owner.
 
@@ -134,7 +139,7 @@ Kamui uses no Cartridge code (PLAN.md section 2). Anything built here would be w
 
 ### What presets would buy
 
-- **A readable approval screen.** Today the user sees shortened contract addresses and raw entry point names (`keychain/src/approval.ts:41`), and only STRK and ETH are recognised by name. A reviewed record can carry names.
+- **A readable approval screen.** Today the user sees shortened contract addresses and raw entry point names (`keychain/src/approval.ts:41`), and a token is shown by the symbol its own contract gives. A reviewed record can carry names.
 - **A review gate.** Someone has looked at what the app asks for before users see a "reviewed" mark.
 - **One record per app.** Sponsorship approval is already manual and per app. The preset could be the same registration: app key, origins, scope.
 - **Optionally, tighter sponsorship.** The backend could refuse to sponsor calls outside an app's reviewed scope. Today it sponsors any call the session allows.
@@ -175,7 +180,7 @@ The recurring cost is the review itself: every app, and every change of scope.
 
 ### Recommendation
 
-**This is a recommendation, not a decision.**
+**Superseded: the project owner decided on 2026-11-14 to support presets on Cartridge's model. See the [Decision record](#decision-record). The recommendation below is kept as written.**
 
 - **Do not build presets now (P0).** Kamui is a Sepolia preview with manual, per-app onboarding. A review programme and a "reviewed" mark are commitments that are better made with the audit and the mainnet plan than before them.
 - **If the team wants a first step, make it P1.** It improves the approval screen for approved apps, changes no protocol and no contract, and can grow into P2 or P3 later.
@@ -197,7 +202,7 @@ This change makes the published docs state the current state only, in the same w
 
 - Headless: not supported today. Every session needs a person to approve it in the keychain.
 - The supported route for servers: one approval in a browser, through the localhost round trip.
-- Presets: not available. Every request carries its full scope.
+- Presets: not available today, and planned. Every request carries its full scope until they ship.
 
 Before this change one page said headless was "not planned", which read as a decision. Once the team decides, update those pages to say "planned" or "will not be supported", and record the outcome below and as a numbered decision in [PLAN.md](../../PLAN.md).
 
@@ -206,4 +211,4 @@ Before this change one page said headless was "not planned", which read as a dec
 | Question | Decision | Date | Follow-up issues |
 |---|---|---|---|
 | Headless sessions | _pending_ | | |
-| Session presets | _pending_ | | |
+| Session presets | **Yes, as Cartridge does.** Reviewed preset files that list an app's origins and, per chain, its contracts and methods with names; an app names its preset in the connect request; preset policies take precedence over the request's unless the app overrides; a reviewed preset gets a trust indicator and a compact approval screen; the user still approves every session; methods can be marked as sponsored. This is P2 with P3. | 2026-11-14 | #45 registry and review process, #46 protocol and SDK, #47 keychain approval screen, #48 sponsorship by preset |
