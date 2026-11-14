@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import type { RpcProvider } from 'starknet';
 import { HttpError } from '../../http';
 import { metrics } from '../../metrics';
+import { isNetworkVolume, type VolumeProbe } from '../../storage/volume';
 import { RecoveryJobRunner, type RecoveryPersistence, type RecoveryRow as Row, type Awaitable, type RecoveryWork, type RecoveryFailure } from './job-runner';
 import type { RecoverRequest, RecoverResult } from './recover';
 
@@ -38,12 +39,14 @@ export class RecoveryJobs {
   private db: Database;
   private runner: RecoveryJobRunner;
   readonly durable: boolean;
-  constructor(private options: { path?: string; journalMode?: string; binding?: string; maxActive?: number; maxRetained?: number; retentionMs?: number; now?: () => number } = {}) {
+  constructor(private options: { path?: string; journalMode?: string; isNetworkVolume?: VolumeProbe; binding?: string; maxActive?: number; maxRetained?: number; retentionMs?: number; now?: () => number } = {}) {
     const path = options.path ?? ':memory:';
     this.durable = path !== ':memory:';
     const mode = (options.journalMode ?? 'DELETE').toUpperCase();
     if (!['DELETE', 'TRUNCATE', 'WAL'].includes(mode)) throw new Error('RECOVERY_JOURNAL_MODE_INVALID');
     if (this.durable) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    // WAL needs shared memory a network volume (NFS, EFS) does not give: see storage/volume.ts.
+    if (this.durable && mode === 'WAL' && (options.isNetworkVolume ?? isNetworkVolume)(dirname(path))) throw new Error('RECOVERY_JOURNAL_MODE_NETWORK_VOLUME');
     this.db = new Database(path, { create: true, strict: true });
     if (this.durable) chmodSync(path, 0o600);
     this.db.exec(`PRAGMA journal_mode = ${mode}`);

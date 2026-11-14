@@ -264,3 +264,14 @@ test('a second-connection resolution fences an old deployment continuation and b
     } finally { api.close(); operator.close(); temp.remove(); }
   }
 });
+
+test('the recovery store refuses WAL on a network volume', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kamui-jobs-net-'));
+  try {
+    const path = join(dir, 'recovery.sqlite');
+    expect(() => new RecoveryJobs({ path, journalMode: 'WAL', isNetworkVolume: () => true })).toThrow('RECOVERY_JOURNAL_MODE_NETWORK_VOLUME');
+    new RecoveryJobs({ path, journalMode: 'DELETE', isNetworkVolume: () => true }).close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
