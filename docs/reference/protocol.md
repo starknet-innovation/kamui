@@ -52,6 +52,8 @@ The keychain redirects to `redirectUri#kamui=<answer>`:
 
 Check that `id` matches the request you sent before trusting the answer.
 
+If the request arrives with no referrer, the keychain does not redirect. It explains the refusal to the user and offers a link they may click to `redirectUri#kamui=<answer>` with `"error": "referrer_missing"`. That answer carries the `id` the request named and nothing else. See [Troubleshooting: the referrer](/reference/errors#troubleshooting-the-referrer).
+
 ## Execute
 
 Send the user to `GET {keychainUrl}/execute#kamui=<payload>`:

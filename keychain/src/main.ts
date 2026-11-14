@@ -16,15 +16,17 @@
 //   login.ts     sign-in
 //   sessions.ts  the session registry, and what the account says
 //   approval.ts  the connect and execute approval pages
+//   refusal.ts   a request refused because of who sent it (no referrer, or another site's)
 //   home.ts      the account page
 //   main.ts      routing (this file)
 import { finishLogin, showSignIn } from './login';
-import { KamuiReader, parseConnectRequest, parseExecuteRequest } from '../../sdk/src';
+import { KamuiReader, KeychainRequestError, parseConnectRequest, parseExecuteRequest } from '../../sdk/src';
 import { loadLogin } from './vault';
 import { provider } from './context';
 import { REQUEST, answer, pendingRequest, type Pending } from './request';
 import { showApproval, showTransaction } from './approval';
 import { showHome } from './home';
+import { showRequestRefusal } from './refusal';
 import { button, el, show, status } from './ui';
 
 //
@@ -67,6 +69,7 @@ async function main() {
 
 main().catch((error) => {
   status('');
+  if (error instanceof KeychainRequestError) return showRequestRefusal(error);
   const nodes: Node[] = [el('h2', 'Something went wrong'), el('p', (error as Error).message, 'error')];
   const pending = pendingRequest();
   if (pending) nodes.push(button('Go back to the site', () => answer(pending.request, { ok: false, error: 'the keychain could not complete the request' }), true));

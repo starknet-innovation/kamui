@@ -34,5 +34,5 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 - **The first sign-in takes tens of seconds** while the proof runs.
 - **Adding a device ends every session.** Your app sees `isConnectionAlive` turn false and must ask again.
 - **Safari may clear the keychain's storage** after seven days of Safari use without visiting it. The user then signs in as on a new device.
-- **Referrer settings.** Browsers or extensions that strip referrers make the keychain refuse every request.
+- **Referrer settings.** Browsers or extensions that strip referrers make the keychain refuse every request. The keychain tells the user what to change and lets them go back to your site with `referrer_missing` ([Troubleshooting: the referrer](/reference/errors#troubleshooting-the-referrer)), but it cannot work around a missing referrer.
 - **Only STRK and ETH are recognised** by name on approval screens. Other tokens are shown as unverified.

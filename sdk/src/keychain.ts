@@ -17,6 +17,11 @@
 // of `redirectUri`, which is where the answer goes, and requires that the request came from a
 // page on that same origin (the browser's referrer). That stops a link on another site from
 // asking in an app's name with its own session key.
+//
+// When the browser sends no referrer at all, the keychain cannot run that check. It explains why
+// on its own page and may offer the user a link back to `redirectUri` carrying only the fixed
+// error `referrer_missing` and the request's id (see `referrerMissingUrl`). The request is still
+// unverified at that point: nothing else from it is used, and nothing about the account is sent.
 import { CallData, type BigNumberish, type Call, type ProviderInterface } from 'starknet';
 import { nextSessionNonce, sessionOutsideExecution } from './outside';
 import { KamuiReader } from './reader';
@@ -70,6 +75,59 @@ export type ExecuteResult =
 export const MAX_EXECUTE_CALLS = 10;
 export const MAX_EXECUTE_CALLDATA = 100;
 
+/**
+ * The error an app is sent back with when its request reached the keychain with no referrer.
+ * `finishConnect` and `finishExecute` throw a `KeychainAnswerError` whose `reason` is this.
+ */
+export const REFERRER_MISSING = 'referrer_missing';
+
+/**
+ * Keychain side: a request refused because of who sent it, before anything it asks for is read.
+ *
+ *   referrer_missing    the browser did not say which site the request came from
+ *   referrer_mismatch   it came from a site other than the one `redirectUri` names
+ *
+ * `redirectUri` and `id` come from the request and are NOT verified: the referrer check is what
+ * would have verified them. They have only passed the format checks (an https address, or
+ * http://localhost, with no fragment; an id that is a hex number).
+ */
+export class KeychainRequestError extends Error {
+  readonly code: 'referrer_missing' | 'referrer_mismatch';
+  readonly redirectUri: string;
+  readonly id: string;
+  /** The origin the request did come from. Only for `referrer_mismatch`. */
+  readonly referrerOrigin?: string;
+
+  constructor(code: 'referrer_missing' | 'referrer_mismatch', message: string, request: { redirectUri: string; id: string }, referrerOrigin?: string) {
+    super(message);
+    this.name = 'KeychainRequestError';
+    this.code = code;
+    this.redirectUri = request.redirectUri;
+    this.id = request.id;
+    this.referrerOrigin = referrerOrigin;
+  }
+}
+
+/** App side: the keychain answered, and the answer is a refusal. `reason` is what it gave. */
+export class KeychainAnswerError extends Error {
+  readonly reason: string;
+
+  constructor(reason: string) {
+    super(`keychain: ${reason}`);
+    this.name = 'KeychainAnswerError';
+    this.reason = reason;
+  }
+}
+
+/**
+ * App side: whether `error`, thrown by `finishConnect` or `finishExecute`, says the request
+ * reached the keychain with no referrer. The user's browser or an extension removed it, or the
+ * app's own page asks browsers not to send one.
+ */
+export function isReferrerMissing(error: unknown): boolean {
+  return error instanceof KeychainAnswerError && error.reason === REFERRER_MISSING;
+}
+
 const FRAGMENT_KEY = 'kamui';
 const isHex = (value: unknown): value is string => typeof value === 'string' && /^0x[0-9a-fA-F]{1,64}$/.test(value);
 const isPositiveInt = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value > 0;
@@ -121,13 +179,18 @@ function envelope(data: any, referrer: string): { redirect: URL } {
   }
   if (redirect.hash !== '') throw new Error('keychain: the redirect address must not have a fragment');
 
+  const unverified = { redirectUri: redirect.toString(), id: data.id as string };
   let from: string;
   try {
     from = new URL(referrer).origin;
   } catch {
-    throw new Error('keychain: cannot tell which site sent this request');
+    throw new KeychainRequestError('referrer_missing', 'keychain: cannot tell which site sent this request', unverified);
   }
-  if (from !== redirect.origin) throw new Error('keychain: this request was not sent by the site it names');
+  // An opaque origin ("null", as for a sandboxed or data: page) names no site either.
+  if (from === 'null') throw new KeychainRequestError('referrer_missing', 'keychain: cannot tell which site sent this request', unverified);
+  if (from !== redirect.origin) {
+    throw new KeychainRequestError('referrer_mismatch', 'keychain: this request was not sent by the site it names', unverified, from);
+  }
 
   if (data.appName !== undefined && (typeof data.appName !== 'string' || data.appName.length > 60)) {
     throw new Error('keychain: bad app name');
@@ -291,6 +354,17 @@ export function resultUrl(request: { redirectUri: string }, result: ConnectResul
   return request.redirectUri + toFragment(result);
 }
 
+/**
+ * Keychain side: where a link back to the site may point after a `referrer_missing` refusal.
+ * The address is unverified, so the keychain must not go there by itself: it is for a link the
+ * user clicks, shown with its origin. It carries the fixed error and the request's id, nothing
+ * else from the request and nothing about the account.
+ */
+export function referrerMissingUrl(error: KeychainRequestError): string {
+  if (error.code !== 'referrer_missing') throw new Error('keychain: only a request with no referrer has a way back');
+  return resultUrl({ redirectUri: error.redirectUri }, { v: 1, id: error.id, ok: false, error: REFERRER_MISSING });
+}
+
 //
 // App side
 //
@@ -354,7 +428,8 @@ export function beginConnect(options: ConnectOptions, store: KeyValueStore): str
 /**
  * App side, step 2: reads the keychain's answer from the URL fragment. Returns the connection,
  * or null when the fragment is not an answer. Throws if the user refused, if the keychain
- * reported an error, or if the answer is not for the pending request.
+ * reported an error, or if the answer is not for the pending request. A refusal is a
+ * `KeychainAnswerError`; `isReferrerMissing(error)` picks out the one the app can explain.
  */
 export function finishConnect(fragment: string, store: KeyValueStore): Connection | null {
   const data = fromFragment(fragment) as any;
@@ -366,7 +441,7 @@ export function finishConnect(fragment: string, store: KeyValueStore): Connectio
     throw new Error('keychain: the answer is not for this request');
   }
   store.removeItem(PENDING);
-  if (data.ok !== true) throw new Error(`keychain: ${typeof data.error === 'string' ? data.error : 'refused'}`);
+  if (data.ok !== true) throw new KeychainAnswerError(typeof data.error === 'string' ? data.error : 'refused');
   if (!isHex(data.account) || !isHex(data.chainId) || !isHex(data.classHash)) throw new Error('keychain: the answer is malformed');
   const connection: Connection = {
     account: data.account,
@@ -437,7 +512,7 @@ export function finishExecute(fragment: string, store: KeyValueStore): { transac
     throw new Error('keychain: the answer is not for this request');
   }
   store.removeItem(PENDING_EXECUTE);
-  if (data.ok !== true) throw new Error(`keychain: ${typeof data.error === 'string' ? data.error : 'refused'}`);
+  if (data.ok !== true) throw new KeychainAnswerError(typeof data.error === 'string' ? data.error : 'refused');
   if (!isHex(data.transactionHash)) throw new Error('keychain: the answer is malformed');
   return { transactionHash: data.transactionHash };
 }

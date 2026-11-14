@@ -2,6 +2,8 @@
 // only reaches the request it belongs to.
 import { describe, expect, test } from 'bun:test';
 import {
+  KeychainAnswerError,
+  KeychainRequestError,
   MAX_EXECUTE_CALLDATA,
   MAX_EXECUTE_CALLS,
   beginConnect,
@@ -14,8 +16,10 @@ import {
   parseExecuteRequest,
   pendingRequestKind,
   forgetConnection,
+  isReferrerMissing,
   loadConnection,
   parseConnectRequest,
+  referrerMissingUrl,
   resultUrl,
   sessionFromWire,
   sessionProblems,
@@ -100,6 +104,59 @@ describe('what the keychain refuses to read', () => {
     expect(() => parseConnectRequest(fragment, '')).toThrow(/cannot tell which site/);
     // Same site, other port: a different origin.
     expect(() => parseConnectRequest(fragment, 'https://game.example:8443/')).toThrow(/not sent by the site/);
+  });
+
+  const refusal = (read: () => unknown): KeychainRequestError => {
+    try {
+      read();
+    } catch (error) {
+      expect(error).toBeInstanceOf(KeychainRequestError);
+      return error as KeychainRequestError;
+    }
+    throw new Error('the request was not refused');
+  };
+
+  test('no referrer and another site\'s referrer are told apart', () => {
+    const missing = refusal(() => parseConnectRequest(fragment, ''));
+    expect(missing.code).toBe('referrer_missing');
+    expect(missing.redirectUri).toBe(`${APP}/play`);
+    expect(missing.id).toBe(base.id);
+    expect(missing.referrerOrigin).toBeUndefined();
+    // A referrer that is not an address, or names no site, is no referrer.
+    expect(refusal(() => parseConnectRequest(fragment, 'about:client')).code).toBe('referrer_missing');
+    expect(refusal(() => parseConnectRequest(fragment, 'not an address')).code).toBe('referrer_missing');
+
+    const mismatch = refusal(() => parseConnectRequest(fragment, 'https://evil.example/page?x=1'));
+    expect(mismatch.code).toBe('referrer_mismatch');
+    expect(mismatch.referrerOrigin).toBe('https://evil.example');
+    expect(mismatch.redirectUri).toBe(`${APP}/play`);
+  });
+
+  test('the way back after a missing referrer carries the error and the id, nothing else', () => {
+    const missing = refusal(() => parseConnectRequest(fragment, ''));
+    const back = new URL(referrerMissingUrl(missing));
+    expect(back.origin + back.pathname).toBe(`${APP}/play`);
+    expect(back.search).toBe('');
+    const payload = JSON.parse(Buffer.from(new URLSearchParams(back.hash.slice(1)).get('kamui')!, 'base64url').toString());
+    expect(payload).toEqual({ v: 1, id: base.id, ok: false, error: 'referrer_missing' });
+    // There is no way back in a site's name when another site sent the request.
+    const mismatch = refusal(() => parseConnectRequest(fragment, 'https://evil.example/'));
+    expect(() => referrerMissingUrl(mismatch)).toThrow(/no referrer/);
+  });
+
+  test('a request with no referrer still has to name an acceptable address and id', () => {
+    // These are refused before the referrer is looked at, so they never get a way back.
+    for (const redirectUri of ['javascript:alert(1)', 'data:text/html,x', 'http://game.example/play', `${APP}/play#x`, 'not an address']) {
+      let thrown: unknown;
+      try {
+        parseConnectRequest(withRequest((r) => (r.redirectUri = redirectUri)), '');
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect(thrown).not.toBeInstanceOf(KeychainRequestError);
+    }
+    expect(() => parseConnectRequest(withRequest((r) => (r.id = '0x1"><script>')), '')).toThrow(/bad request id/);
   });
 
   test('redirect addresses that are not https, or carry a fragment', () => {
@@ -210,6 +267,55 @@ describe('transaction requests', () => {
     expect(request.kind).toBe('execute');
     expect(request.calls).toEqual([{ to: TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x64', '0x0'] }]);
     expect(callsFromWire(request.calls)).toEqual([transfer]);
+    expect(pendingRequestKind(store)).toBe('execute');
+  });
+
+  test('an app sent back after a missing referrer can tell that is what happened', () => {
+    const store = memoryStore();
+    const { url, request } = executeFrom(store);
+    let refused: unknown;
+    try {
+      parseExecuteRequest(url.hash, '');
+    } catch (error) {
+      refused = error;
+    }
+    expect(refused).toBeInstanceOf(KeychainRequestError);
+    const back = new URL(referrerMissingUrl(refused as KeychainRequestError));
+    expect(back.origin + back.pathname).toBe(`${APP}/play`);
+
+    let thrown: unknown;
+    try {
+      finishExecute(back.hash, store);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(KeychainAnswerError);
+    expect((thrown as KeychainAnswerError).reason).toBe('referrer_missing');
+    expect((thrown as Error).message).toBe('keychain: referrer_missing');
+    expect(isReferrerMissing(thrown)).toBe(true);
+    expect(pendingRequestKind(store)).toBeNull();
+    expect(request.id).toMatch(/^0x/);
+
+    // Other refusals, and other errors, are not it.
+    expect(isReferrerMissing(new KeychainAnswerError('denied by the user'))).toBe(false);
+    expect(isReferrerMissing(new Error('keychain: referrer_missing'))).toBe(false);
+    expect(isReferrerMissing(null)).toBe(false);
+  });
+
+  test('a way back made for another request does not touch the pending one', () => {
+    // Anyone can open the keychain with a request naming an app. The link back it gets carries
+    // the id it made up, which is not the id the app is waiting on.
+    const store = memoryStore();
+    executeFrom(store);
+    const forged = executeFrom(memoryStore()).url.hash;
+    let refused: unknown;
+    try {
+      parseExecuteRequest(forged, '');
+    } catch (error) {
+      refused = error;
+    }
+    const back = new URL(referrerMissingUrl(refused as KeychainRequestError));
+    expect(() => finishExecute(back.hash, store)).toThrow(/not for this request/);
     expect(pendingRequestKind(store)).toBe('execute');
   });
 

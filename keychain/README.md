@@ -118,7 +118,7 @@ What this does not show:
 
 - **WebKit is not Safari.** Safari's script-written storage policy counts seven days of Safari use without interaction with the site, not seven calendar days. Native Safari 27.2 vault reload/non-exportable key mechanics passed on an isolated loopback fixture; explicit storage-loss consequences passed against browser fakes. A naturally elapsed purge on a reviewed HTTPS origin is still pending. The sign-in/account pages warn about local key loss and keeping the pepper recovery file outside the browser. See [SAFARI_STORAGE.md](SAFARI_STORAGE.md) for evidence, limits and the follow-up procedure.
 - **Private windows** were not tried in any browser. Storage there is short-lived at best.
-- **Referrer settings.** A browser or an extension set to send no referrer makes every request look like it came from nowhere, and the keychain refuses it. This is by design, but the user is told only that the keychain "cannot tell which site sent this request".
+- **Referrer settings.** A browser or an extension set to send no referrer makes every request look like it came from nowhere, and the keychain refuses it. This is by design. The page names the likely causes (an extension, a browser setting, the site's referrer policy, a link opened outside the site) and what to change, with a note for the site's developers. The request is unverified at that point, so none of it is shown and the keychain goes nowhere by itself; it offers one link, labelled with the origin, back to the address the request named, carrying only `referrer_missing` and the request's id (`src/refusal.ts`). A referrer from another site gets its own explanation and no link.
 - **Mobile browsers** were not tried.
 
 ## Not done

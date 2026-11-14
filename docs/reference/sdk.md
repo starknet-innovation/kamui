@@ -10,7 +10,7 @@ Creates a session key pair, stores the pending request in `store` (`kamui.pendin
 
 ### `finishConnect(fragment, store): Connection | null`
 
-Reads the keychain's answer from `location.hash`. Returns `null` when the fragment holds no answer. Throws when the user denied, the keychain reported an error, or the answer does not match the pending request. On success stores the connection (`kamui.connection`).
+Reads the keychain's answer from `location.hash`. Returns `null` when the fragment holds no answer. Throws when the user denied, the keychain reported an error, or the answer does not match the pending request. A refusal from the keychain is a `KeychainAnswerError` with the keychain's `reason`. On success stores the connection (`kamui.connection`).
 
 ```ts
 type Connection = {
@@ -20,6 +20,10 @@ type Connection = {
   session: { privateKey: string; publicKey: string; validUntil: number; maxCalls: number };
 };
 ```
+
+### `isReferrerMissing(error): boolean`
+
+Whether an error thrown by `finishConnect` or `finishExecute` is the keychain's `referrer_missing`: the request reached it with no referrer and the user chose to come back. See [Troubleshooting: the referrer](/reference/errors#troubleshooting-the-referrer).
 
 ### `loadConnection(store): Connection | null`
 
@@ -59,7 +63,7 @@ Stores the pending request (`kamui.pending.execute`) and returns the keychain UR
 
 ### `finishExecute(fragment, store): { transactionHash } | null`
 
-Reads the answer. Throws if the user denied or the keychain reported an error.
+Reads the answer. Throws if the user denied or the keychain reported an error, with the same `KeychainAnswerError` as `finishConnect`.
 
 ## Reading an account
 
