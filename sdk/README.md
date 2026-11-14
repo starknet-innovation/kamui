@@ -23,6 +23,8 @@ Not audited, like the contracts. It builds as the npm package `@kamui/sdk` (ESM 
 | `outside` | Sponsored calls: `ownerOutsideExecution`, `sessionOutsideExecution`, `nextSessionNonce`. |
 | `watch` | `watchSession`: tells an app once when its session ends (expiry timer, and the account's `SessionKeyRevoked` / `AllSessionsRevoked` / `SessionKeySet` events, polled or pushed over a WebSocket), with the reason. `checkSessionEnded` and `isSessionRefusal` for a failed call; `sessionEventTracker` and `SESSION_END_EVENT_KEYS` for your own event source. |
 | `sessionAccount` | `createSessionAccount`: a starknet.js `Account` that signs as a session, for self-paid transactions. |
+| `wallet` | `KamuiWallet`: the app side of `keychain` behind the get-starknet wallet-object interface (`request`, `on`, `off`). Resumes after the redirect, routes `execute` through `sessionCall` and refuses calls outside the session with a `KamuiWalletError`. |
+| `starknet-react` | `KamuiConnector` and `useKamuiReconnect`, for `@starknet-react/core` 5. Not part of the main entry point: import `@kamui/sdk/starknet-react`. React and starknet-react are optional peers. `@starknet-react/core` 5.0.3 declares `starknet` 8 as its peer, so npm needs `--legacy-peer-deps` to install it beside `starknet` 10. |
 
 ## Client-side login proving
 
@@ -127,9 +129,9 @@ bun run build          # dist/: ESM and .d.ts, from src/ only
 bun run test:package   # npm pack, then use the tarball from a scratch project
 ```
 
-`test:package` (`scripts/check-package.mjs`) checks the tarball's file list, imports it under plain Node and Bun, and type-checks its declarations under `NodeNext` and `Bundler` resolution. It needs npm and the network.
+`test:package` (`scripts/check-package.mjs`) checks the tarball's file list, imports `@kamui/sdk` under plain Node and Bun with only `starknet` installed, and type-checks its declarations under `NodeNext` and `Bundler` resolution. It then installs the optional peers and does the same for `@kamui/sdk/starknet-react` (types under `Bundler` only). It needs npm and the network.
 
-Relative imports in `src/` carry a `.js` extension (`./utils.js`). That is what makes the built files load in plain Node; `tsconfig.build.json` rejects an import without it.
+Relative imports in `src/` carry a `.js` extension (`./utils.js`). That is what makes the built files load in plain Node. The build cannot enforce it (see the note in `tsconfig.build.json`), so `test:package` fails on a relative import without one in `dist/`.
 
 The package is not on npm yet, and `"private": true` stays in `package.json` until its name, scope and visibility are decided. Publishing is a manual run of the [sdk-package](../.github/workflows/sdk-package.yml) workflow; its header lists what has to be set up first. Until then, `npm pack` here gives an installable `kamui-sdk-<version>.tgz`.
 

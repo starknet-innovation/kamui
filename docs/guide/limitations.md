@@ -17,7 +17,7 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 ### Integration
 
 - **The SDK is not released on npm yet.** It builds as a package, and until the first release you install it from a file you build, see [Quickstart](/guide/quickstart#_1-add-the-sdk).
-- **No wallet connectors.** No `starknet-react` connector, no get-starknet / wallet-standard support. Apps use the redirect helpers directly.
+- **Wallet connectors are partial.** There is a [`starknet-react` connector](/examples/starknet-react) and a get-starknet-style wallet object (`KamuiWallet`), both limited to what a session can do: no message signing, no declare, one chain. Kamui does not register with the wallet standard that get-starknet v5 and later use for discovery. The connector is tested against `@starknet-react/core` 5.0.3 with mocked redirects, not yet against the hosted keychain.
 - **Redirects only.** Your page reloads on every connect and one-off approval. There is no popup or iframe mode.
 - **One-off approvals fail on hosted Sepolia.** The keychain's `/execute` page posts the user's transaction to the sponsor endpoint without app credentials, and the hosted backend refuses it with `APP_AUTH_REQUIRED`.
 - **No message signing API.** Sessions can sign SNIP-12 messages as the account on chain, but the SDK has no helper for it and the keychain has no `signMessage` request.

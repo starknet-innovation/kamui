@@ -1,11 +1,16 @@
 {
   // Builds the published package: plain ESM and type declarations in dist/, from src/ only.
-  // NodeNext makes tsc reject a relative import without its ".js" extension, which plain Node
-  // could not resolve. No Bun types here, so src/ cannot come to depend on a Bun-only API.
+  // No Bun types here, so src/ cannot come to depend on a Bun-only API.
+  //
+  // Bundler resolution, not NodeNext: under NodeNext, eventemitter3's declarations resolve as
+  // CommonJS and @starknet-react/core's Connector loses its emitter methods, so
+  // src/starknet-react.ts does not compile. Bundler resolution does not insist on the ".js"
+  // extension that plain Node needs on relative imports; scripts/check-package.mjs checks that
+  // on the built files instead.
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": [],
     "strict": true,

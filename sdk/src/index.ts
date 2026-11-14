@@ -13,3 +13,4 @@ export * from './tokens.js';
 export * from './watch.js';
 export { keyPairFromPrivateKey, newKeyPair, randomFelt, signHash, type KeyPair } from './utils.js';
 export * from './client-proving.js';
+export * from './wallet.js';
