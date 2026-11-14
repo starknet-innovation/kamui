@@ -8,6 +8,8 @@ import {
   POPUP_MARKER,
   connectWithPopup,
   executeWithPopup,
+  signMessageWithPopup,
+  parseSignMessageRequest,
   finishConnect,
   fragmentId,
   loadConnection,
@@ -346,6 +348,41 @@ describe('popup mode: one transaction', () => {
     const request = parseExecuteRequest(new URL(browser.opened[0]!.url).hash, `${APP}/`)!;
     browser.relay(request.redirectUri + toFragment({ v: 1, id: request.id, ok: false, error: 'the user refused' }));
     expect((await failure(executing)).message).toBe('keychain: the user refused');
+  });
+});
+
+describe('popup mode: one signed message', () => {
+  const typedData = {
+    types: {
+      StarknetDomain: [
+        { name: 'name', type: 'shortstring' },
+        { name: 'version', type: 'shortstring' },
+        { name: 'chainId', type: 'shortstring' },
+        { name: 'revision', type: 'shortstring' },
+      ],
+      SignIn: [{ name: 'nonce', type: 'felt' }],
+    },
+    primaryType: 'SignIn',
+    domain: { name: 'Example Game', version: '1', chainId: 'SN_SEPOLIA', revision: '1' },
+    message: { nonce: '0x1234' },
+  };
+
+  test('the answer comes back as the signature, and a blocked popup falls back to the redirect', async () => {
+    const browser = fakeBrowser();
+    const store = memoryStore();
+    const signing = signMessageWithPopup({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/play`, typedData }, store, { environment: browser.environment });
+    const url = browser.opened[0]!.url;
+    expect(url.startsWith(`${KEYCHAIN}/sign#kamui=`)).toBe(true);
+    const request = parseSignMessageRequest(new URL(url).hash, `${APP}/`)!;
+    expect(request.redirectUri).toBe(`${APP}/play?${POPUP_MARKER}=1`);
+    browser.relay(request.redirectUri + toFragment({ v: 1, id: request.id, ok: true, account: ACCOUNT, chainId: '0x534e5f5345504f4c4941', signature: ['0x1', '0x2'] }));
+    expect(await signing).toEqual({ account: ACCOUNT, chainId: '0x534e5f5345504f4c4941', signature: ['0x1', '0x2'] });
+    expect(store.data.size).toBe(0);
+
+    const blocked = fakeBrowser({ blocked: true });
+    void signMessageWithPopup({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/play`, typedData }, store, { environment: blocked.environment });
+    expect(blocked.navigated[0]!.startsWith(`${KEYCHAIN}/sign#kamui=`)).toBe(true);
+    expect(pendingRequestKind(store)).toBe('signMessage');
   });
 });
 

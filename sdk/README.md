@@ -10,8 +10,9 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 
 | Module | What it does |
 |---|---|
-| `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `sessionProblems`, `executeProblems`, `describeCall`. |
-| `popup` | The same two requests in a popup, so the app's page is not reloaded: `connectWithPopup`, `executeWithPopup` (promises, with a fallback to the redirect when the popup is blocked), `relayPopupResult` for the page the popup ends on, and `KeychainPopupError`. |
+| `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `beginSignMessage` and `finishSignMessage` for one owner-signed message, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `parseSignMessageRequest`, `sessionProblems`, `executeProblems`, `signMessageProblems`, `describeCall`. |
+| `messages` | SNIP-12 typed data signed as the account: `sessionSignTypedData` (a session, `[session_pubkey, r, s, valid_until]`), `ownerSignTypedData` (`[r, s]`), `verifyMessageSignature` (the account's `is_valid_signature`), `typedDataHash`, `typedDataFields`. |
+| `popup` | The keychain's requests in a popup, so the app's page is not reloaded: `connectWithPopup`, `executeWithPopup`, `signMessageWithPopup` (promises, with a fallback to the redirect when the popup is blocked), `relayPopupResult` for the page the popup ends on, and `KeychainPopupError`. |
 | `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
 | `client-proving` | `browserRecoverBackend`, `ClientProver`, V2 facts/profile helpers: local proof orchestration, authenticated first deployment and durable relay polling. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |
@@ -22,7 +23,10 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 | `sessions` | `createSessionCalls`, `addSessionCall`, `setSpendingPolicyCall`, `revokeSessionCall`, `revokeAllSessionsCall`, `sessionSignature`, and the checks `assertValidSession` and `unlimitedTokenCalls`. |
 | `tokens` | `readTokenInfo`, `formatTokenAmount`, `describeAmount`: a token's name and exact amounts for approval screens, with known, unverified and unknown tokens told apart. |
 | `outside` | Sponsored calls: `ownerOutsideExecution`, `sessionOutsideExecution`, `nextSessionNonce`. |
+| `watch` | `watchSession`: tells an app once when its session ends (expiry timer, and the account's `SessionKeyRevoked` / `AllSessionsRevoked` / `SessionKeySet` events, polled or pushed over a WebSocket), with the reason. `checkSessionEnded` and `isSessionRefusal` for a failed call; `sessionEventTracker` and `SESSION_END_EVENT_KEYS` for your own event source. |
 | `sessionAccount` | `createSessionAccount`: a starknet.js `Account` that signs as a session, for self-paid transactions. |
+| `wallet` | `KamuiWallet`: the app side of `keychain` behind the get-starknet wallet-object interface (`request`, `on`, `off`). Resumes after the redirect, routes `execute` through `sessionCall` and refuses calls outside the session with a `KamuiWalletError`. |
+| `starknet-react` | `KamuiConnector` and `useKamuiReconnect`, for `@starknet-react/core` 5. Not part of the main entry point: import `@kamui/sdk/starknet-react`. React and starknet-react are optional peers. |
 
 ## Client-side login proving
 
@@ -125,14 +129,14 @@ const login = await completeLogin({
 bun install
 bun test test/unit.test.ts            # 19 tests, no network
 bun test test/login.test.ts           # 24 tests, no network; runs the pepper service in process
-bun test test/keychain.test.ts        # 23 tests, no network
+bun test test/keychain.test.ts        # 33 tests, no network
 bun test test/tokens.test.ts          # 9 tests, no network
 bun test test/registry.test.ts        # 21 tests, no network
 
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0
 (cd ../contracts && scarb build)
-bun test test/devnet.test.ts          # 7 tests against the devnet
+bun test test/devnet.test.ts          # 8 tests against the devnet
 ```
 
 Bun 1.2 or later. The devnet tests deploy `DevAccount` (the production owner, session and spending code with a first key set at deployment) and the real `KamuiAccount` class for the address check. They are skipped when no devnet answers.

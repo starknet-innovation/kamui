@@ -1,4 +1,4 @@
-// Popup mode: the keychain's two redirects, run in a popup window instead of the app's own tab,
+// Popup mode: the keychain's redirects, there and back, run in a popup window instead of the app's own tab,
 // so the app's page stays loaded and gets a promise.
 //
 //   app page                              popup
@@ -21,12 +21,14 @@
 // it is about to leave for the issuer, after which `closed` is no longer believed.
 //
 // A blocked popup falls back to the full-page redirect, unless the app asks otherwise.
-import type { Call } from 'starknet';
+import type { Call, TypedData } from 'starknet';
 import {
   beginConnect,
   beginExecute,
+  beginSignMessage,
   finishConnect,
   finishExecute,
+  finishSignMessage,
   fragmentId,
   type ConnectOptions,
   type Connection,
@@ -206,12 +208,27 @@ function awaitPopup(url: string, id: string, options: PopupOptions, environment:
   });
 }
 
-/** Reads from `pending`, writes to `store`: the request stays in memory, the connection is kept. */
-const finishInto = (pending: KeyValueStore, store: KeyValueStore): KeyValueStore => ({
-  getItem: (key) => pending.getItem(key),
-  setItem: (key, value) => store.setItem(key, value),
-  removeItem: (key) => pending.removeItem(key),
-});
+/**
+ * One request in a popup. `begin` builds the request for a redirect address and notes it in a
+ * store; `finish` reads the answer against that note. In the popup the note stays in memory;
+ * for the redirect fallback it goes to the app's store, as without popup mode.
+ */
+function viaPopup<T>(
+  begin: (redirectUri: string, store: KeyValueStore) => string,
+  finish: (fragment: string, pending: KeyValueStore) => T | null,
+  redirectUri: string,
+  store: KeyValueStore,
+  popup: PopupOptions,
+): Promise<T> {
+  const environment = popup.environment ?? browserEnvironment();
+  const pending = memoryStore();
+  const url = begin(popupRedirectUri(redirectUri), pending);
+  const answer = awaitPopup(url, fragmentId(new URL(url).hash)!, popup, environment);
+  if (answer) return answer.then((fragment) => finish(fragment, pending)!);
+  if (popup.fallback === 'none') return Promise.reject(new KeychainPopupError('blocked', 'keychain: the browser blocked the popup'));
+  environment.navigate(begin(redirectUri, store));
+  return new Promise(() => {});
+}
 
 /**
  * App side: connects through the keychain in a popup. Resolves with the connection, which is
@@ -227,15 +244,16 @@ const finishInto = (pending: KeyValueStore, store: KeyValueStore): KeyValueStore
  * promise never settles.
  */
 export function connectWithPopup(options: ConnectOptions, store: KeyValueStore, popup: PopupOptions = {}): Promise<Connection> {
-  const environment = popup.environment ?? browserEnvironment();
-  // The pending request, with the session's private key, stays in this page's memory.
-  const pending = memoryStore();
-  const url = beginConnect({ ...options, redirectUri: popupRedirectUri(options.redirectUri) }, pending);
-  const answer = awaitPopup(url, fragmentId(new URL(url).hash)!, popup, environment);
-  if (answer) return answer.then((fragment) => finishConnect(fragment, finishInto(pending, store))!);
-  if (popup.fallback === 'none') return Promise.reject(new KeychainPopupError('blocked', 'keychain: the browser blocked the popup'));
-  environment.navigate(beginConnect(options, store));
-  return new Promise(() => {});
+  return viaPopup(
+    (redirectUri, pending) => beginConnect({ ...options, redirectUri }, pending),
+    // The pending request, with the session's private key, is read from this page's memory;
+    // only the connection is written to the app's store.
+    (fragment, pending) =>
+      finishConnect(fragment, { getItem: (key) => pending.getItem(key), setItem: (key, value) => store.setItem(key, value), removeItem: (key) => pending.removeItem(key) }),
+    options.redirectUri,
+    store,
+    popup,
+  );
 }
 
 /**
@@ -248,14 +266,21 @@ export function executeWithPopup(
   store: KeyValueStore,
   popup: PopupOptions = {},
 ): Promise<{ transactionHash: string }> {
-  const environment = popup.environment ?? browserEnvironment();
-  const pending = memoryStore();
-  const url = beginExecute({ ...options, redirectUri: popupRedirectUri(options.redirectUri) }, pending);
-  const answer = awaitPopup(url, fragmentId(new URL(url).hash)!, popup, environment);
-  if (answer) return answer.then((fragment) => finishExecute(fragment, pending)!);
-  if (popup.fallback === 'none') return Promise.reject(new KeychainPopupError('blocked', 'keychain: the browser blocked the popup'));
-  environment.navigate(beginExecute(options, store));
-  return new Promise(() => {});
+  return viaPopup((redirectUri, pending) => beginExecute({ ...options, redirectUri }, pending), finishExecute, options.redirectUri, store, popup);
+}
+
+/**
+ * App side: asks the user to sign one message in a popup. Resolves with the account, its
+ * network and the owner's signature; verify it as after `finishSignMessage`. Same rules and
+ * failures as `connectWithPopup`; with the redirect fallback the app finishes with
+ * `finishSignMessage` when the user comes back.
+ */
+export function signMessageWithPopup(
+  options: { keychainUrl: string; redirectUri: string; appName?: string; typedData: TypedData },
+  store: KeyValueStore,
+  popup: PopupOptions = {},
+): Promise<{ account: string; chainId: string; signature: string[] }> {
+  return viaPopup((redirectUri, pending) => beginSignMessage({ ...options, redirectUri }, pending), finishSignMessage, options.redirectUri, store, popup);
 }
 
 /** What `relayPopupResult` needs from the browser. The default reads the page's globals. */

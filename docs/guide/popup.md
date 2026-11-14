@@ -9,8 +9,8 @@ It is opt-in, and it falls back to the redirect when the browser blocks the popu
 ## What you have to do
 
 1. **Call `relayPopupResult()` first** on the page `redirectUri` names. In the popup it hands the answer to the page that opened it, closes the window and returns `true`: draw nothing else. Everywhere else it returns `false`.
-2. **Call `connectWithPopup` / `executeWithPopup` directly from a click or key handler**, with nothing awaited before it. Browsers only allow a popup during a user action.
-3. **Keep the redirect path working.** A blocked popup becomes an ordinary redirect (the page leaves, the promise never settles), and the user comes back to `finishConnect` / `finishExecute` as in the [Quickstart](/guide/quickstart#_4-read-the-answer). Pass `{ fallback: 'none' }` to get a `blocked` rejection instead.
+2. **Call `connectWithPopup` / `executeWithPopup` / `signMessageWithPopup` directly from a click or key handler**, with nothing awaited before it. Browsers only allow a popup during a user action.
+3. **Keep the redirect path working.** A blocked popup becomes an ordinary redirect (the page leaves, the promise never settles), and the user comes back to `finishConnect` / `finishExecute` / `finishSignMessage` as in the [Quickstart](/guide/quickstart#_4-read-the-answer). Pass `{ fallback: 'none' }` to get a `blocked` rejection instead.
 
 The requirements for your page are the same as for redirects: it must send a referrer, and `redirectUri` must be on your page's origin. Do not open the popup with `noopener` or `noreferrer`.
 
@@ -35,7 +35,7 @@ While the popup is open, the keychain (and an issuer that does not isolate its p
 
 ## When it does not answer
 
-`connectWithPopup` and `executeWithPopup` reject with the keychain's reason (`keychain: denied by the user`, …) when there is an answer, and with a `KeychainPopupError` when there is none. Its `code` is one of:
+`connectWithPopup`, `executeWithPopup` and `signMessageWithPopup` reject with the keychain's reason (`keychain: denied by the user`, …) when there is an answer, and with a `KeychainPopupError` when there is none. Its `code` is one of:
 
 | `code` | Meaning |
 |---|---|
@@ -52,4 +52,5 @@ While the popup is open, the keychain (and an issuer that does not isolate its p
 - **A keychain older than this feature** does not announce the trip to the issuer, so a sign-in there can be mistaken for a closed popup.
 - **Mobile browsers** open a "popup" as a new tab. The flow is the same, but in-app browsers (webviews) often block new windows altogether, and you get the redirect.
 - **Tested in Chromium only**, against a fake issuer. The browser tests cover Chrome, including an issuer that isolates its pages. Firefox, Safari and the real Google sign-in have not been exercised in popup mode.
+- **The wallet interface does not use it.** `KamuiWallet` and the starknet-react connector still redirect.
 - **No iframe mode.** Embedding the keychain needs the Storage Access API and a keychain that allows framing; it does not exist.

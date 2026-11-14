@@ -26,7 +26,7 @@ When the request itself cannot be read or trusted, the keychain shows the reason
 
 ## From popup mode
 
-`connectWithPopup` and `executeWithPopup` reject with the errors above when the keychain answered, and with a `KeychainPopupError` when it did not. See [Popup mode](/guide/popup#when-it-does-not-answer).
+`connectWithPopup`, `executeWithPopup` and `signMessageWithPopup` reject with the errors above when the keychain answered, and with a `KeychainPopupError` when it did not. See [Popup mode](/guide/popup#when-it-does-not-answer).
 
 | `code` | Message | Cause |
 |---|---|---|
@@ -58,3 +58,5 @@ Budget is debited **before** a transaction is sent and is not refunded for timeo
 ## On chain
 
 A sponsored call that passes the sponsor checks can still revert. The account refuses, among others, a call outside the session's scope, an amount above a spending limit, an expired or revoked session, and a nonce outside the session's range.
+
+To tell an ended session from the other refusals, call `checkSessionEnded` after the failure. See [When a call fails](/guide/sessions#when-a-call-fails).
