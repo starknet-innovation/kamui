@@ -1,15 +1,15 @@
 //! Session keys on the self-paid path (`__validate__`): every SNIP-41 Part C step and its order.
 use core::num::traits::Zero;
 use kamui::core::{IKamuiAccountDispatcher, IKamuiAccountDispatcherTrait};
-use kamui::mocks::{ITargetDispatcher, ITargetDispatcherTrait};
-use kamui::session::interface::{
-    AllowedCall, ISessionKeyManagerDispatcher, ISessionKeyManagerDispatcherTrait,
-    ISessionKeyManagerExtDispatcher, ISessionKeyManagerExtDispatcherTrait,
-    SESSION_KEY_INTERFACE_ID, SessionData,
-};
-use kamui::owners::{IOwnersDispatcher, IOwnersDispatcherTrait, new_owner_message_hash};
 use kamui::jwt::registry::{IJwkRegistryDispatcher, IJwkRegistryDispatcherTrait};
 use kamui::jwt::types::Issuer;
+use kamui::mocks::{ITargetDispatcher, ITargetDispatcherTrait};
+use kamui::owners::{IOwnersDispatcher, IOwnersDispatcherTrait, new_owner_message_hash};
+use kamui::session::interface::{
+    AllowedCall, ISessionKeyManagerDispatcher, ISessionKeyManagerDispatcherTrait,
+    ISessionKeyManagerExtDispatcher, ISessionKeyManagerExtDispatcherTrait, SESSION_KEY_INTERFACE_ID,
+    SessionData,
+};
 use kamui::social::component::{
     ISocialRecoverableDispatcher, ISocialRecoverableDispatcherTrait, JWK_REGISTRY_ADDRESS,
 };
@@ -19,11 +19,10 @@ use openzeppelin_interfaces::src9::ISRC9_V2_ID;
 use snforge_std::signature::stark_curve::{StarkCurveKeyPairImpl, StarkCurveSignerImpl};
 use snforge_std::signature::{KeyPair, KeyPairTrait, SignerTrait};
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp_global,
-    start_cheat_block_number, start_cheat_caller_address, start_cheat_nonce,
-    start_cheat_proof_facts, start_cheat_resource_bounds,
-    start_cheat_signature, start_cheat_tip, start_cheat_transaction_hash,
-    start_cheat_transaction_version, stop_cheat_caller_address,
+    ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_number,
+    start_cheat_block_timestamp_global, start_cheat_caller_address, start_cheat_nonce,
+    start_cheat_proof_facts, start_cheat_resource_bounds, start_cheat_signature, start_cheat_tip,
+    start_cheat_transaction_hash, start_cheat_transaction_version, stop_cheat_caller_address,
 };
 use starknet::account::Call;
 use starknet::{ContractAddress, ResourcesBounds, SyscallResultTrait};
@@ -86,7 +85,9 @@ pub fn owners(account: ContractAddress) -> IOwnersDispatcher {
 }
 
 /// `key`'s signature accepting ownership of `account` at its current owner set.
-pub fn new_owner_signature(account: ContractAddress, key: KeyPair<felt252, felt252>) -> Span<felt252> {
+pub fn new_owner_signature(
+    account: ContractAddress, key: KeyPair<felt252, felt252>,
+) -> Span<felt252> {
     let anchor = owners(account).get_owners_anchor();
     let (r, s) = key.sign(new_owner_message_hash(account, anchor)).unwrap();
     array![r, s].span()
@@ -297,7 +298,9 @@ fn validate_refuses_non_protocol_callers() {
     start_cheat_signature(env.account, array![r, s].span());
     start_cheat_transaction_hash(env.account, 0x123);
     start_cheat_caller_address(env.account, env.target);
-    assert_eq!(IKamuiAccountDispatcher { contract_address: env.account }.__validate__(ping(env)), 0);
+    assert_eq!(
+        IKamuiAccountDispatcher { contract_address: env.account }.__validate__(ping(env)), 0,
+    );
 }
 
 //
@@ -519,9 +522,10 @@ fn blocked_selectors() -> Array<felt252> {
         selector!("setPublicKey"), selector!("execute_from_outside_v2"),
         selector!("set_spending_policy"), selector!("remove_spending_policy"),
         selector!("add_or_update_scoped_session_key"), selector!("revoke_all_sessions"),
-        selector!("add_owner"), selector!("remove_owner"), selector!("__validate__"), selector!("__validate_declare__"),
-        selector!("__validate_deploy__"), selector!("recover"), selector!("prove_jwt"),
-        selector!("finalize_override_recovery"), selector!("cancel_override_recovery"),
+        selector!("add_owner"), selector!("remove_owner"), selector!("__validate__"),
+        selector!("__validate_declare__"), selector!("__validate_deploy__"), selector!("recover"),
+        selector!("prove_jwt"), selector!("finalize_override_recovery"),
+        selector!("cancel_override_recovery"),
     ]
 }
 
@@ -570,9 +574,7 @@ fn a_session_never_calls_the_account_itself() {
     // Without a whitelist.
     add_session(env, 5, FEE_CAP, array![]);
     assert_eq!(validate_session(env, array![call(env.account, selector!("ping"))], 1), 0);
-    assert_eq!(
-        validate_session(env, array![call(env.account, selector!("get_owners"))], 1), 0,
-    );
+    assert_eq!(validate_session(env, array![call(env.account, selector!("get_owners"))], 1), 0);
     // And with one that names the selector.
     add_session(env, 5, FEE_CAP, array![selector!("ping")]);
     assert_eq!(validate_session(env, array![call(env.account, selector!("ping"))], 1), 0);
@@ -593,7 +595,9 @@ fn whitelist_is_enforced_on_every_call() {
     add_session(env, 5, FEE_CAP, array![selector!("ping")]);
     assert_eq!(validate_session(env, ping(env), 1), starknet::VALIDATED);
     assert_eq!(validate_session(env, array![call(env.target, selector!("transfer"))], 2), 0);
-    let mixed = array![call(env.target, selector!("ping")), call(env.target, selector!("transfer"))];
+    let mixed = array![
+        call(env.target, selector!("ping")), call(env.target, selector!("transfer")),
+    ];
     assert_eq!(validate_session(env, mixed, 2), 0);
     // A selector whitelist is not tied to a contract.
     assert_eq!(

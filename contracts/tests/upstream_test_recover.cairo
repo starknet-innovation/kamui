@@ -6,7 +6,18 @@
 
 use core::hash::{HashStateExTrait, HashStateTrait};
 use core::poseidon::{PoseidonTrait, poseidon_hash_span};
+use kamui::jwt::rec_aud_component::{
+    IWhitelistedAudienceRecoverableDispatcher, IWhitelistedAudienceRecoverableDispatcherTrait,
+};
+use kamui::jwt::registry::{IJwkRegistryDispatcher, IJwkRegistryDispatcherTrait};
+use kamui::jwt::types::Issuer;
 use kamui::owners::{IOwnersDispatcher, IOwnersDispatcherTrait};
+use kamui::social::component::{
+    FINALIZE_WINDOW, ISocialRecoverableSafeDispatcher, ISocialRecoverableSafeDispatcherTrait,
+    JWK_REGISTRY_ADDRESS, PROOF_VALIDITY_BLOCKS, PendingOverrideRecoveryCanceledEvent,
+    PendingOverrideRecoveryEvent, RECOVERY_DELAY, RecoveredEvent, SocialComponent,
+};
+use kamui::social::proof_facts::{VIRTUAL_SNOS, VIRTUAL_SNOS0};
 use openzeppelin_interfaces::accounts::ISRC6_ID;
 use openzeppelin_interfaces::introspection::{ISRC5Dispatcher, ISRC5DispatcherTrait};
 use snforge_std::signature::stark_curve::{StarkCurveKeyPairImpl, StarkCurveSignerImpl};
@@ -16,17 +27,6 @@ use snforge_std::{
     start_cheat_block_number, start_cheat_block_timestamp, start_cheat_caller_address,
     start_cheat_chain_id, start_cheat_proof_facts, store,
 };
-use kamui::jwt::rec_aud_component::{
-    IWhitelistedAudienceRecoverableDispatcher, IWhitelistedAudienceRecoverableDispatcherTrait,
-};
-use kamui::jwt::registry::{IJwkRegistryDispatcher, IJwkRegistryDispatcherTrait};
-use kamui::jwt::types::Issuer;
-use kamui::social::component::{
-    FINALIZE_WINDOW, ISocialRecoverableSafeDispatcher, ISocialRecoverableSafeDispatcherTrait,
-    JWK_REGISTRY_ADDRESS, PROOF_VALIDITY_BLOCKS, PendingOverrideRecoveryCanceledEvent,
-    PendingOverrideRecoveryEvent, RECOVERY_DELAY, RecoveredEvent, SocialComponent,
-};
-use kamui::social::proof_facts::{VIRTUAL_SNOS, VIRTUAL_SNOS0};
 use starknet::{ContractAddress, SyscallResultTrait};
 
 /// poseidon(iss, aud, sub) in real life; any felt works here.

@@ -3,15 +3,15 @@
 //! registry accepts any key for an issuer, so the test key is set under Google's `iss`.
 
 use garaga::signatures::rsa::RSA2048PublicKey;
-use snforge_std::fs::{FileTrait, read_txt};
-use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, MessageToL1, MessageToL1SpyAssertionsTrait, declare,
-    spy_messages_to_l1, start_cheat_block_timestamp, start_cheat_caller_address, store,
-};
 use kamui::jwt::registry::{IJwkRegistryDispatcher, IJwkRegistryDispatcherTrait};
 use kamui::jwt::types::{Issuer, JwtPayload, JwtPayloadTrait};
 use kamui::social::component::{
     ISocialRecoverableSafeDispatcher, ISocialRecoverableSafeDispatcherTrait, JWK_REGISTRY_ADDRESS,
+};
+use snforge_std::fs::{FileTrait, read_txt};
+use snforge_std::{
+    ContractClassTrait, DeclareResultTrait, MessageToL1, MessageToL1SpyAssertionsTrait, declare,
+    spy_messages_to_l1, start_cheat_block_timestamp, start_cheat_caller_address, store,
 };
 use starknet::{ContractAddress, SyscallResultTrait};
 
