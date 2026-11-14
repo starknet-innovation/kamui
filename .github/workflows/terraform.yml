@@ -1,8 +1,8 @@
 # Terraform for the two AWS test accounts, run from this repository through OIDC. No AWS access
 # key is stored in GitHub; each job exchanges its GitHub token for a short-lived AWS session.
 #
-# A pull request gets a read-only plan. Applying is a manual run of this workflow, not something
-# a merge does on its own: this tree still describes the retired Fargate design, while the live
+# A pull request, or a manual run left on its default `plan`, gets a read-only plan of every root
+# module. Applying is a manual run with `action: apply`, never something a merge does on its own: this tree still describes the retired Fargate design, while the live
 # Sepolia deployment is the operator-run lean package. Applying a root module here would create
 # or change real infrastructure that the lean deployment does not use. Point apply at a root
 # module only once you mean it. See infra/aws/terraform/github-oidc/README.md.
@@ -14,13 +14,19 @@ on:
     paths: ['infra/aws/terraform/**', '.github/workflows/terraform.yml']
   workflow_dispatch:
     inputs:
+      action:
+        description: plan (read-only, every root module) or apply (the module and account below)
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
       root_module:
-        description: Root module under infra/aws/terraform to apply
+        description: 'apply only: root module under infra/aws/terraform'
         required: true
         type: choice
         options: [github-oidc, backend, pepper]
       account:
-        description: Which account's credentials and state to use
+        description: "apply only: which account's credentials and state to use"
         required: true
         type: choice
         options: [backend, pepper]
@@ -30,7 +36,7 @@ permissions:
 
 concurrency:
   # One Terraform run at a time per account: concurrent applies fight over the state lock.
-  group: terraform-${{ inputs.account || 'plan' }}
+  group: terraform-${{ inputs.action == 'apply' && inputs.account || 'plan' }}
   cancel-in-progress: false
 
 env:
@@ -39,7 +45,7 @@ env:
 
 jobs:
   plan:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || inputs.action == 'plan'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -103,7 +109,7 @@ jobs:
         run: rm -f infra/aws/terraform/${{ matrix.root_module }}/tfplan
 
   apply:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
     runs-on: ubuntu-latest
     # Set this environment up with required reviewers. The apply role can additionally be bound
     # to it, so approval gates the AWS credential and not just the job.
