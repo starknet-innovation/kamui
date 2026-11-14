@@ -11,6 +11,7 @@ import {
   pendingRequestKind,
   sessionCall,
   sponsor,
+  watchSession,
   type Connection,
 } from '@kamui/sdk';
 import { KEYCHAIN_URL, SPONSOR_URL, provider, sessionRequest } from './kamui';
@@ -79,6 +80,16 @@ export function KamuiProvider({ children }: { children: ReactNode }) {
       setStatus(alive ? 'connected' : 'disconnected');
     });
   }, []);
+
+  // Told once when the session ends later on, without asking the account before every call.
+  useEffect(() => {
+    if (!connection) return;
+    return watchSession(connection, provider, () => {
+      forgetConnection(store());
+      setConnection(null);
+      setStatus('disconnected');
+    });
+  }, [connection]);
 
   const connect = useCallback(() => {
     window.location.assign(beginConnect({ ...sessionRequest(), keychainUrl: KEYCHAIN_URL, redirectUri: here() }, store()));

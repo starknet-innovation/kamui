@@ -2,7 +2,7 @@
 
 ## From the keychain
 
-`finishConnect` and `finishExecute` throw `Error('keychain: <reason>')`. When the keychain answered with a refusal, the error is a `KeychainAnswerError` and its `reason` property holds the reason without the prefix.
+`finishConnect`, `finishExecute` and `finishSignMessage` throw `Error('keychain: <reason>')`. When the keychain answered with a refusal, the error is a `KeychainAnswerError` and its `reason` property holds the reason without the prefix.
 
 | Reason | Cause |
 |---|---|
@@ -50,7 +50,7 @@ The keychain's page names these causes. Because nothing proves which site sent t
 { "v": 1, "id": "0x5c1e…", "ok": false, "error": "referrer_missing" }
 ```
 
-It carries no account and nothing else from the request. `finishConnect` and `finishExecute` throw it like any refusal, and `isReferrerMissing` recognises it:
+It carries no account and nothing else from the request. `finishConnect`, `finishExecute` and `finishSignMessage` throw it like any refusal, and `isReferrerMissing` recognises it:
 
 ```ts
 import { finishConnect, isReferrerMissing } from '@kamui/sdk';
@@ -91,3 +91,5 @@ Budget is debited **before** a transaction is sent and is not refunded for timeo
 ## On chain
 
 A sponsored call that passes the sponsor checks can still revert. The account refuses, among others, a call outside the session's scope, an amount above a spending limit, an expired or revoked session, and a nonce outside the session's range.
+
+To tell an ended session from the other refusals, call `checkSessionEnded` after the failure. See [When a call fails](/guide/sessions#when-a-call-fails).

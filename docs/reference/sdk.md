@@ -17,13 +17,20 @@ type Connection = {
   account: string;
   chainId: string;
   classHash: string;
-  session: { privateKey: string; publicKey: string; validUntil: number; maxCalls: number };
+  session: {
+    privateKey: string;
+    publicKey: string;
+    validUntil: number;
+    maxCalls: number;
+    /** The scope that was asked for. Absent on a connection stored by an older SDK. */
+    calls?: { to: string; entrypoint: string }[];
+  };
 };
 ```
 
 ### `isReferrerMissing(error): boolean`
 
-Whether an error thrown by `finishConnect` or `finishExecute` is the keychain's `referrer_missing`: the request reached it with no referrer and the user chose to come back. See [Troubleshooting: the referrer](/reference/errors#troubleshooting-the-referrer).
+Whether an error thrown by `finishConnect`, `finishExecute` or `finishSignMessage` is the keychain's `referrer_missing`: the request reached it with no referrer and the user chose to come back. See [Troubleshooting: the referrer](/reference/errors#troubleshooting-the-referrer).
 
 ### `loadConnection(store): Connection | null`
 
@@ -33,13 +40,47 @@ The stored connection, without checking it on chain.
 
 Whether the session still exists on the account and has not expired. It ends on any change of devices.
 
+### `watchSession(connection, provider, onEnded, options?): () => void`
+
+Calls `onEnded({ reason, transactionHash?, blockNumber? })` once when the session ends, then stops. Returns a function that stops it early. Expiry is a local timer; revocation and device changes come from the account's events, polled with `starknet_getEvents` or pushed over a WebSocket. See [Being told when it ends](/guide/sessions#being-told-when-it-ends).
+
+| Option | Default | |
+|---|---|---|
+| `pollIntervalMs` | `30000` | Time between two reads of the account's events |
+| `channel` | none | A starknet.js `WebSocketChannel`. Events are pushed and nothing is polled; falls back to polling if the subscription cannot be opened |
+| `onError` | none | Called with a failed read. The watcher retries at the next interval |
+| `now`, `timers` | system | Clock (unix seconds) and timers, for tests |
+
+`reason` is one of:
+
+| | |
+|---|---|
+| `expired` | `validUntil` passed |
+| `revoked` | The user revoked this session |
+| `all-revoked` | The user revoked every session |
+| `owners-changed` | The user added or removed a device |
+| `replaced` | The same session key was registered again with another expiry |
+| `gone` | The account no longer has the session, and the cause was not seen |
+
+### `checkSessionEnded(connection, provider, now?): Promise<SessionEnd | null>`
+
+One look: `null` while the session is alive, else `{ reason }` with `expired` (decided locally), `replaced` or `gone`. For use after a failed call.
+
+### `isSessionRefusal(error): boolean`
+
+Whether an error carries the account's `Kamui: invalid session` refusal, as text or as the felt a node prints. The account gives it for an ended session, a call outside the scope and a nonce outside the session's range; follow it with `checkSessionEnded`. `false` proves nothing: a relayer may not pass the reason on, and a self-paid transaction is refused at validation without it.
+
+### `sessionEventTracker(session)`, `SESSION_END_EVENT_KEYS`
+
+For your own event source. `SESSION_END_EVENT_KEYS` is the `keys` filter for `starknet_getEvents` or `starknet_subscribeEvents` on the account's address. `sessionEventTracker({ publicKey, validUntil })` returns `{ push(event), ended }`: push the events in the order they were emitted and read `ended` (`null`, or the reason).
+
 ### `forgetConnection(store): void`
 
 Removes the connection and any pending request. Does not revoke the session on chain; the user does that from the keychain.
 
-### `pendingRequestKind(store): 'connect' | 'execute' | null`
+### `pendingRequestKind(store): 'connect' | 'execute' | 'signMessage' | null`
 
-Which answer the app is waiting for. Call it before `finishConnect`/`finishExecute` to pick the right one.
+Which answer the app is waiting for. Call it before `finishConnect`/`finishExecute`/`finishSignMessage` to pick the right one.
 
 ## Sending
 
@@ -64,6 +105,65 @@ Stores the pending request (`kamui.pending.execute`) and returns the keychain UR
 ### `finishExecute(fragment, store): { transactionHash } | null`
 
 Reads the answer. Throws if the user denied or the keychain reported an error, with the same `KeychainAnswerError` as `finishConnect`.
+
+## Signing messages
+
+### `sessionSignTypedData(connection, typedData): string[]`
+
+Signs SNIP-12 typed data with the session key, as the connected account: `[session_pubkey, r, s, valid_until]`. No prompt and no transaction. The account's `is_valid_signature` accepts it while the session exists and has not expired; the session's scope and limits do not apply to messages.
+
+### `beginSignMessage({ keychainUrl, redirectUri, appName?, typedData }, store): string`
+
+Stores the pending request (`kamui.pending.sign`) and returns the keychain URL that asks the user to sign `typedData` with their account's owner key. Needs no session. The typed data must be SNIP-12 revision 1 and its domain must name the account's network.
+
+### `finishSignMessage(fragment, store): { account, chainId, signature } | null`
+
+Reads the answer. `signature` is the owner's `[r, s]`. Throws if the user denied or the keychain reported an error.
+
+### `verifyMessageSignature(provider, account, typedData, signature): Promise<boolean>`
+
+Asks the account whether it accepts the signature for that message (`is_valid_signature`). Works for owner and session signatures. Run it on your server before trusting a sign-in.
+
+### `typedDataHash(typedData, account): string`
+
+The SNIP-12 message hash the account signs. It commits to the account address.
+
+## Wallet interface
+
+The helpers above, behind the interface wallet libraries expect. Walkthrough: [starknet-react](/examples/starknet-react).
+
+### `new KamuiWallet({ keychainUrl, provider, session, sponsor?, store?, page? })`
+
+A get-starknet-style wallet object (`id`, `name`, `version`, `icon`, `request`, `on`, `off`) for one session.
+
+| Member | |
+|---|---|
+| `resume(): Promise<Connection \| null>` | Once per page load: reads the keychain's answer, loads the stored connection, checks it on chain. Never redirects, never throws. |
+| `connect(): Promise<Connection>` | Settles at once with a live session. Otherwise navigates to the keychain and never settles. |
+| `disconnect(): void` | Forgets the session key and emits `accountsChanged` with `[]`. |
+| `execute(calls): Promise<{ transaction_hash }>` | Sends calls inside the session, sponsored if `sponsor` is set. Sponsored calls are sent one at a time. |
+| `approveInKeychain(calls, appName?): Promise<never>` | Navigates to the keychain's `/execute` page. |
+| `account(provider?)` | A starknet.js account whose `execute` is the wallet's. |
+| `request({ type, params })` | The wallet API. See the walkthrough for what is answered. |
+| `connection`, `error`, `lastApproved` | The live session, why the last trip to the keychain failed, and the hash of a one-off transaction just approved. |
+
+`page` replaces how the wallet reads the URL fragment and navigates (`fragment`, `clearFragment`, `redirectUri`, `navigate`); the default uses `window`. Tests pass their own.
+
+### `KamuiWalletError`
+
+`code` is `NOT_CONNECTED`, `OUT_OF_SCOPE` (with `calls`), `SESSION_EXHAUSTED`, `SESSION_EXPIRED` or `UNSUPPORTED`.
+
+### `callsOutsideSession(connection, calls): Call[]`
+
+The calls the session's stored scope does not cover. Empty when the connection has no stored scope.
+
+### `injectKamuiWallet(wallet, target = globalThis)`
+
+Sets `target.starknet_kamui`.
+
+### `@kamui/sdk/starknet-react`
+
+`new KamuiConnector(options | wallet)` is a starknet-react `Connector` over a `KamuiWallet` (`connector.wallet`). `useKamuiReconnect(connector)` completes the connection after a page load and returns `{ isResuming, error, lastApproved }`. Needs `@starknet-react/core` 5 and React 18, which the rest of the SDK does not.
 
 ## Reading an account
 

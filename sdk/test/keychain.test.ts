@@ -1,13 +1,26 @@
 // The keychain protocol: what an app may ask, what the keychain refuses, and that an answer
 // only reaches the request it belongs to.
 import { describe, expect, test } from 'bun:test';
+import { ec, outsideExecution, OutsideExecutionVersion, shortString, type TypedData } from 'starknet';
 import {
   KeychainAnswerError,
   KeychainRequestError,
   MAX_EXECUTE_CALLDATA,
   MAX_EXECUTE_CALLS,
+  MAX_SIGN_MESSAGE_BYTES,
+  MAX_SIGN_MESSAGE_FIELDS,
   beginConnect,
   beginExecute,
+  beginSignMessage,
+  finishSignMessage,
+  newKeyPair,
+  outsideExecutionHash,
+  ownerSignTypedData,
+  parseSignMessageRequest,
+  sessionSignTypedData,
+  signMessageProblems,
+  typedDataFields,
+  typedDataHash,
   callsFromWire,
   describeCall,
   executeProblems,
@@ -381,6 +394,214 @@ describe('transaction requests', () => {
     const { request } = executeFrom(store);
     expect(() => finishExecute(toFragment({ v: 1, id: '0xabc', ok: true, transactionHash: '0x1' }), store)).toThrow(/not for this request/);
     expect(() => finishExecute(toFragment({ v: 1, id: request.id, ok: false, error: 'denied by the user' }), store)).toThrow(/denied by the user/);
+  });
+});
+
+describe('message requests', () => {
+  const SEPOLIA = shortString.encodeShortString('SN_SEPOLIA');
+  const signIn = (): TypedData => ({
+    types: {
+      StarknetDomain: [
+        { name: 'name', type: 'shortstring' },
+        { name: 'version', type: 'shortstring' },
+        { name: 'chainId', type: 'shortstring' },
+        { name: 'revision', type: 'shortstring' },
+      ],
+      SignIn: [
+        { name: 'statement', type: 'string' },
+        { name: 'nonce', type: 'felt' },
+        { name: 'issued', type: 'Stamp' },
+        { name: 'scopes', type: 'shortstring*' },
+      ],
+      Stamp: [{ name: 'at', type: 'timestamp' }],
+    },
+    primaryType: 'SignIn',
+    domain: { name: 'Example Game', version: '1', chainId: 'SN_SEPOLIA', revision: '1' },
+    message: { statement: 'Sign in to Example Game', nonce: '0x1234', issued: { at: 1763200000 }, scopes: ['profile', 'scores'] },
+  });
+
+  function signFrom(store: KeyValueStore, typedData = signIn()) {
+    const url = new URL(beginSignMessage({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/play`, appName: 'Example Game', typedData }, store));
+    return { url, request: parseSignMessageRequest(url.hash, `${APP}/login`)! };
+  }
+  const bad = (change: (r: any) => void, reason: RegExp) => {
+    const copy = JSON.parse(JSON.stringify(signFrom(memoryStore()).request));
+    change(copy);
+    expect(() => parseSignMessageRequest(toFragment(copy), `${APP}/`)).toThrow(reason);
+  };
+
+  test('the request reaches the keychain intact', () => {
+    const store = memoryStore();
+    const { url, request } = signFrom(store);
+    expect(url.origin + url.pathname).toBe(`${KEYCHAIN}/sign`);
+    expect(request.kind).toBe('signMessage');
+    expect(request.typedData).toEqual(signIn());
+    expect(typedDataHash(request.typedData, ACCOUNT)).toBe(typedDataHash(signIn(), ACCOUNT));
+    expect(pendingRequestKind(store)).toBe('signMessage');
+  });
+
+  test('the same checks on who is asking as for a session', () => {
+    const fragment = signFrom(memoryStore()).url.hash;
+    expect(() => parseSignMessageRequest(fragment, 'https://evil.example/')).toThrow(/not sent by the site/);
+    expect(() => parseSignMessageRequest(fragment, '')).toThrow(/cannot tell which site/);
+    expect(parseSignMessageRequest('#other', `${APP}/`)).toBeNull();
+  });
+
+  test('a missing referrer and another site\'s are told apart, and the app recognises the way back', () => {
+    const store = memoryStore();
+    const { url, request } = signFrom(store);
+    const refusal = (referrer: string): KeychainRequestError => {
+      try {
+        parseSignMessageRequest(url.hash, referrer);
+      } catch (error) {
+        expect(error).toBeInstanceOf(KeychainRequestError);
+        return error as KeychainRequestError;
+      }
+      throw new Error('the request was not refused');
+    };
+    const mismatch = refusal('https://evil.example/x');
+    expect(mismatch.code).toBe('referrer_mismatch');
+    expect(mismatch.referrerOrigin).toBe('https://evil.example');
+    expect(() => referrerMissingUrl(mismatch)).toThrow(/no referrer/);
+
+    const missing = refusal('');
+    expect(missing.code).toBe('referrer_missing');
+    expect(missing.id).toBe(request.id);
+    const back = new URL(referrerMissingUrl(missing));
+    expect(back.origin + back.pathname).toBe(`${APP}/play`);
+    // The way back carries the error and the id: not the message, and no account or signature.
+    const payload = JSON.parse(Buffer.from(new URLSearchParams(back.hash.slice(1)).get('kamui')!, 'base64url').toString());
+    expect(payload).toEqual({ v: 1, id: request.id, ok: false, error: 'referrer_missing' });
+
+    let thrown: unknown;
+    try {
+      finishSignMessage(back.hash, store);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(KeychainAnswerError);
+    expect((thrown as Error).message).toBe('keychain: referrer_missing');
+    expect(isReferrerMissing(thrown)).toBe(true);
+    expect(pendingRequestKind(store)).toBeNull();
+  });
+
+  test('malformed, oversized and unhashable messages are refused', () => {
+    bad((r) => (r.kind = 'execute'), /not a message request/);
+    bad((r) => delete r.typedData, /no message/);
+    bad((r) => (r.typedData.message = 'hello'), /bad message/);
+    bad((r) => (r.typedData.types.SignIn = 'felt'), /bad message types/);
+    bad((r) => (r.typedData.types.SignIn[0] = { name: 1, type: 'felt' }), /bad message types/);
+    bad((r) => (r.typedData.primaryType = 'Missing'), /bad message type/);
+    bad((r) => (r.typedData.primaryType = 'StarknetDomain'), /bad message type/);
+    bad((r) => (r.typedData.message.statement = 'x'.repeat(MAX_SIGN_MESSAGE_BYTES)), /too large/);
+    bad((r) => (r.typedData.message.scopes = Array.from({ length: MAX_SIGN_MESSAGE_FIELDS }, () => 'a')), /more than/);
+    // Revision 0 (the legacy domain) is not signed.
+    bad((r) => delete r.typedData.domain.revision, /revision 1/);
+    bad((r) => {
+      r.typedData.types.StarkNetDomain = r.typedData.types.StarknetDomain;
+      delete r.typedData.types.StarknetDomain;
+    }, /revision 1/);
+    // A value its type does not declare would be shown but not signed; a missing one cannot be hashed.
+    bad((r) => (r.typedData.message.amount = '0x1'), /cannot be signed as written.*not declared/);
+    bad((r) => (r.typedData.message.issued.extra = '0x1'), /cannot be signed as written.*not declared/);
+    bad((r) => delete r.typedData.message.nonce, /cannot be signed as written/);
+    bad((r) => (r.typedData.message.nonce = 'not a felt, and far too long to be a short string'), /cannot be signed as written/);
+    // Other kinds of request are not accepted as a message request, and the reverse.
+    expect(() => parseSignMessageRequest(new URL(beginConnect(options(), memoryStore())).hash, `${APP}/`)).toThrow(/not a message request/);
+    expect(() => parseExecuteRequest(signFrom(memoryStore()).url.hash, `${APP}/`)).toThrow(/not a transaction request/);
+  });
+
+  test('unknown fields are dropped, not passed on', () => {
+    const copy = JSON.parse(JSON.stringify(signFrom(memoryStore()).request));
+    copy.typedData.extra = 'x';
+    copy.other = 'y';
+    const parsed = parseSignMessageRequest(toFragment(copy), `${APP}/`)!;
+    expect(parsed.typedData).toEqual(signIn());
+    expect('other' in parsed).toBe(false);
+  });
+
+  test('the message is listed by its types: every hashed value, with its type', () => {
+    expect(typedDataFields(signIn())).toEqual([
+      { path: 'statement', type: 'string', value: 'Sign in to Example Game' },
+      { path: 'nonce', type: 'felt', value: '0x1234' },
+      { path: 'issued.at', type: 'timestamp', value: '1763200000' },
+      { path: 'scopes[0]', type: 'shortstring', value: 'profile' },
+      { path: 'scopes[1]', type: 'shortstring', value: 'scores' },
+    ]);
+    const empty = signIn();
+    (empty.message as any).scopes = [];
+    expect(typedDataFields(empty).at(-1)).toEqual({ path: 'scopes', type: 'shortstring*', value: '(empty list)' });
+  });
+
+  test('a transaction written as a message is never signed', () => {
+    const calls = [{ contractAddress: TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x64', '0x0'] }];
+    const window = { caller: shortString.encodeShortString('ANY_CALLER'), execute_after: 0, execute_before: FUTURE };
+    const { request } = signFrom(memoryStore(), outsideExecution.getTypedData(SEPOLIA as any, window, '0x1', calls, OutsideExecutionVersion.V2));
+    expect(signMessageProblems(SEPOLIA, request.typedData)).toEqual(['it is a transaction written as a message (an outside execution)']);
+    // SNIP-9 v1 is a revision 0 message: not read at all (and the account does not accept v1).
+    expect(() => signFrom(memoryStore(), outsideExecution.getTypedData(SEPOLIA as any, window, '0x1', calls, OutsideExecutionVersion.V1))).toThrow(/revision 1/);
+    // What the SDK signs to run calls is exactly what is refused here.
+    const execution = outsideExecution.getTypedData(SEPOLIA as any, window, '0x1', calls, OutsideExecutionVersion.V2);
+    expect(typedDataHash(execution, ACCOUNT)).toBe(outsideExecutionHash(SEPOLIA, ACCOUNT, calls, '0x1', { executeBefore: FUTURE }));
+    // The domain name is compared as the felt it hashes to, however it is written.
+    const disguised = signIn();
+    (disguised.domain as any).name = shortString.encodeShortString('Account.execute_from_outside');
+    expect(signMessageProblems(SEPOLIA, disguised)).toHaveLength(1);
+  });
+
+  test('a message must name the account\'s network', () => {
+    expect(signMessageProblems(SEPOLIA, signIn())).toEqual([]);
+    const asHex = signIn();
+    (asHex.domain as any).chainId = SEPOLIA;
+    expect(signMessageProblems(SEPOLIA, asHex)).toEqual([]);
+    const mainnet = signIn();
+    (mainnet.domain as any).chainId = 'SN_MAIN';
+    expect(signMessageProblems(SEPOLIA, mainnet)).toEqual(["it is for another network than your account's"]);
+    const none = signIn();
+    none.types.StarknetDomain = none.types.StarknetDomain!.filter((field) => field.name !== 'chainId');
+    delete (none.domain as any).chainId;
+    expect(signMessageProblems(SEPOLIA, none)).toEqual(['it does not name a network']);
+  });
+
+  test('owner and session signatures have the shapes the account reads, over the account-bound hash', () => {
+    const verifies = (hash: string, r: string, s: string, key: { privateKey: string }) =>
+      ec.starkCurve.verify(new ec.starkCurve.Signature(BigInt(r), BigInt(s)), hash, ec.starkCurve.getPublicKey(key.privateKey));
+    const owner = newKeyPair();
+    const hash = typedDataHash(signIn(), ACCOUNT);
+    const [r, s] = ownerSignTypedData(signIn(), ACCOUNT, owner.privateKey);
+    expect(verifies(hash, r, s, owner)).toBe(true);
+    // The hash commits to the account: the same message signed for another account differs.
+    expect(typedDataHash(signIn(), GAME)).not.toBe(hash);
+
+    const session = { ...newKeyPair(), validUntil: FUTURE, maxCalls: 5 };
+    const connection = { account: ACCOUNT, chainId: SEPOLIA, classHash: '0x1', session }; // as finishConnect returns it
+    const signature = sessionSignTypedData(connection, signIn());
+    expect(signature).toHaveLength(4);
+    expect(signature[0]).toBe(session.publicKey);
+    expect(BigInt(signature[3]!)).toBe(BigInt(FUTURE));
+    expect(verifies(hash, signature[1]!, signature[2]!, session)).toBe(true);
+  });
+
+  test('an approval returns the signature to the request it belongs to', () => {
+    const store = memoryStore();
+    const { request } = signFrom(store);
+    const back = new URL(resultUrl(request, { v: 1, id: request.id, ok: true, account: ACCOUNT, chainId: SEPOLIA, signature: ['0xa', '0xb'] }));
+    expect(back.origin + back.pathname).toBe(`${APP}/play`);
+    expect(finishSignMessage(back.hash, store)).toEqual({ account: ACCOUNT, chainId: SEPOLIA, signature: ['0xa', '0xb'] });
+    expect(pendingRequestKind(store)).toBeNull();
+    expect(() => finishSignMessage(back.hash, store)).toThrow(/nothing was asked/);
+  });
+
+  test('a refusal, a malformed answer, and an answer for another request all throw', () => {
+    const answerTo = (result: (id: string) => any) => {
+      const store = memoryStore();
+      const { request } = signFrom(store);
+      return () => finishSignMessage(toFragment(result(request.id)), store);
+    };
+    expect(answerTo(() => ({ v: 1, id: '0xabc', ok: true, account: ACCOUNT, chainId: SEPOLIA, signature: ['0x1', '0x2'] }))).toThrow(/not for this request/);
+    expect(answerTo((id) => ({ v: 1, id, ok: false, error: 'denied by the user' }))).toThrow(/denied by the user/);
+    expect(answerTo((id) => ({ v: 1, id, ok: true, account: ACCOUNT, chainId: SEPOLIA, signature: ['0x1'] }))).toThrow(/malformed/);
+    expect(answerTo((id) => ({ v: 1, id, ok: true, account: ACCOUNT, chainId: SEPOLIA, signature: ['0x1', 'x'] }))).toThrow(/malformed/);
   });
 });
 
