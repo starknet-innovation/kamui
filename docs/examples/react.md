@@ -6,20 +6,20 @@ The code on this page is type-checked against the SDK in CI. The full files are 
 
 ## Installation
 
-Vendor the SDK and alias `@kamui/sdk` as in the [Quickstart](/guide/quickstart#_1-add-the-sdk), then:
+Install the SDK and `starknet`. Before the first npm release, install the SDK from a file as in the [Quickstart](/guide/quickstart#_1-add-the-sdk).
 
 ::: code-group
 
 ```sh [npm]
-npm install starknet@10.8.0
+npm install @kamui/sdk starknet@10.8.0
 ```
 
 ```sh [pnpm]
-pnpm add starknet@10.8.0
+pnpm add @kamui/sdk starknet@10.8.0
 ```
 
 ```sh [bun]
-bun add starknet@10.8.0
+bun add @kamui/sdk starknet@10.8.0
 ```
 
 :::

@@ -17,7 +17,7 @@ Kamui is built from public standards (SNIP-5, SNIP-6, SNIP-9, SNIP-12, SNIP-41) 
 | Path | What it is |
 |---|---|
 | [contracts](contracts/README.md) | Cairo contracts: the `KamuiAccount` (social recovery, owner set, SNIP-41 sessions, SNIP-9 outside execution), the JWK registry, and the registry administrator. |
-| [sdk](sdk/README.md) | TypeScript helpers on starknet.js 10: account addresses, owner keys, sessions, and sponsored calls. |
+| [sdk](sdk/README.md) | TypeScript helpers on starknet.js 10: account addresses, owner keys, sessions, and sponsored calls. Builds as the npm package `@kamui/sdk` (not released yet). |
 | [keychain](keychain/README.md) | The sign-in and approval page that holds the device key, with the pinned [browser prover](keychain/prover/README.md). |
 | [services/backend](services/backend/README.md) | API that authenticates deployments, relays browser-made proofs, sponsors transactions, and keeps the session registry. |
 | [services/pepper](services/pepper/README.md) | Reference pepper service. Not for mainnet accounts. |
@@ -51,6 +51,7 @@ snforge test
 |---|---|---|
 | [contracts](.github/workflows/contracts.yml) | PRs touching `contracts/` | `scarb fmt --check` |
 | [keychain-tests](.github/workflows/keychain-tests.yml) | PRs touching `keychain/` or `sdk/` | Type checks and Chromium browser tests |
+| [sdk-package](.github/workflows/sdk-package.yml) | PRs touching `sdk/` | Builds the SDK package and uses the packed tarball from a scratch project (plain Node, Bun, type declarations). Publishes to npm only on a manual run |
 | [images](.github/workflows/images.yml) | PRs touching the keychain, SDK, services or backup image | Container builds (not a release) |
 | [docs](.github/workflows/docs.yml) | PRs touching `docs/` or `sdk/src/`; pushes to `main` | Type-checks the docs' code snippets against the SDK, builds the site, and deploys it to GitHub Pages from `main` |
 | [terraform](.github/workflows/terraform.yml) | PRs touching `infra/aws/terraform/` | `terraform fmt`, and a read-only plan of `github-oidc` in both test accounts |

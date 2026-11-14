@@ -1,5 +1,5 @@
 {
-  // Type-checks every example the docs include, against the SDK source.
+  // Type-checks every example the docs include, against the SDK source (not the built package).
   // Run from docs/: bun run typecheck
   "compilerOptions": {
     "target": "ES2022",

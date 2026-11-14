@@ -16,8 +16,8 @@
 //   covers everything the record says, so nobody can change a record on its way to the server.
 // - `nonce` is a random felt. The server accepts each signed message once.
 import { hash, shortString } from 'starknet';
-import type { WireSession } from './keychain';
-import { randomFelt, signHash, toHex, u256Calldata } from './utils';
+import type { WireSession } from './keychain.js';
+import { randomFelt, signHash, toHex, u256Calldata } from './utils.js';
 
 export type RegistryAction = 'put' | 'list' | 'remove';
 

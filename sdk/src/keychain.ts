@@ -22,11 +22,11 @@
 // page on that same origin (the browser's referrer). That stops a link on another site from
 // asking in an app's name with its own session key.
 import { CallData, type BigNumberish, type Call, type ProviderInterface, type TypedData } from 'starknet';
-import { typedDataFelt, typedDataFields, typedDataHash } from './messages';
-import { searchSessionNonce, sessionOutsideExecution } from './outside';
-import { KamuiReader } from './reader';
-import { assertValidSession, unlimitedTokenCalls, type ScopedCall, type SessionParams, type SpendingLimit } from './sessions';
-import { newKeyPair, randomFelt, sameFelt, toHex } from './utils';
+import { typedDataFelt, typedDataFields, typedDataHash } from './messages.js';
+import { searchSessionNonce, sessionOutsideExecution } from './outside.js';
+import { KamuiReader } from './reader.js';
+import { assertValidSession, unlimitedTokenCalls, type ScopedCall, type SessionParams, type SpendingLimit } from './sessions.js';
+import { newKeyPair, randomFelt, sameFelt, toHex } from './utils.js';
 
 export const KEYCHAIN_PROTOCOL_VERSION = 1;
 

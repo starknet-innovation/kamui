@@ -1,10 +1,10 @@
 // Client-proof orchestration. Only first deployment authentication sends a JWT to the API.
 import { hash, shortString, type RpcProvider } from 'starknet';
-import { httpRecoverBackend, type RecoverBackend, type RecoverRequest, type RecoveryPollingOptions } from './login';
-import { KamuiReader } from './reader';
-import { identity, accountAddress } from './address';
-import { decodeIdToken } from './login';
-import { sameFelt } from './utils';
+import { httpRecoverBackend, type RecoverBackend, type RecoverRequest, type RecoveryPollingOptions } from './login.js';
+import { KamuiReader } from './reader.js';
+import { identity, accountAddress } from './address.js';
+import { decodeIdToken } from './login.js';
+import { sameFelt } from './utils.js';
 
 export const V2_PROGRAM = '0x1c7be3225dfb33359b3ba9ffbe1542b7da27879b6d89f47b967e512463fd324';
 // V4 OS config: Sepolia chain ID and STRK fee token, pinned with this V2 profile.

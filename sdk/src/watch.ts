@@ -14,9 +14,9 @@
 // The events are emitted by the account itself (the component events are flattened), so they are
 // read with `starknet_getEvents` on the account's address, or pushed by a WebSocket node.
 import { hash, type ProviderInterface } from 'starknet';
-import { loadConnection, type Connection, type KeyValueStore } from './keychain';
-import { KamuiReader } from './reader';
-import { sameFelt } from './utils';
+import { loadConnection, type Connection, type KeyValueStore } from './keychain.js';
+import { KamuiReader } from './reader.js';
+import { sameFelt } from './utils.js';
 
 export type SessionEndReason =
   /** `validUntil` has passed. */

@@ -1,0 +1,135 @@
+# Builds the SDK as an npm package on every pull request that touches it, and checks the packed
+# tarball from a scratch project: plain Node, Bun, and the type declarations (sdk/scripts/
+# check-package.mjs). The keychain and the apps import sdk/src directly, so nothing else in CI
+# would notice a broken build or `exports` map.
+#
+# Publishing is manual only. A run started by hand with "publish" ticked publishes the tarball
+# this run built and checked, and nothing else does: no push, tag or pull request publishes.
+# Three things have to be true first, and each is a person's decision:
+#   1. `"private": true` is removed from sdk/package.json (npm refuses a private package), once
+#      the package name, scope and visibility are settled.
+#   2. The `npm` environment exists in this repository's settings, with required reviewers.
+#   3. npmjs.com trusts this workflow for the package (package settings > Trusted publisher:
+#      this repository, workflow `sdk-package.yml`, environment `npm`). No npm token is stored
+#      in GitHub.
+
+name: sdk-package
+
+on:
+  pull_request:
+    paths:
+      - 'sdk/**'
+      - '.github/workflows/sdk-package.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the built tarball to npm (main only; needs the npm environment's approval)
+        required: true
+        type: boolean
+        default: false
+      access:
+        description: npm visibility of the published package
+        required: true
+        type: choice
+        options: [restricted, public]
+        default: restricted
+      tag:
+        description: npm dist-tag
+        required: true
+        type: string
+        default: latest
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-package-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdk
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: oven-sh/setup-bun@v2.0.1
+        with:
+          bun-version: 1.4.4
+
+      # The oldest Node that starknet.js 10 supports, so the plain-Node check is the strict one.
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - name: Pack, and use the tarball from a scratch project
+        run: node scripts/check-package.mjs "$RUNNER_TEMP/sdk-package"
+
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: sdk-package
+          path: ${{ runner.temp }}/sdk-package/*.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Waits for this environment's reviewers.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing
+    steps:
+      - name: Refuse anything but main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Publish from main only (this run is on $GITHUB_REF)."
+          exit 1
+
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: sdk-package
+
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or later.
+      - name: Check npm
+        run: |
+          set -euo pipefail
+          node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            const ok = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+            console.log("npm " + process.argv[1]);
+            if (!ok) { console.error("::error::npm 11.5.1 or later is needed for trusted publishing."); process.exit(1); }
+          ' "$(npm --version)"
+
+      - name: Refuse a private package
+        run: |
+          set -euo pipefail
+          tar -xzf ./*.tgz package/package.json
+          if [ "$(node -p 'require("./package/package.json").private === true')" = "true" ]; then
+            echo '::error::sdk/package.json is still "private": true. Remove it in a reviewed pull request once the name, scope and visibility are decided.'
+            exit 1
+          fi
+          rm -r package
+
+      - name: Publish
+        env:
+          ACCESS: ${{ inputs.access }}
+          TAG: ${{ inputs.tag }}
+        run: npm publish ./*.tgz --access "$ACCESS" --tag "$TAG"

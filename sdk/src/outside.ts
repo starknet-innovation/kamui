@@ -9,10 +9,10 @@ import {
   type BigNumberish,
   type Call,
 } from 'starknet';
-import { ANY_CALLER } from './constants';
-import type { KamuiReader } from './reader';
-import { sessionSignature } from './sessions';
-import { randomFelt, signHash, toHex } from './utils';
+import { ANY_CALLER } from './constants.js';
+import type { KamuiReader } from './reader.js';
+import { sessionSignature } from './sessions.js';
+import { randomFelt, signHash, toHex } from './utils.js';
 
 export type OutsideWindow = {
   /** Who may submit it. Defaults to anyone. */

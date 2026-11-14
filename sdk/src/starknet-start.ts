@@ -12,8 +12,8 @@
 import { useEffect, useState } from 'react';
 import type { WalletWithStarknetFeatures } from '@starknet-io/get-starknet-core';
 import { useAccount, useConnect } from '@starknetfoundation/starknet-start-react';
-import { KamuiWallet, KamuiWalletError, type KamuiWalletOptions } from './wallet';
-import type { SessionEnd, WatchSessionOptions } from './watch';
+import { KamuiWallet, KamuiWalletError, type KamuiWalletOptions } from './wallet.js';
+import type { SessionEnd, WatchSessionOptions } from './watch.js';
 
 // The wallet-standard feature names, as `@wallet-standard/features` and get-starknet export them.
 const StandardConnect = 'standard:connect';
@@ -200,4 +200,4 @@ export function useKamuiReconnect(wallet: KamuiStandardWallet): KamuiReconnect {
   return { isResuming, error: isResuming ? null : wallet.wallet.error, lastApproved: isResuming ? null : wallet.wallet.lastApproved };
 }
 
-export { KamuiWallet, KamuiWalletError, type KamuiWalletOptions } from './wallet';
+export { KamuiWallet, KamuiWalletError, type KamuiWalletOptions } from './wallet.js';

@@ -8,8 +8,8 @@
 // expired: there are no calls to check a scope or a limit against. It stops being accepted when
 // the session expires, is revoked, or the account's owners change.
 import { shortString, typedData as snip12, type ProviderInterface, type TypedData } from 'starknet';
-import { sessionSignature } from './sessions';
-import { sameFelt, signHash, toHex } from './utils';
+import { sessionSignature } from './sessions.js';
+import { sameFelt, signHash, toHex } from './utils.js';
 
 /** The hash `account` signs for `data`. It commits to the account, so a signature is not valid for another one. */
 export function typedDataHash(data: TypedData, account: string): string {

@@ -29,11 +29,11 @@ import {
   type ConnectOptions,
   type Connection,
   type KeyValueStore,
-} from './keychain';
-import { sessionSignTypedData, typedDataFelt } from './messages';
-import { SessionAccount, SessionSigner, createSessionAccount } from './sessionAccount';
-import { sameFelt } from './utils';
-import { renewedConnection, watchSession, type SessionEnd, type WatchSessionOptions } from './watch';
+} from './keychain.js';
+import { sessionSignTypedData, typedDataFelt } from './messages.js';
+import { SessionAccount, SessionSigner, createSessionAccount } from './sessionAccount.js';
+import { sameFelt } from './utils.js';
+import { renewedConnection, watchSession, type SessionEnd, type WatchSessionOptions } from './watch.js';
 
 export const KAMUI_WALLET_ID = 'kamui';
 

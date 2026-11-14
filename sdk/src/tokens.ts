@@ -8,7 +8,7 @@
 //   named     the contract answered `symbol()` and `decimals()` (or it is STRK)
 //   unknown   the contract did not answer like a token; only raw amounts can be shown
 import type { ProviderInterface } from 'starknet';
-import { sameFelt } from './utils';
+import { sameFelt } from './utils.js';
 
 export type TokenInfo =
   | { status: 'named'; address: string; symbol: string; decimals: number }

@@ -10,29 +10,34 @@ Written and tested against `@starknetfoundation/starknet-start-react` 2.0.3 with
 
 ## Installation
 
-Vendor the SDK as in the [Quickstart](/guide/quickstart#_1-add-the-sdk), and alias the adapter's entry point next to the SDK's. The longer alias goes first:
+Install the SDK with `starknet`, React and Starknet Start. Before the first npm release, install the SDK from a file as in the [Quickstart](/guide/quickstart#_1-add-the-sdk).
 
-```ts
-// vite.config.ts
-const sdk = (file: string) => fileURLToPath(new URL(`./vendor/kamui/sdk/src/${file}`, import.meta.url));
+::: code-group
 
-export default defineConfig({
-  resolve: {
-    alias: [
-      { find: '@kamui/sdk/starknet-start', replacement: sdk('starknet-start.ts') },
-      { find: '@kamui/sdk', replacement: sdk('index.ts') },
-    ],
-    dedupe: ['starknet', 'react', '@starknetfoundation/starknet-start-react'],
-  },
-});
-```
-
-```sh
-npm install starknet@10.8.0 react@19 react-dom@19 \
+```sh [npm]
+npm install @kamui/sdk starknet@10.8.0 react@19 react-dom@19 \
   @starknetfoundation/starknet-start-react@2.0.3 \
   @starknetfoundation/starknet-start-chains @starknetfoundation/starknet-start-providers \
   @starknet-io/get-starknet-core@6 @starknet-io/get-starknet-modal@6 @starknet-io/get-starknet-wallet-standard@6
 ```
+
+```sh [pnpm]
+pnpm add @kamui/sdk starknet@10.8.0 react@19 react-dom@19 \
+  @starknetfoundation/starknet-start-react@2.0.3 \
+  @starknetfoundation/starknet-start-chains @starknetfoundation/starknet-start-providers \
+  @starknet-io/get-starknet-core@6 @starknet-io/get-starknet-modal@6 @starknet-io/get-starknet-wallet-standard@6
+```
+
+```sh [bun]
+bun add @kamui/sdk starknet@10.8.0 react@19 react-dom@19 \
+  @starknetfoundation/starknet-start-react@2.0.3 \
+  @starknetfoundation/starknet-start-chains @starknetfoundation/starknet-start-providers \
+  @starknet-io/get-starknet-core@6 @starknet-io/get-starknet-modal@6 @starknet-io/get-starknet-wallet-standard@6
+```
+
+:::
+
+The adapter is the `@kamui/sdk/starknet-start` entry point of the same package. No alias is needed.
 
 The three `@starknet-io/get-starknet-*` packages are peer dependencies of Starknet Start. `@kamui/sdk` itself does not import React, Starknet Start or get-starknet; only `@kamui/sdk/starknet-start` does.
 

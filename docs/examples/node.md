@@ -6,9 +6,9 @@ The code is type-checked against the SDK in CI. Full files: [`docs/snippets/node
 
 ## Installation
 
-Vendor the SDK as in the [Quickstart](/guide/quickstart#_1-add-the-sdk), add `starknet@10.8.0`, and alias `@kamui/sdk` in `tsconfig.json`.
+Install `@kamui/sdk` and `starknet@10.8.0` as in the [Quickstart](/guide/quickstart#_1-add-the-sdk).
 
-The SDK is TypeScript source with extensionless imports. Run it with **Bun** (`bun run main.ts`) or **tsx** (`npx tsx main.ts`). Plain `node --experimental-strip-types` does not resolve extensionless imports.
+The SDK is plain ESM, so Node.js 22 or later imports it with no loader or flag. The files below are TypeScript: run them with **Bun** (`bun run main.ts`) or **tsx** (`npx tsx main.ts`), or compile them first.
 
 ## How the approval works
 

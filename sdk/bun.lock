@@ -4,9 +4,6 @@
   "workspaces": {
     "": {
       "name": "@kamui/sdk",
-      "dependencies": {
-        "starknet": "10.8.0",
-      },
       "devDependencies": {
         "@starknet-io/get-starknet-core": "6.1.0",
         "@starknet-io/get-starknet-modal": "6.1.0",
@@ -21,12 +18,14 @@
         "react": "19.2.0",
         "react-dom": "19.2.0",
         "react-test-renderer": "19.2.0",
+        "starknet": "10.8.0",
         "typescript": "^5.6.0",
       },
       "peerDependencies": {
         "@starknet-io/get-starknet-core": ">=6.0.0",
         "@starknetfoundation/starknet-start-react": ">=2.0.0",
         "react": ">=19.0.0",
+        "starknet": "^10.8.0",
       },
       "optionalPeers": [
         "@starknet-io/get-starknet-core",

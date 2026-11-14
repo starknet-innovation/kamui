@@ -33,7 +33,7 @@ import {
   type ConnectOptions,
   type Connection,
   type KeyValueStore,
-} from './keychain';
+} from './keychain.js';
 
 /** Added to `redirectUri` in popup mode: tells the app's page that it is the popup. */
 export const POPUP_MARKER = 'kamui_popup';
