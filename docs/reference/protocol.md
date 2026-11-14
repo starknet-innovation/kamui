@@ -80,6 +80,8 @@ A sponsored session call is an SNIP-9 v2 outside execution (`execute_from_outsid
 
 Self-paid session transactions use the same four-felt signature over the transaction hash.
 
+The full specification, with every intermediate hash and test vectors for checking an implementation in another language, is in [Session signing](/reference/session-signing).
+
 ## Chain
 
 | | Sepolia |

@@ -11,6 +11,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 | Module | What it does |
 |---|---|
 | `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `sessionProblems`, `executeProblems`, `describeCall`. |
+| `native` | Native apps through a bounce page on the app's own HTTPS domain: `beginNativeConnect` and `finishNativeConnect` for the page, `newNativeHandoff`, `nativeStartUrl` and `openNativeHandoff` for the app. The session key is made in the page and reaches the app sealed, over an https app link. Unit-tested; not run on devices. See `../docs/native/bounce-page.md`. |
 | `login` | `beginLogin`, `authUrl`, `parseLoginRedirect`, `fetchPepper`, `pepperFromFile`, `completeLogin`: the login flow, with the pepper service's key proof. |
 | `client-proving` | `browserRecoverBackend`, `ClientProver`, V2 facts/profile helpers: local proof orchestration, authenticated first deployment and durable relay polling. |
 | `address` | `identity`, `accountAddress`, `accountAddressFromLogin`, `deployAccountCall`: the account a login maps to. |
@@ -127,12 +128,16 @@ bun test test/login.test.ts           # 24 tests, no network; runs the pepper se
 bun test test/keychain.test.ts        # 23 tests, no network
 bun test test/tokens.test.ts          # 9 tests, no network
 bun test test/registry.test.ts        # 21 tests, no network
+bun test test/native.test.ts          # 10 tests, no network
+bun test test/vectors.test.ts         # 14 tests, no network; the published vectors match the SDK
 
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0
 (cd ../contracts && scarb build)
 bun test test/devnet.test.ts          # 7 tests against the devnet
 ```
+
+`test/vectors/session-signing.json` holds test vectors for session signing in other languages (`../docs/reference/session-signing.md`). Regenerate it with `bun run test/vectors/generate.ts` after a deliberate change to what the SDK signs; `test/vectors.test.ts` fails until it matches.
 
 Bun 1.2 or later. The devnet tests deploy `DevAccount` (the production owner, session and spending code with a first key set at deployment) and the real `KamuiAccount` class for the address check. They are skipped when no devnet answers.
 

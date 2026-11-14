@@ -2,6 +2,7 @@ export * from './address';
 export * from './constants';
 export * from './keychain';
 export * from './login';
+export * from './native';
 export * from './outside';
 export * from './owners';
 export * from './pepper';

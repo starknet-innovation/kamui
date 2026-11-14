@@ -37,6 +37,30 @@ Removes the connection and any pending request. Does not revoke the session on c
 
 Which answer the app is waiting for. Call it before `finishConnect`/`finishExecute` to pick the right one.
 
+## Native apps
+
+For a native app that connects through a page on its own domain. See [Bounce page](/native/bounce-page).
+
+### `beginNativeConnect(fragment, options, store): string | null`
+
+Start page. Reads the app's state and handoff key from `location.hash`, stores them (`kamui.native.start`), creates the session key and returns the keychain URL, as `beginConnect` does. Returns `null` when the fragment holds no start request. `options` come from the page, never from the link.
+
+### `finishNativeConnect(fragment, appLink, store): Promise<string | null>`
+
+Return page. Reads the keychain's answer, seals it to the app's handoff key and returns the app link to navigate to. A refusal is sealed and handed off too. Clears the page's storage. Throws when `appLink` is not `https:`.
+
+### `newNativeHandoff(): Promise<NativeHandoffSecret>`
+
+App side. A fresh `{ state, publicKey, privateKey }` for one connect.
+
+### `nativeStartUrl(startPage, secret): string`
+
+App side. The start page URL to open in the system browser.
+
+### `openNativeHandoff(link, secret): Promise<Connection | null>`
+
+App side. Opens the app link. Returns `null` when the link holds no handoff; throws when it is for another state or key, or reports a refusal. Check the result with `isConnectionAlive` before using it.
+
 ## Sending
 
 ### `sessionCall(connection, calls, provider, fromOffset = 0): Promise<{ call, offset } | null>`

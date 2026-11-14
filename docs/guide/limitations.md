@@ -21,7 +21,7 @@ Kamui is a **development preview**. Read this page before you plan a launch on i
 - **Redirects only.** Your page reloads on every connect and one-off approval. There is no popup or iframe mode.
 - **One-off approvals fail on hosted Sepolia.** The keychain's `/execute` page posts the user's transaction to the sponsor endpoint without app credentials, and the hosted backend refuses it with `APP_AUTH_REQUIRED`.
 - **No message signing API.** Sessions can sign SNIP-12 messages as the account on chain, but the SDK has no helper for it and the keychain has no `signMessage` request.
-- **No native SDKs** and no mobile support. See [Native](/native/overview).
+- **No native SDKs** and no mobile support. See [Native](/native/overview). A [bounce page](/native/bounce-page) pattern and a [session signing specification](/reference/session-signing) with test vectors exist; neither has been run on a device.
 
 ### Sponsorship
 
