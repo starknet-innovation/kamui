@@ -31,7 +31,7 @@ Why redirects and not an iframe or a popup: browsers isolate storage inside thir
 
 In IndexedDB, in the keychain's origin, encrypted with an AES-GCM key that the browser will not export (`src/vault.ts`). A Stark-curve key cannot itself be a non-exportable browser key, so this is the closest available: the stored bytes are useless elsewhere, and no script can read the wrapping key. Code running in the keychain's origin can still use the key, which is why the page is served with a strict content security policy (only its own script and style, no framing) and loads nothing from third parties.
 
-The account address, the pepper and the recovery file are stored the same way. So are two things that wait there for a short time: a recovery file chosen for a sign-in, and sessions the registry has not recorded yet (both below).
+The account address, the pepper and the recovery file are stored the same way. So are the things that wait there for a short time: a recovery file chosen for a sign-in, sessions the registry has not recorded yet (both below), and a key made from another device's link until that device adds it ([DEVICE_LINK.md](DEVICE_LINK.md)). A device added that way stores no pepper and no recovery file.
 
 ## Signing in
 
@@ -48,6 +48,8 @@ With Google, or with Apple when the server has an Apple client id (`APPLE_CLIENT
 During the trip to the issuer the file is kept in the vault, encrypted like the device key, not in web storage. The tab only remembers that this sign-in uses a file. The file is taken out of the vault as soon as the user is back, before anything is checked, and is also removed by the next sign-in that starts and by "forget this device". If it is gone when the user comes back (another tab started a sign-in meanwhile), the sign-in stops and asks to start again.
 
 A new-device sign-in executes and proves locally in dedicated Workers using the pinned `snip-36-prover-wasm` v1.0.1 V2 runtime. It requires a recent memory64-capable desktop Chromium and sufficient memory; there is no server fallback. Existing owners skip proving. See [CLIENT_PROVING.md](CLIENT_PROVING.md) for asset installation, browser limits, privacy boundaries and live run 11 validation. First deployment sends the token to `/deploy/authenticated` for identity/pepper verification; existing-account recovery sends only the finished proof and authorization to `/relay`.
+
+**From another device, without a proof.** A device that is already signed in can add another one: "Add another device" on the account page gives a link to open on the new device, which answers with a code to paste back; after a confirmation the signed-in device sends `add_owner`. The new device needs no sign-in and no proof, so this does not depend on memory64. It holds no recovery file afterwards. A sign-in page in a browser that cannot prove says so before any trip to the issuer, offers no sign-in button, and points here. The first sign-in of an account still needs a desktop Chromium. Not yet run on a phone or on Sepolia, and not security reviewed: see [DEVICE_LINK.md](DEVICE_LINK.md) for the flow, what can go wrong and what was verified.
 
 The SDK submits deployment/recovery transactions as jobs and polls their status, so a submitted transaction can outlive an HTTP connection. The client job ID stays in memory and polling retries transient connection failures. The backend persists results and transaction intents across restart. Closing the page during local proving requires a fresh sign-in; no witness or PIE is stored. Reloading the page does not resume polling. A timed-out sign-in may still complete on chain.
 
@@ -78,7 +80,8 @@ The same holds when the registry answers but refuses the record. A full registry
 | `/execute` | Receives an app's request for one transaction, then sign-in if needed, then the approval screen. |
 | `/sign` | Receives an app's request to sign one message, then sign-in if needed, then the approval screen. |
 | `/callback` | Where the issuer returns after a sign-in. |
-| `/` | Sign-in, with Google or Apple and optionally a recovery file. Then the account: device keys with removal, sessions with revocation, the recovery file, and "forget this device". |
+| `/link` | A link made by a signed-in device, opened on a device to be added. Makes a key and shows the code to take back. |
+| `/` | Sign-in, with Google or Apple and optionally a recovery file. Then the account: device keys with removal, adding another device, sessions with revocation, the recovery file, and "forget this device". |
 
 ## Run
 
@@ -95,14 +98,15 @@ bun run server.ts      # http://localhost:5173
 ## Tested
 
 - **The protocol,** its refusals and the app-side helpers: 23 tests in `../sdk/test/keychain.test.ts`.
-- **The pages and key storage, in three browsers:** 89 UI tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 267 runs in all, plus an opt-in real Worker runtime test. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
+- **The pages and key storage, in three browsers:** 99 UI tests in `tests/`, each run in Chrome (the installed one), Firefox and WebKit (Playwright's builds), 297 runs in all, plus an opt-in real Worker runtime test. They run the real keychain server, page, storage and content security policy, and replace everything outside the keychain (the chain, the backend, the session registry, the pepper service and the issuers) with fakes at the network level. They cover:
   - sign-in with Google and with Apple, polling a slow recovery through a dropped connection, a remembered device, a stale sign-in page, a key removed elsewhere, an error from the issuer, and no Apple button without an Apple client id;
   - sign-in with a recovery file: the pepper service never contacted, the file a device downloads signing another device in, how the file is stored during the trip, and files refused for another user, network, class, application or issuer, or for not being a recovery file;
   - how the key is stored, and forgetting the device;
   - approving and denying a signed message: the origin, domain and every value shown, markup shown as text, an owner signature the fake account verifies, and the messages the keychain refuses (an outside execution, another network, another site);
   - approving and denying a session or a single transaction, the requests the keychain refuses, how token calls and amounts are described for tokens and for contracts that do not answer like one, an app name containing markup;
   - the session list: a session recorded at approval with an owner signature the fake registry verifies, revocation sending exactly `revoke_session_key` for that key, "Revoke all sessions" with a registry that is down or empty, a registry that is down or full at approval, keys formatted differently from the account's, a record whose session does not exist or has expired, markup in a recorded origin or name, malformed records, and a record that disagrees with the account;
-  - removing a device, the recovery file download, and the content security policy.
+  - removing a device, the recovery file download, and the content security policy;
+  - adding a device from a signed-in one (`tests/link.spec.ts`): the whole exchange with a second browser that has memory64 turned off, and the codes and links it refuses. The link and code formats have unit tests in `link-code.test.ts` (`bun test ./link-code.test.ts`).
 - **Live on Sepolia** on 2026-11-12, through the demo app: sign-in on a new device, the approval screen, a sponsored session call, a call outside the session refused by the account, and the device list (`../spikes/s1/results/RESULTS.md`, run 6); and one transaction approved in the keychain (run 7).
 
 ```sh
@@ -125,10 +129,11 @@ What this does not show:
 - **WebKit is not Safari.** Safari's script-written storage policy counts seven days of Safari use without interaction with the site, not seven calendar days. Native Safari 27.2 vault reload/non-exportable key mechanics passed on an isolated loopback fixture; explicit storage-loss consequences passed against browser fakes. A naturally elapsed purge on a reviewed HTTPS origin is still pending. The sign-in/account pages warn about local key loss and keeping the pepper recovery file outside the browser. See [SAFARI_STORAGE.md](SAFARI_STORAGE.md) for evidence, limits and the follow-up procedure.
 - **Private windows** were not tried in any browser. Storage there is short-lived at best.
 - **Referrer settings.** A browser or an extension set to send no referrer makes every request look like it came from nowhere, and the keychain refuses it. This is by design, but the user is told only that the keychain "cannot tell which site sent this request".
-- **Mobile browsers** were not tried.
+- **Mobile browsers** were not tried. This includes adding a device from another one ([DEVICE_LINK.md](DEVICE_LINK.md)): its tests use desktop browsers with memory64 turned off, not a phone.
 
 ## Not done
 
+- **Signing up on a phone, Firefox or Safari.** The first sign-in of an account needs a desktop Chromium. Adding a further device from a signed-in one needs no proof, but has not been run on a real phone or on Sepolia, and has not been security reviewed ([DEVICE_LINK.md](DEVICE_LINK.md)).
 - **Live client-side V2 JWT recovery.** The browser integration is prepared; prior live runs used the backend prover. First deployment, existing-account recovery, real browser memory/time and the complete hosted CSP/network boundary still need acceptance.
 
 - **Google-only live checks passed** on Sepolia: revoke-all, stale-device removal, and recovery-file sign-in with pepper stopped (`../spikes/s1/results/run-10-device-session-recovery.md`).

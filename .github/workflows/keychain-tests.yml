@@ -57,8 +57,8 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Server config unit tests
-        run: bun test ./server-config.test.ts
+      - name: Unit tests
+        run: bun test ./server-config.test.ts ./link-code.test.ts
 
       # The server reports proverReady only when every pinned file matches keychain/prover/
       # manifest.json, and one test checks the executor Wasm is served. The prover itself is

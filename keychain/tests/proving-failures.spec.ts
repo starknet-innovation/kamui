@@ -1,18 +1,30 @@
 import { test, expect } from '@playwright/test';
 import { installFakes, newWorld, KEYCHAIN } from './fakes';
 
-test('unsupported proving fails before deployment or relay without server fallback', async ({ page, context }) => {
+test('a browser that cannot prove is told so before any sign-in, with no server fallback', async ({ page, context }) => {
   const world = newWorld();
   await installFakes(context, world);
   await context.addInitScript(() => { WebAssembly.validate = () => false; });
   const sends: string[] = [];
   page.on('request', r => { if (r.url().includes('/api/')) sends.push(r.url()); });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Continue with Google' }).click();
-  await expect(page.getByText(/Recovery proving requires/)).toBeVisible();
+  await expect(page.getByText(/This browser cannot do a first sign-in/)).toBeVisible();
+  // No trip to the issuer is offered: its token could only be used by proving here.
+  await expect(page.getByRole('button', { name: /Continue with/ })).toHaveCount(0);
+  await expect(page.locator('#recovery-file')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Already use Kamui on another device?' })).toBeVisible();
+  expect(world.issuerVisits).toBe(0);
   expect(world.deployed).toBe(false);
   expect(world.recoverRequests).toHaveLength(0);
   expect(sends).toEqual([]);
+});
+
+test('a browser that can prove is still offered the sign-in, and the way in from another device', async ({ page, context }) => {
+  await installFakes(context, newWorld());
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
+  await expect(page.getByText(/This browser cannot do a first sign-in/)).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Already use Kamui on another device?' })).toBeVisible();
 });
 
 test('cancelling a running prover never submits a proof or starts server proving', async ({ page, context }) => {
