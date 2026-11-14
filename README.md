@@ -25,6 +25,7 @@ Kamui is built from public standards (SNIP-5, SNIP-6, SNIP-9, SNIP-12, SNIP-41) 
 | [apps/login-demo](apps/login-demo/README.md) | Runs the SDK's login flow end to end on one page. |
 | [infra/aws](infra/aws) | Hosting for the Sepolia beta: [lean EC2 package](infra/aws/lean/README.md), [Terraform](infra/aws/terraform/README.md), and the [KMS registry administrator](infra/aws/registry-admin/README.md). |
 | [spikes](spikes) | Experiments and recorded runs that informed the plan. |
+| [docs](docs) | Developer docs for apps that use Kamui (VitePress), published to GitHub Pages. `cd docs && bun install && bun run dev`. |
 | [docs/legal](docs/legal) | Terms of use and privacy notice for the Sepolia beta. |
 
 Each component's README covers how to run and test it.
@@ -51,6 +52,7 @@ snforge test
 | [contracts](.github/workflows/contracts.yml) | PRs touching `contracts/` | `scarb fmt --check` |
 | [keychain-tests](.github/workflows/keychain-tests.yml) | PRs touching `keychain/` or `sdk/` | Type checks and Chromium browser tests |
 | [images](.github/workflows/images.yml) | PRs touching the keychain, SDK, services or backup image | Container builds (not a release) |
+| [docs](.github/workflows/docs.yml) | PRs touching `docs/` or `sdk/src/`; pushes to `main` | Type-checks the docs' code snippets against the SDK, builds the site, and deploys it to GitHub Pages from `main` |
 | [terraform](.github/workflows/terraform.yml) | PRs touching `infra/aws/terraform/` | `terraform fmt`, and a read-only plan of `github-oidc` in both test accounts |
 
 ## Licence
