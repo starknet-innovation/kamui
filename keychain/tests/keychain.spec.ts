@@ -2,10 +2,14 @@
 // the keychain (tests/fakes.ts).
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { outsideExecution, OutsideExecutionVersion, type TypedData } from 'starknet';
 import {
   beginConnect,
   beginExecute,
   beginExtend,
+  beginSignMessage,
+  finishSignMessage,
+  typedDataHash,
   exportPepper,
   finishConnect,
   finishExecute,
@@ -15,7 +19,7 @@ import {
   type ConnectOptions,
   type KeyValueStore,
 } from '../../sdk/src';
-import { ACCOUNT, APPLE_ACCOUNT, APPLE_CLAIMS, CHAIN_ID, CLAIMS, CLASS_HASH, KEYCHAIN, PEPPER, installApp, installFakes, newWorld, selectorOf, type World } from './fakes';
+import { ACCOUNT, APPLE_ACCOUNT, APPLE_CLAIMS, CHAIN_ID, CLAIMS, CLASS_HASH, KEYCHAIN, PEPPER, installApp, installFakes, newWorld, selectorOf, signedBy, type World } from './fakes';
 
 const APP = 'http://localhost:5199';
 const OTHER_SITE = 'http://localhost:5198';
@@ -1314,9 +1318,150 @@ test.describe('signing in with Apple', () => {
   });
 });
 
+test.describe('message requests', () => {
+  const signInMessage = (change: (data: any) => void = () => {}): TypedData => {
+    const data = {
+      types: {
+        StarknetDomain: [
+          { name: 'name', type: 'shortstring' },
+          { name: 'version', type: 'shortstring' },
+          { name: 'chainId', type: 'shortstring' },
+          { name: 'revision', type: 'shortstring' },
+        ],
+        SignIn: [
+          { name: 'statement', type: 'string' },
+          { name: 'nonce', type: 'felt' },
+          { name: 'scopes', type: 'shortstring*' },
+        ],
+      },
+      primaryType: 'SignIn',
+      domain: { name: 'Example Game', version: '1', chainId: CHAIN_ID, revision: '1' },
+      message: { statement: 'Sign in to Example Game', nonce: '0x1234', scopes: ['profile', 'scores'] },
+    };
+    change(data);
+    return data;
+  };
+
+  /** An app on `from` asks the keychain to sign one message. */
+  async function messageFrom(page: Page, from: string, typedData = signInMessage()) {
+    const store = memoryStore();
+    const url = beginSignMessage({ keychainUrl: KEYCHAIN, redirectUri: `${APP}/`, appName: 'Example Game', typedData }, store);
+    await page.goto(`${from}/`);
+    await page.evaluate((target) => location.assign(target), url);
+    await page.waitForURL(`${KEYCHAIN}/sign`);
+    return store;
+  }
+
+  async function messageAnswer(page: Page, store: KeyValueStore) {
+    await page.waitForURL(`${APP}/**`);
+    try {
+      return { ok: true as const, ...finishSignMessage(new URL(page.url()).hash, store)! };
+    } catch (error) {
+      return { ok: false as const, error: (error as Error).message };
+    }
+  }
+
+  test('a signed message shows who asks and all of the message, and returns an owner signature the account accepts', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const store = await messageFrom(page, APP);
+
+    await expect(page.getByRole('heading', { name: 'Signature request' })).toBeVisible();
+    await expect(page.locator('.origin')).toHaveText(APP);
+    await expect(page.getByText('Nothing is sent to the network')).toBeVisible();
+    // The domain, with the network spelled out, and every value of the message with its type.
+    await expect(page.getByRole('row', { name: 'name Example Game' })).toBeVisible();
+    await expect(page.getByRole('row', { name: `chainId SN_SEPOLIA (${CHAIN_ID})` })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Message (SignIn)' })).toBeVisible();
+    await expect(page.getByRole('row', { name: 'statement string Sign in to Example Game' })).toBeVisible();
+    await expect(page.getByRole('row', { name: 'nonce felt 0x1234' })).toBeVisible();
+    await expect(page.getByRole('row', { name: 'scopes[1] shortstring scores' })).toBeVisible();
+    const messageHash = typedDataHash(signInMessage(), ACCOUNT);
+    await expect(page.getByRole('cell', { name: messageHash })).toBeVisible();
+    await page.getByText('Full typed data').click();
+    await expect(page.locator('pre')).toContainText('"primaryType": "SignIn"');
+
+    await page.getByRole('button', { name: 'Sign', exact: true }).click();
+    const answer = await messageAnswer(page, store);
+    expect(answer).toMatchObject({ ok: true, account: ACCOUNT, chainId: CHAIN_ID });
+    if (!answer.ok) throw new Error(answer.error);
+    // The device key, an owner, signed the hash of this message for this account.
+    expect(answer.signature).toHaveLength(2);
+    expect(world.owners).toHaveLength(1);
+    expect(signedBy(messageHash, answer.signature[0]!, answer.signature[1]!, world.owners[0]!)).toBe(true);
+    // The keychain asked the account before answering, and nothing was sent to the network.
+    expect(world.signatureChecks.map((check) => BigInt(check.hash))).toEqual([BigInt(messageHash)]);
+    expect(world.sponsorRequests).toHaveLength(0);
+  });
+
+  test('a denied message returns a refusal and signs nothing', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const store = await messageFrom(page, APP);
+    await page.getByRole('button', { name: 'Deny' }).click();
+    expect(await messageAnswer(page, store)).toEqual({ ok: false, error: 'keychain: denied by the user' });
+    expect(world.signatureChecks).toHaveLength(0);
+  });
+
+  test('what the site wrote is shown as text, never as markup', async ({ page, context }) => {
+    await setup(context);
+    await signIn(page);
+    const markup = '<img src=x onerror="document.title=\'pwned\'"><b>bold</b>';
+    await messageFrom(page, APP, signInMessage((data) => {
+      data.message.statement = markup;
+      data.domain.name = '<i>Game</i>';
+    }));
+    await expect(page.getByRole('row', { name: `statement string ${markup}` })).toBeVisible();
+    await expect(page.getByRole('row', { name: 'name <i>Game</i>' })).toBeVisible();
+    expect(await page.locator('#view img, #view b, #view i').count()).toBe(0);
+    expect(await page.title()).not.toBe('pwned');
+  });
+
+  test('a transaction written as a message is refused', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const calls = [{ contractAddress: TOKEN, entrypoint: 'transfer', calldata: [GAME, ONE_AND_A_HALF, '0x0'] }];
+    const execution = outsideExecution.getTypedData(CHAIN_ID as any, { caller: '0x414e595f43414c4c4552', execute_after: 0, execute_before: Math.floor(Date.now() / 1000) + 600 }, '0x1', calls, OutsideExecutionVersion.V2);
+    const store = await messageFrom(page, APP, execution);
+    await expect(page.getByText('Kamui will not sign this message')).toBeVisible();
+    await expect(page.getByText('it is a transaction written as a message')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Go back' }).click();
+    expect(await messageAnswer(page, store)).toMatchObject({ ok: false, error: expect.stringContaining('refused by the keychain') });
+    expect(world.signatureChecks).toHaveLength(0);
+  });
+
+  test('a message for another network is refused', async ({ page, context }) => {
+    await setup(context);
+    await signIn(page);
+    await messageFrom(page, APP, signInMessage((data) => (data.domain.chainId = 'SN_MAIN')));
+    await expect(page.getByText("it is for another network than your account's")).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign', exact: true })).toHaveCount(0);
+  });
+
+  test('a message request from another site in the app\'s name is refused', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    await messageFrom(page, OTHER_SITE);
+    await expect(page.getByText('this request was not sent by the site it names')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign', exact: true })).toHaveCount(0);
+    expect(page.url()).toBe(`${KEYCHAIN}/sign`);
+    expect(world.signatureChecks).toHaveLength(0);
+  });
+
+  test('a message request before any sign-in goes through sign-in, then to approval', async ({ page, context }) => {
+    await setup(context);
+    const store = await messageFrom(page, APP);
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    await expect(page.getByRole('heading', { name: 'Signature request' })).toBeVisible();
+    await page.getByRole('button', { name: 'Sign', exact: true }).click();
+    expect(await messageAnswer(page, store)).toMatchObject({ ok: true, account: ACCOUNT });
+  });
+});
+
 test.describe('page security', () => {
   test('pages are served with a strict content security policy and cannot be framed', async ({ request }) => {
-    for (const path of ['/', '/connect', '/execute', '/callback', '/main.js']) {
+    for (const path of ['/', '/connect', '/execute', '/sign', '/callback', '/main.js']) {
       const response = await request.get(path);
       const policy = response.headers()['content-security-policy']!;
       expect(policy).toContain("default-src 'none'");

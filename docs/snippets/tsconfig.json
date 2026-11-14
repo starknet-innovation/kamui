@@ -14,6 +14,9 @@
     "baseUrl": ".",
     "paths": {
       "@kamui/sdk": ["../../sdk/src/index.ts"],
+      "@kamui/sdk/starknet-react": ["../../sdk/src/starknet-react.ts"],
+      "@starknet-react/core": ["../../sdk/node_modules/@starknet-react/core"],
+      "@starknet-react/chains": ["../../sdk/node_modules/@starknet-react/chains"],
       "starknet": ["../../sdk/node_modules/starknet"]
     }
   },

@@ -73,6 +73,53 @@ Send the user to `GET {keychainUrl}/execute#kamui=<payload>`:
 
 At most 10 calls and 100 calldata felts per call. No call may target the user's account. The answer is `{ v, id, ok: true, transactionHash }` or `{ v, id, ok: false, error }`. The transaction has been accepted by the network when the user comes back.
 
+## Sign a message
+
+Send the user to `GET {keychainUrl}/sign#kamui=<payload>`:
+
+```json
+{
+  "v": 1,
+  "kind": "signMessage",
+  "id": "0x77d2…",
+  "redirectUri": "https://mygame.example/",
+  "appName": "My game",
+  "typedData": {
+    "types": {
+      "StarknetDomain": [
+        { "name": "name", "type": "shortstring" },
+        { "name": "version", "type": "shortstring" },
+        { "name": "chainId", "type": "shortstring" },
+        { "name": "revision", "type": "shortstring" }
+      ],
+      "SignIn": [
+        { "name": "statement", "type": "string" },
+        { "name": "nonce", "type": "felt" }
+      ]
+    },
+    "primaryType": "SignIn",
+    "domain": { "name": "My game", "version": "1", "chainId": "SN_SEPOLIA", "revision": "1" },
+    "message": { "statement": "Sign in to My game", "nonce": "0x1234" }
+  }
+}
+```
+
+| Rule | |
+|---|---|
+| Revision | SNIP-12 revision 1 only: a `StarknetDomain` type and `domain.revision` = 1. |
+| Network | `domain.chainId` must be the chain of the user's account. |
+| Size | The typed data is at most 16,384 characters of JSON and 200 values. |
+| Message | Every value of `message` must be declared by its type, and every declared value present. |
+| Never signed | A message whose domain name is `Account.execute_from_outside` (an outside execution): that is a transaction. Use [execute](#execute). |
+
+The user is shown the requesting origin, the domain, and every value of the message with its type. The answer is `{ v, id, ok: true, account, chainId, signature }` or `{ v, id, ok: false, error }`. `signature` is `[r, s]` from one of the account's owner keys, over the SNIP-12 message hash for `account`.
+
+The answer comes back through the browser, so verify it where it matters: call `is_valid_signature(hash, signature)` on `account` and expect `'VALID'` (`0x56414c4944`).
+
+## Signing messages with a session
+
+A live session can sign any SNIP-12 message as the account, without the keychain: Stark ECDSA over the message hash for the account, sent as `[session_pubkey, r, s, valid_until]`. `is_valid_signature` accepts it while the session exists and has not expired. The session's scope and limits do not apply to messages, and the signature stops verifying when the session ends.
+
 ## Signing session calls
 
 A sponsored session call is an SNIP-9 v2 outside execution (`execute_from_outside_v2`) on the user's account.

@@ -275,7 +275,8 @@ describe('renewing a session', () => {
 
     const back = resultUrl(request, { v: 1, id: request.id, ok: true, account: ACCOUNT, chainId: SEPOLIA, classHash: '0x1' });
     const renewed = finishConnect(new URL(back).hash, store)!;
-    expect(renewed.session).toEqual({ privateKey: connection.session.privateKey, publicKey: connection.session.publicKey, validUntil: FUTURE + 86_400, maxCalls: 500 });
+    expect(renewed.session).toMatchObject({ privateKey: connection.session.privateKey, publicKey: connection.session.publicKey, validUntil: FUTURE + 86_400, maxCalls: 500 });
+    expect(renewed.session.nonces).toBeUndefined();
     expect(loadConnection(store)).toEqual(renewed);
   });
 
