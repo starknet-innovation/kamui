@@ -1,7 +1,8 @@
 // Kamui: audit finding #2. The rotator compares key material, read from the registry's
 // storage, and not key ids.
 import { describe, expect, test } from 'bun:test';
-import { CallData, byteArray, hash } from 'starknet';
+import { CallData, byteArray, hash, type Call } from 'starknet';
+import { ISSUERS } from '../../jwk/verification';
 import { modulusHash, modulusLimbs } from '../../jwk/modulus';
 import { setLogSink } from '../../log';
 import { TEST_JWK } from '../../test-fixtures';
@@ -154,4 +155,81 @@ test('a blocked restore prevents JWK writes after the read-only sync plan is pre
   ctx.assertPaidAvailable = () => {throw new Error('RESTORE_RECONCILIATION_REQUIRED');};
   await expect(syncOnce(ctx,GOOGLE)).rejects.toThrow('RESTORE_RECONCILIATION_REQUIRED');
   expect(sent).toHaveLength(0);
+});
+
+describe('submitting key updates', () => {
+  test('a blocked submission discards the queued replace; the next sync after unblocking plans and sends it again', async () => {
+    const { ctx, sent, storage, publish } = chain({ 'kid-1': LIMBS });
+    publish([jwk('kid-1', OTHER_N)]);
+    ctx.assertPaidAvailable = () => { throw new Error('RESTORE_RECONCILIATION_REQUIRED'); };
+    const blocked = await logged(async () => { await expect(syncOnce(ctx, GOOGLE)).rejects.toThrow('RESTORE_RECONCILIATION_REQUIRED'); });
+    expect(sent).toHaveLength(0);
+    expect(storage.get('kid-1')).toEqual(LIMBS);
+    expect(blocked.some((l) => l.event === 'registry_updated')).toBe(false);
+
+    ctx.assertPaidAvailable = undefined;
+    await logged(() => syncOnce(ctx, GOOGLE));
+    expect(sent).toEqual([[{ entrypoint: 'remove_key', kid: 'kid-1', limbs: undefined }, { entrypoint: 'set_key', kid: 'kid-1', limbs: OTHER_LIMBS }]]);
+    expect(storage.get('kid-1')).toEqual(OTHER_LIMBS);
+  });
+
+  test('a failed transaction fails the sync, is not logged as done, and does not block the next submission', async () => {
+    const { ctx, sent, storage, publish } = chain({ 'kid-1': LIMBS });
+    publish([jwk('kid-1', OTHER_N)]);
+    const execute = ctx.registryOwner.execute;
+    ctx.registryOwner.execute = async () => { throw new Error('nonce too low'); };
+    const failed = await logged(async () => { await expect(syncOnce(ctx, GOOGLE)).rejects.toThrow('nonce too low'); });
+    expect(storage.get('kid-1')).toEqual(LIMBS);
+    expect(failed.some((l) => l.event === 'registry_updated')).toBe(false);
+
+    ctx.registryOwner.execute = execute;
+    await logged(() => syncOnce(ctx, GOOGLE));
+    expect(sent).toHaveLength(1);
+    expect(storage.get('kid-1')).toEqual(OTHER_LIMBS);
+  });
+});
+
+describe('writing to the registry', () => {
+  test("a known issuer's keys are written to the registry under that issuer's variant", async () => {
+    for (const { iss, variant } of ISSUERS) {
+      const { ctx, sent, publish } = chain();
+      publish([jwk('kid-1')]);
+      const raw: Call[][] = [];
+      const execute = ctx.registryOwner.execute;
+      ctx.registryOwner.execute = async (calls) => { raw.push(calls); return execute(calls); };
+      const lines = await logged(() => syncOnce(ctx, iss));
+      expect(sent).toEqual([[{ entrypoint: 'set_key', kid: 'kid-1', limbs: LIMBS }]]);
+      expect(raw[0]![0]!.contractAddress).toBe(REGISTRY);
+      expect(BigInt((raw[0]![0]!.calldata as string[])[0]!)).toBe(BigInt(variant));
+      expect(lines.find((l) => l.event === 'registry_updated')).toMatchObject({ level: 'info', iss, added: 1, replaced: 0, removed: 0, tx: '0x2' });
+    }
+  });
+
+  test('an issuer that is not Google or Apple is refused before anything is read or written', async () => {
+    const { ctx, sent } = chain();
+    let reads = 0;
+    ctx.provider.getEvents = async () => { reads += 1; return { events: [] }; };
+    ctx.fetchJwks = undefined; // the real fetch, which refuses the issuer before any request
+    await expect(syncOnce(ctx, 'https://evil.example')).rejects.toThrow('WRONG_ISSUER');
+    expect(reads).toBe(0);
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe('a registry upgraded to emit hashes', () => {
+  test('a KeySet from before the upgrade has no hash to compare with storage; one after it is compared', async () => {
+    const { ctx, sent, storage, events, publish } = chain({ 'kid-1': LIMBS });
+    events[0].keys = [KEY_SET]; // the older registry class emitted no hash
+    storage.set('kid-1', OTHER_LIMBS);
+    publish([jwk('kid-1')]);
+    const before = await logged(() => syncOnce(ctx, GOOGLE));
+    expect(before.some((l) => l.event === 'registry_history_mismatch')).toBe(false);
+    // Storage still decides: the wrong key is replaced.
+    expect(sent[0]!.map((c) => c.entrypoint)).toEqual(['remove_key', 'set_key']);
+
+    // The fake registry's own writes emit the hash, as the upgraded class does.
+    storage.set('kid-1', OTHER_LIMBS);
+    const after = await logged(() => syncOnce(ctx, GOOGLE));
+    expect(after.some((l) => l.event === 'registry_history_mismatch' && l.level === 'error')).toBe(true);
+  });
 });
