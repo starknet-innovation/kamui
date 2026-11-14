@@ -50,9 +50,11 @@ export class PostgresRegistryStore implements RegistryStorage {
       // Lock even an account with no rows, so concurrent first inserts share the same limit.
       // Hash collisions only serialize unrelated accounts; they cannot bypass the limit.
       await tx`SELECT pg_advisory_xact_lock(hashtextextended(${'kamui.registry:' + account}, 0))`;
-      await tx`DELETE FROM registry_sessions WHERE account = ${account} AND (valid_until <= ${now} OR public_key = ${session.publicKey})`;
-      const [row] = await tx`SELECT COUNT(*) AS n FROM registry_sessions WHERE account = ${account}`;
+      // Count the other live entries before deleting anything, so a refused put writes nothing.
+      const [row] = await tx`SELECT COUNT(*) AS n FROM registry_sessions WHERE account = ${account}
+        AND valid_until > ${now} AND public_key <> ${session.publicKey}`;
       if (safeInteger(row.n) >= this.maxPerAccount) return false;
+      await tx`DELETE FROM registry_sessions WHERE account = ${account} AND (valid_until <= ${now} OR public_key = ${session.publicKey})`;
       await tx`INSERT INTO registry_sessions (account, public_key, valid_until, created_at, session)
         VALUES (${account}, ${session.publicKey}, ${session.validUntil}, ${now}, ${JSON.stringify(session)})`;
       return true;
