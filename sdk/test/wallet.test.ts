@@ -219,6 +219,58 @@ describe('sending calls', () => {
     expect((await refusal(() => wallet.execute(move))).code).toBe('SESSION_EXHAUSTED');
   });
 
+  test('the place in the nonce range is kept in the store, so the next page load reads it once', async () => {
+    const { wallet, options, store, node } = await connected({ session: sessionRequest({ maxCalls: 50 }) }, fakeNode({ maxCalls: 50 }));
+    for (let i = 0; i < 5; i++) await wallet.execute(move);
+    expect(loadConnection(store)!.session.nonces).toEqual({ base: '0x3e8', next: 5 });
+
+    const reloaded = new KamuiWallet(options);
+    await reloaded.resume();
+    const reads = node.state.reads.length;
+    await reloaded.execute(move);
+    expect(node.state.reads.slice(reads)).toEqual(['get_session_nonce_base', 'is_valid_outside_execution_nonce']);
+  });
+
+  test('renew asks the keychain for the same key; the renewed session starts at its own first nonce', async () => {
+    const { wallet, options, store, tab, node, relayed } = await connected();
+    for (let i = 0; i < 3; i++) await wallet.execute(move);
+    expect((await refusal(() => wallet.execute(move))).code).toBe('SESSION_EXHAUSTED');
+    const before = loadConnection(store)!;
+    expect(before.session.nonces).toMatchObject({ exhausted: true });
+
+    // Connecting again would do nothing: the session is alive. Renewing goes to the keychain.
+    expect(await isPending(wallet.renew())).toBe(true);
+    expect(tab.navigatedTo).toHaveLength(2);
+    const asked = new URL(tab.navigatedTo[1]!);
+    expect(asked.pathname).toBe('/connect');
+    expect(JSON.parse(atob(new URLSearchParams(asked.hash.slice(1)).get('kamui')!.replace(/-/g, '+').replace(/_/g, '/'))).session.publicKey).toBe(before.session.publicKey);
+
+    // Approved: the account gives the key a new nonce base, and nothing of it is used.
+    tab.fragment = keychainAnswers(tab.navigatedTo[1]!);
+    node.state.base = 5000n;
+    const renewed = new KamuiWallet(options);
+    const connection = (await renewed.resume())!;
+    expect(connection.session.publicKey).toBe(before.session.publicKey);
+    expect(connection.session.nonces).toBeUndefined();
+    await renewed.execute(move);
+    await renewed.execute(move);
+    expect(relayed.slice(3).map((r) => r.nonce)).toEqual([5000n, 5001n]);
+
+    // The wallet object from before the renewal still remembers the old range as used up. The
+    // new base makes it start over; it never signs a nonce of the old range again.
+    await wallet.execute(move);
+    expect(relayed.at(-1)!.nonce).toBe(5002n);
+    expect(relayed.filter((r) => r.nonce < 5000n)).toHaveLength(3);
+    // And it does not write its old connection over the renewed one.
+    expect(loadConnection(store)!.session.nonces).toEqual({ base: '0x1388', next: 3 });
+  });
+
+  test('renew needs a session', async () => {
+    const w = world();
+    const error = await refusal(() => new KamuiWallet(w.options).renew());
+    expect(error.code).toBe('NOT_CONNECTED');
+  });
+
   test('an expired session is refused locally', async () => {
     const w = await connected();
     const stored = loadConnection(w.store)!;

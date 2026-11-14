@@ -6,6 +6,7 @@ import {
   SESSION_END_EVENT_KEYS,
   checkSessionEnded,
   isSessionRefusal,
+  renewedConnection,
   sessionEventTracker,
   watchSession,
   type Connection,
@@ -179,6 +180,57 @@ describe('checkSessionEnded', () => {
 
   test('registered with another expiry', async () => {
     expect(await checkSessionEnded(connection, fakeNode({ validUntil: VALID_UNTIL + 60 }).provider, NOW)).toEqual({ reason: 'replaced' });
+  });
+});
+
+describe('a renewal by this app', () => {
+  // `beginExtend` keeps the key and changes the deadline; `finishConnect` stores the result.
+  const renewed: Connection = { ...connection, session: { ...connection.session, validUntil: VALID_UNTIL + 86_400, maxCalls: 500 } };
+  const storeWith = (stored: Connection | null) => ({
+    getItem: (key: string) => (key === 'kamui.connection' && stored ? JSON.stringify(stored) : null),
+    setItem: () => {},
+    removeItem: () => {},
+  });
+
+  test('a watcher on the connection from before the renewal reports replaced', async () => {
+    const node = fakeNode({ block: 100 });
+    const { ends, timers } = start(node);
+    await settle();
+    node.block = 101;
+    node.validUntil = renewed.session.validUntil;
+    node.events.push(keySet(renewed.session.validUntil));
+    timers.fire(POLL);
+    await settle();
+    expect(ends).toEqual([{ reason: 'replaced', transactionHash: '0xa3', blockNumber: 101 }]);
+    expect(await checkSessionEnded(connection, node.provider, NOW)).toEqual({ reason: 'replaced' });
+  });
+
+  test('the store then holds the renewed connection, which is alive and can be watched', async () => {
+    expect(renewedConnection(connection, storeWith(renewed))).toEqual(renewed);
+
+    const node = fakeNode({ block: 101, validUntil: renewed.session.validUntil });
+    expect(await checkSessionEnded(renewed, node.provider, NOW)).toBeNull();
+    const timers = fakeTimers();
+    const ends: SessionEnd[] = [];
+    watchSession(renewed, node.provider, (end) => ends.push(end), { timers, now: () => NOW });
+    await settle();
+    // The renewal's own event, seen again by the new watcher, is this session being set.
+    node.block = 102;
+    node.events.push(keySet(renewed.session.validUntil, KEY, '0xa3', 102));
+    timers.fire(POLL);
+    await settle();
+    expect(ends).toEqual([]);
+    const tracker = sessionEventTracker(renewed.session);
+    tracker.push(keySet(renewed.session.validUntil));
+    expect(tracker.ended).toBeNull();
+  });
+
+  test('a store with nothing newer means the session is over for this app', () => {
+    expect(renewedConnection(connection, storeWith(null))).toBeNull();
+    expect(renewedConnection(connection, storeWith(connection))).toBeNull();
+    // Another key, or another account, is not a renewal of this session.
+    expect(renewedConnection(connection, storeWith({ ...renewed, session: { ...renewed.session, publicKey: OTHER_KEY } }))).toBeNull();
+    expect(renewedConnection(connection, storeWith({ ...renewed, account: '0x123' }))).toBeNull();
   });
 });
 

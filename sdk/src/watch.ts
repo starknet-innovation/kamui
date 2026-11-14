@@ -14,7 +14,7 @@
 // The events are emitted by the account itself (the component events are flattened), so they are
 // read with `starknet_getEvents` on the account's address, or pushed by a WebSocket node.
 import { hash, type ProviderInterface } from 'starknet';
-import type { Connection } from './keychain.js';
+import { loadConnection, type Connection, type KeyValueStore } from './keychain.js';
 import { KamuiReader } from './reader.js';
 import { sameFelt } from './utils.js';
 
@@ -27,7 +27,11 @@ export type SessionEndReason =
   | 'all-revoked'
   /** The user added or removed a device, which revokes every session. */
   | 'owners-changed'
-  /** The same session key was registered again with another expiry. */
+  /**
+   * The same session key was registered again with another expiry: this connection's signatures
+   * are no longer accepted. A renewal by this app (`beginExtend`) reads this way to a watcher still
+   * holding the connection from before it; `renewedConnection` tells that case apart.
+   */
   | 'replaced'
   /** The account no longer has the session; what ended it was not seen. */
   | 'gone';
@@ -96,6 +100,20 @@ export async function checkSessionEnded(connection: Connection, provider: Provid
   if (!data.exists) return { reason: 'gone' };
   if (data.validUntil !== connection.session.validUntil) return { reason: 'replaced' };
   return null;
+}
+
+/**
+ * After a `replaced`: the connection this app stored when it renewed the session, or null if the
+ * store holds nothing newer. A renewal keeps the account and the session key and changes the
+ * deadline, and `finishConnect` stores the result, so a tab or process that still holds the
+ * connection from before the renewal finds the renewed one here. Carry on with it and watch it
+ * instead of forgetting the session. Null means the key was registered again by something else
+ * than this app's stored renewal: treat the session as ended.
+ */
+export function renewedConnection(connection: Connection, store: KeyValueStore): Connection | null {
+  const stored = loadConnection(store);
+  if (!stored || !sameFelt(stored.account, connection.account) || !sameFelt(stored.session.publicKey, connection.session.publicKey)) return null;
+  return stored.session.validUntil === connection.session.validUntil ? null : stored;
 }
 
 // 'Kamui: invalid session', as text and as the felt a node prints in a revert reason.

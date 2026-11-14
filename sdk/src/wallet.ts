@@ -15,12 +15,14 @@ import type { Call, ProviderInterface } from 'starknet';
 import {
   beginConnect,
   beginExecute,
+  beginExtend,
   finishConnect,
   finishExecute,
   forgetConnection,
   isConnectionAlive,
   loadConnection,
   pendingRequestKind,
+  saveConnection,
   sessionCall,
   sponsor,
   type ConnectOptions,
@@ -133,8 +135,6 @@ export class KamuiWallet {
   private resuming: Promise<Connection | null> | undefined;
   private resumeError: string | null = null;
   private approved: string | null = null;
-  /** Where the scan for the next sponsored nonce starts. */
-  private nonceOffset = 0;
   /** Sponsored calls go one at a time, so two of them never sign the same nonce. */
   private queue: Promise<unknown> = Promise.resolve();
   private readonly listeners: Record<WalletEvent, Set<WalletListener>> = { accountsChanged: new Set(), networkChanged: new Set() };
@@ -233,11 +233,25 @@ export class KamuiWallet {
     return new Promise<never>(() => {});
   }
 
+  /**
+   * Sends the user to the keychain to renew the session under the key it already has: a new
+   * deadline and a fresh count of calls, from the `session` option. Leaves the page and never
+   * settles; `resume()` picks the renewed session up when the user is back. If they deny it,
+   * the session stays as it was.
+   */
+  async renew(): Promise<never> {
+    const connection = this.connected();
+    const { session } = this.options;
+    const request = typeof session === 'function' ? session() : session;
+    const url = beginExtend(connection, { ...request, keychainUrl: this.options.keychainUrl, redirectUri: this.page.redirectUri() }, this.store);
+    this.page.navigate(url);
+    return new Promise<never>(() => {});
+  }
+
   /** Forgets the session key. The session itself stays on the account until it expires or the user revokes it. */
   disconnect(): void {
     if (this.available()) forgetConnection(this.store);
     this.current = null;
-    this.nonceOffset = 0;
     this.resuming = Promise.resolve(null);
     this.emit('accountsChanged', []);
   }
@@ -282,18 +296,28 @@ export class KamuiWallet {
     }
 
     const send = async () => {
-      const prepared = await sessionCall(connection, list, provider, this.nonceOffset);
+      // `sessionCall` keeps its place on the connection, tied to the session's nonce base: a
+      // renewed session has another base, so a place kept from before the renewal is not used.
+      const prepared = await sessionCall(connection, list, provider);
       if (!prepared) {
+        saveConnection(connection, this.store);
         throw new KamuiWalletError(
           'SESSION_EXHAUSTED',
-          `kamui: this session has used all its ${connection.session.maxCalls} calls: connect again`,
+          `kamui: this session has used all its ${connection.session.maxCalls} calls: renew it (renew()) or connect again`,
         );
       }
-      // If sending fails the nonce is still free: the next scan starts on it again.
-      this.nonceOffset = prepared.offset;
-      const transaction_hash = typeof route === 'string' ? await sponsor(route, prepared.call) : await route(prepared.call);
-      this.nonceOffset = prepared.offset + 1;
-      return { transaction_hash };
+      try {
+        const transaction_hash = typeof route === 'string' ? await sponsor(route, prepared.call) : await route(prepared.call);
+        return { transaction_hash };
+      } catch (error) {
+        // If sending fails the nonce is still free: the next call starts on it again. If it was
+        // spent after all (a lost answer), the account says so and the search moves past it.
+        const nonces = connection.session.nonces;
+        if (nonces && nonces.next === prepared.offset + 1) nonces.next = prepared.offset;
+        throw error;
+      } finally {
+        saveConnection(connection, this.store);
+      }
     };
     const result = this.queue.then(send, send);
     this.queue = result.catch(() => {});
