@@ -1,6 +1,6 @@
-import { useAccount, useConnect, useDisconnect, useSendTransaction } from '@starknet-react/core';
-import { uint256 } from 'starknet';
-import { KamuiWalletError } from '@kamui/sdk/starknet-react';
+import { useAccount, useConnect, useDisconnect, useSendTransaction, useSignTypedData } from '@starknetfoundation/starknet-start-react';
+import { uint256, type TypedData } from 'starknet';
+import { KamuiWalletError } from '@kamui/sdk/starknet-start';
 import { GAME, STRK, kamui } from './kamui';
 
 /** A u256 amount as two felts: low, then high. */
@@ -11,7 +11,23 @@ const u256 = (value: bigint) => {
 
 const approveSpender = [{ contractAddress: STRK, entrypoint: 'approve', calldata: [GAME, ...u256(15n * 10n ** 17n)] }];
 
-/** What to tell the user when a call was refused before it was sent. */
+/** A sign-in message. Your server checks the signature with `verifyMessageSignature`. */
+const signIn: TypedData = {
+  types: {
+    StarknetDomain: [
+      { name: 'name', type: 'shortstring' },
+      { name: 'version', type: 'shortstring' },
+      { name: 'chainId', type: 'shortstring' },
+      { name: 'revision', type: 'shortstring' },
+    ],
+    SignIn: [{ name: 'nonce', type: 'felt' }],
+  },
+  primaryType: 'SignIn',
+  domain: { name: 'My game', version: '1', chainId: 'SN_SEPOLIA', revision: '1' },
+  message: { nonce: '0x1234' },
+};
+
+/** What to tell the user when a request was refused before it was sent. */
 function explain(error: Error): string {
   if (!(error instanceof KamuiWalletError)) return error.message;
   switch (error.code) {
@@ -34,10 +50,17 @@ export function Game() {
   const ping = useSendTransaction({ calls: [{ contractAddress: GAME, entrypoint: 'ping', calldata: [] }] });
   // Outside the session: refused with OUT_OF_SCOPE before anything is sent.
   const approve = useSendTransaction({ calls: approveSpender });
+  // Signed with the session key, no prompt: [session_pubkey, r, s, valid_until].
+  const sign = useSignTypedData({ params: signIn });
 
   if (status !== 'connected') {
     // Leaves the page. The session is picked up by useKamuiReconnect when the user is back.
-    return <button onClick={() => connect({ connector: kamui })}>Connect with Kamui</button>;
+    return (
+      <div>
+        <button onClick={() => connect({ connector: kamui })}>Connect with Kamui</button>
+        {kamui.lastEnd && <p>Your session ended ({kamui.lastEnd.reason}).</p>}
+      </div>
+    );
   }
 
   return (
@@ -50,6 +73,9 @@ export function Game() {
       </button>
       {ping.data && <p>Sent {ping.data.transaction_hash}</p>}
       {ping.error && <p role="alert">{explain(ping.error)}</p>}
+
+      <button onClick={() => sign.signTypedData()}>Sign in</button>
+      {sign.data && <p>Signed: {sign.data.length} felts</p>}
 
       <button onClick={() => approve.send()}>Approve 1.5 STRK</button>
       {approve.error instanceof KamuiWalletError && approve.error.code === 'OUT_OF_SCOPE' && (

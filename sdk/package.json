@@ -7,7 +7,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./starknet-react": "./src/starknet-react.ts"
+    "./starknet-start": "./src/starknet-start.ts"
   },
   "scripts": {
     "test": "bun test",
@@ -19,11 +19,15 @@
     "starknet": "10.8.0"
   },
   "peerDependencies": {
-    "@starknet-react/core": "^5.0.0",
-    "react": "^18.0.0"
+    "@starknet-io/get-starknet-core": ">=6.0.0",
+    "@starknetfoundation/starknet-start-react": ">=2.0.0",
+    "react": ">=19.0.0"
   },
   "peerDependenciesMeta": {
-    "@starknet-react/core": {
+    "@starknet-io/get-starknet-core": {
+      "optional": true
+    },
+    "@starknetfoundation/starknet-start-react": {
       "optional": true
     },
     "react": {
@@ -31,13 +35,19 @@
     }
   },
   "devDependencies": {
-    "@starknet-react/chains": "5.0.3",
-    "@starknet-react/core": "5.0.3",
+    "@starknet-io/get-starknet-core": "6.1.0",
+    "@starknet-io/get-starknet-modal": "6.1.0",
+    "@starknet-io/get-starknet-wallet-standard": "6.1.1",
+    "@starknetfoundation/starknet-start-chains": "1.0.13",
+    "@starknetfoundation/starknet-start-providers": "1.1.4",
+    "@starknetfoundation/starknet-start-react": "2.0.3",
+    "@tanstack/react-query": "5.107.1",
     "@types/bun": "^1.1.0",
-    "@types/react": "18.3.12",
-    "@types/react-test-renderer": "18.3.0",
-    "react": "18.3.1",
-    "react-test-renderer": "18.3.1",
+    "@types/react": "19.2.2",
+    "@types/react-test-renderer": "19.1.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-test-renderer": "19.2.0",
     "typescript": "^5.6.0"
   }
 }

@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
-import { sepolia } from '@starknet-react/chains';
-import { StarknetConfig, jsonRpcProvider } from '@starknet-react/core';
-import { useKamuiReconnect } from '@kamui/sdk/starknet-react';
+import { sepolia } from '@starknetfoundation/starknet-start-chains';
+import { jsonRpcProvider } from '@starknetfoundation/starknet-start-providers';
+import { StarknetConfig } from '@starknetfoundation/starknet-start-react';
+import { useKamuiReconnect } from '@kamui/sdk/starknet-start';
 import { RPC_URL, kamui } from './kamui';
 
 /**
@@ -22,7 +23,8 @@ function KamuiReconnect({ children }: { children: ReactNode }) {
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
-    <StarknetConfig chains={[sepolia]} provider={jsonRpcProvider({ rpc: () => ({ nodeUrl: RPC_URL }) })} connectors={[kamui]}>
+    // extraWallets lists Kamui next to the extension wallets Starknet Start discovers.
+    <StarknetConfig chains={[sepolia]} provider={jsonRpcProvider({ rpc: () => ({ nodeUrl: RPC_URL }) })} extraWallets={[kamui]}>
       <KamuiReconnect>{children}</KamuiReconnect>
     </StarknetConfig>
   );

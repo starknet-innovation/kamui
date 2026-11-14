@@ -1,6 +1,6 @@
-// The Kamui connector for this app. Created once, outside any component.
+// Kamui as a wallet for Starknet Start. Created once, outside any component.
 import { RpcProvider } from 'starknet';
-import { KamuiConnector } from '@kamui/sdk/starknet-react';
+import { KamuiStandardWallet } from '@kamui/sdk/starknet-start';
 
 /** Any Starknet Sepolia JSON-RPC endpoint. */
 export const RPC_URL = 'https://YOUR-SEPOLIA-RPC';
@@ -10,7 +10,7 @@ export const provider = new RpcProvider({ nodeUrl: RPC_URL });
 export const GAME = '0x2f8ce9fcc5f6e165ab5dcccf865c4c08e7d752d6b930938195683eef9f43dfc';
 export const STRK = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
 
-export const kamui = new KamuiConnector({
+export const kamui = new KamuiStandardWallet({
   keychainUrl: 'https://sepolia.kamui.page',
   provider,
   // Your own server route that forwards sponsored calls (see "Sponsorship").
