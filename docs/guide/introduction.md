@@ -18,7 +18,7 @@ Kamui is an embedded wallet for Starknet apps. Your users sign in with Google on
                     (adds credential)                                   by Kamui
 ```
 
-- **Redirects, not popups or iframes.** The keychain is a normal page that your app navigates to, like an OAuth login. Your page reloads when the user comes back. That avoids third-party storage partitioning and lost `window.opener` references.
+- **Redirects, not iframes.** The keychain is a normal page that your app navigates to, like an OAuth login. Your page reloads when the user comes back. That avoids third-party storage partitioning and lost `window.opener` references. An app that cannot afford the reload can run the same flow in a popup: see [Popup mode](/guide/popup).
 - **The session key never leaves your app.** The keychain only approves what it may do. The user's device key never leaves the keychain.
 - **The account enforces the session.** Scope, expiry, call count and spending limits are checked by the account contract on chain, not by Kamui's servers.
 - **Two ways to send.** Calls *inside* the session are signed by your app with no prompt. Calls *outside* it go back to the keychain for a one-off approval (`/execute`).

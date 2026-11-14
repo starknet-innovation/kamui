@@ -56,6 +56,8 @@ export type World = {
   sponsorError?: string;
   /** Apple answers with this error instead of a token. */
   appleError?: string;
+  /** Google's page sets Cross-Origin-Opener-Policy, which cuts a popup off from the page that opened it. */
+  issuerIsolatesOpener?: boolean;
   /** The pepper service answers 503. */
   pepperDown?: boolean;
   /** The session registry's records, by session key (hex without leading zeros). */
@@ -273,8 +275,8 @@ function registryRefusal(world: World, action: RegistryAction, body: any, subjec
  * The issuer's page sending the user back. A page that navigates, not a 302: WebKit cannot be
  * given a redirect as a faked answer.
  */
-const sendBack = (route: Route, to: string) =>
-  route.fulfill({ status: 200, contentType: 'text/html', body: `<!doctype html><title>issuer</title><script>location.replace(${JSON.stringify(to)})</script>` });
+const sendBack = (route: Route, to: string, headers: Record<string, string> = {}) =>
+  route.fulfill({ status: 200, contentType: 'text/html', headers, body: `<!doctype html><title>issuer</title><script>location.replace(${JSON.stringify(to)})</script>` });
 
 /** Replaces the outside world for every page of `context`. */
 export async function installFakes(context: BrowserContext, world: World) {
@@ -379,7 +381,7 @@ export async function installFakes(context: BrowserContext, world: World) {
     world.issuerVisits += 1;
     const url = new URL(route.request().url());
     const back = `${url.searchParams.get('redirect_uri')}#id_token=${token(url.searchParams.get('nonce')!)}&state=${url.searchParams.get('state')}`;
-    return sendBack(route, back);
+    return sendBack(route, back, world.issuerIsolatesOpener ? { 'cross-origin-opener-policy': 'same-origin' } : {});
   });
 }
 

@@ -290,6 +290,30 @@ describe('entries', () => {
     expect(await status(put(ctx, session('0x4')))).toBe('ok');
   });
 
+  test('a refused put writes nothing, even after the limit is lowered', () => {
+    const path = `${import.meta.dir}/../../../data/test-lowered-${process.pid}.sqlite`;
+    try {
+      const before = new RegistryStore(path, 3);
+      expect(before.put(ACCOUNT, session('0x1', { validUntil: NOW + 100 }), NOW)).toBe(true);
+      expect(before.put(ACCOUNT, session('0x2'), NOW)).toBe(true);
+      expect(before.put(ACCOUNT, session('0x3'), NOW)).toBe(true);
+      before.close();
+      // Reopened with a lower limit, the account is over it: 0x2 and 0x3 are live, 0x1 has expired.
+      const after = new RegistryStore(path, 1);
+      const later = NOW + 100;
+      expect(after.put(ACCOUNT, session('0x4'), later)).toBe(false);
+      expect(after.put(ACCOUNT, session('0x2', { appName: 'Again' }), later)).toBe(false);
+      // Neither refusal deleted the expired entry or the entry being replaced.
+      expect(after.dropExpired(later)).toBe(1);
+      after.close();
+      const reopened = new RegistryStore(path, 3);
+      expect(reopened.list(ACCOUNT, later).map((s) => [s.publicKey, s.appName])).toEqual([['0x3', 'Example'], ['0x2', 'Example']]);
+      reopened.close();
+    } finally {
+      for (const suffix of ['', '-wal', '-shm', '-journal']) rmSync(path + suffix, { force: true });
+    }
+  });
+
   test('expired entries are dropped, and make room', async () => {
     const { ctx, state } = context({ maxPerAccount: 2 });
     await put(ctx, session('0x1', { validUntil: NOW + 100 }));

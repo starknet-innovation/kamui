@@ -6,6 +6,7 @@ import { outsideExecution, OutsideExecutionVersion, type TypedData } from 'stark
 import {
   beginConnect,
   beginExecute,
+  beginExtend,
   beginSignMessage,
   finishSignMessage,
   typedDataHash,
@@ -24,7 +25,7 @@ const APP = 'http://localhost:5199';
 const OTHER_SITE = 'http://localhost:5198';
 const GAME = '0x2f8ce9fcc5f6e165ab5dcccf865c4c08e7d752d6b930938195683eef9f43dfc';
 const TOKEN = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d'; // STRK
-/** A contract that is not on Kamui's list of known tokens. */
+/** A token contract other than STRK. */
 const OTHER_TOKEN = '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 /** 1.5 tokens of 18 decimals, as the low half of a u256. */
 const ONE_AND_A_HALF = '0x14d1120d7b160000';
@@ -317,7 +318,7 @@ test.describe('connection requests', () => {
       limits: [{ token: TOKEN, maxPerCall: 10n ** 18n, maxPerWindow: 15n * 10n ** 17n, windowSeconds: 3600 }],
     });
     await expect(page.getByRole('heading', { name: 'Spending limits' })).toBeVisible();
-    // A known token: amounts read in whole units, with its name.
+    // Amounts read in whole units, with the token's name.
     await expect(page.getByRole('cell', { name: '1 STRK', exact: true })).toBeVisible();
     await expect(page.getByText('1.5 STRK every 60 min')).toBeVisible();
     await page.getByRole('button', { name: 'Approve' }).click();
@@ -486,23 +487,15 @@ test.describe('transaction requests', () => {
     await expect(page.getByText('Lets another address spend up to an unlimited amount of STRK from your account.')).toBeVisible();
   });
 
-  test('a token Kamui does not list is shown as a claim, with a caution', async ({ page, context }) => {
+  test('a token is shown by the name and decimals its contract gives, with its address', async ({ page, context }) => {
     const world = await setup(context);
     world.tokens.set(BigInt(OTHER_TOKEN), { symbol: 'GOLD', decimals: 6 });
     await signIn(page);
     await transactionFrom(page, APP, [{ contractAddress: OTHER_TOKEN, entrypoint: 'transfer', calldata: [GAME, '0x2625a0', '0x0'] }]);
     await expect(page.getByText('Sends 2.5 GOLD out of your account.')).toBeVisible();
-    await expect(page.getByText('Kamui does not recognise this token. It says it is "GOLD"')).toBeVisible();
-    await expect(page.getByText('says it is "GOLD"', { exact: false }).first()).toBeVisible();
-  });
-
-  test('a contract calling itself STRK at another address is not taken for STRK', async ({ page, context }) => {
-    const world = await setup(context);
-    world.tokens.set(BigInt(OTHER_TOKEN), { symbol: 'STRK', decimals: 18 });
-    await signIn(page);
-    await transactionFrom(page, APP, [{ contractAddress: OTHER_TOKEN, entrypoint: 'transfer', calldata: [GAME, ONE_AND_A_HALF, '0x0'] }]);
-    await expect(page.getByText('Kamui does not recognise this token. It says it is "STRK", but anyone can make a token with that name.')).toBeVisible();
     await expect(page.getByRole('cell', { name: OTHER_TOKEN })).toBeVisible();
+    // Kamui keeps no token list, so there is nothing to warn about for a contract that answers like a token.
+    await expect(page.getByText('could not identify')).toHaveCount(0);
   });
 
   test('a contract that is not a token gets raw amounts and a caution', async ({ page, context }) => {
@@ -990,6 +983,81 @@ test.describe('sessions', () => {
     await answer(page, true);
     await expect(page.getByRole('heading', { name: 'Sessions (0)' })).toBeVisible();
     await expect.poll(() => world.registry.size).toBe(0);
+  });
+
+  /** A site on `from` asks to renew the session of `publicKey`, as `beginExtend` does. */
+  async function renewalFrom(page: Page, from: string, publicKey: string, store = memoryStore(), privateKey = '0x1') {
+    const connection = { account: ACCOUNT, chainId: CHAIN_ID, classHash: CLASS_HASH, session: { privateKey, publicKey, validUntil: later(), maxCalls: 20 } };
+    const url = beginExtend(
+      connection,
+      { keychainUrl: KEYCHAIN, redirectUri: `${from}/`, appName: 'Example Game', validUntil: later() + 3600, maxCalls: 500, calls: [{ to: GAME, entrypoint: 'move' }] },
+      store,
+    );
+    await page.goto(`${from}/`);
+    await page.evaluate((target) => location.assign(target), url);
+    await page.waitForURL(`${KEYCHAIN}/connect`);
+    return store;
+  }
+
+  test('a renewal keeps the session key, is shown as a renewal, and replaces the session and its record', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    const store = await requestFrom(page, APP);
+    await expect(page.getByRole('heading', { name: 'Connection request' })).toBeVisible();
+    await page.getByRole('button', { name: 'Approve' }).click();
+    const first = await answerAt(page, store);
+    if (!first.ok) throw new Error(first.error);
+    const { publicKey, privateKey } = first.connection.session;
+
+    await renewalFrom(page, APP, publicKey, store, privateKey);
+    await expect(page.getByRole('heading', { name: 'Session renewal' })).toBeVisible();
+    await expect(page.locator('.origin')).toHaveText(APP);
+    await expect(page.getByText('Approving replaces that session with the limits below')).toBeVisible();
+    await expect(page.getByText('at most 500 sponsored')).toBeVisible();
+    await expect(page.getByText('Kamui could not check which site')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Approve' }).click();
+    const renewed = await answerAt(page, store);
+    if (!renewed.ok) throw new Error(renewed.error);
+    expect(renewed.connection.session).toMatchObject({ publicKey, privateKey, maxCalls: 500 });
+
+    // One more sponsored call, for the same key with the new limits; still one record.
+    expect(world.sponsorRequests).toHaveLength(2);
+    const call = world.sponsorRequests[1]!.calls[0]!;
+    expect(call.selector).toBe(selectorOf('add_or_update_scoped_session_key'));
+    expect(BigInt(call.data[0]!)).toBe(BigInt(publicKey));
+    expect(BigInt(call.data[2]!)).toBe(500n);
+    expect(world.registry.size).toBe(1);
+    expect(world.registry.get(felt(publicKey))).toMatchObject({ origin: APP, maxCalls: 500 });
+  });
+
+  test('a site cannot renew a session that was approved for another site', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    sessionOnChain(world, SESSION_KEY);
+    recorded(world, SESSION_KEY);
+
+    const store = await renewalFrom(page, OTHER_SITE, SESSION_KEY);
+    await expect(page.getByRole('heading', { name: 'Session renewal' })).toBeVisible();
+    await expect(page.getByText(`this session key already belongs to a session approved for ${APP}`)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Go back' }).click();
+    await page.waitForURL(`${OTHER_SITE}/**`);
+    expect(() => finishConnect(new URL(page.url()).hash, store)).toThrow(/refused by the keychain/);
+    expect(world.sponsorRequests).toHaveLength(0);
+  });
+
+  test('a renewal of a session Kamui has no record of says so, and can still be approved', async ({ page, context }) => {
+    const world = await setup(context);
+    await signIn(page);
+    sessionOnChain(world, SESSION_KEY);
+
+    await renewalFrom(page, APP, SESSION_KEY);
+    await expect(page.getByRole('heading', { name: 'Session renewal' })).toBeVisible();
+    await expect(page.getByText('Kamui could not check which site this session was first approved for')).toBeVisible();
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.waitForURL(`${APP}/**`);
+    expect(world.sponsorRequests).toHaveLength(1);
   });
 });
 
