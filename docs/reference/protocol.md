@@ -118,6 +118,13 @@ The answer comes back through the browser, so verify it where it matters: call `
 
 A live session can sign any SNIP-12 message as the account, without the keychain: Stark ECDSA over the message hash for the account, sent as `[session_pubkey, r, s, valid_until]`. `is_valid_signature` accepts it while the session exists and has not expired. The session's scope and limits do not apply to messages, and the signature stops verifying when the session ends.
 
+## Popup mode
+
+The requests and answers above are unchanged when the keychain runs in a popup; the keychain does not know the difference. Two conventions are added around them, both in [`sdk/src/popup.ts`](https://github.com/starknet-innovation/kamui/blob/main/sdk/src/popup.ts):
+
+- The app adds the query parameter `kamui_popup=1` to `redirectUri`. Its page at that address, seeing the parameter and an answer in the fragment, posts `{ "kamui": "popup-result", "fragment": "#kamui=<answer>" }` on the `BroadcastChannel` named `kamui.popup` (and to `window.opener` with its own origin as the target, if there is one), then closes. The page that opened the popup takes the first such message whose answer carries its request's `id`.
+- Before it navigates to the issuer, a keychain that has a pending request and a `window.opener` posts `{ "kamui": "leaving-for-issuer", "id": "<request id>" }` to the opener, with the origin of `redirectUri` as the target origin. It tells the app that the popup may from now on look closed without being closed.
+
 ## Signing session calls
 
 A sponsored session call is an SNIP-9 v2 outside execution (`execute_from_outside_v2`) on the user's account.

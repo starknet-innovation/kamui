@@ -68,6 +68,19 @@ try {
 
 The user may also close the keychain without clicking, so your app must still cope with no answer at all. A referrer from another origin gets no link back: something asked in your site's name, and the keychain does not send the user on.
 
+In [popup mode](/guide/popup) the refusal page is shown in the popup. If the user follows the link, your redirect page relays the answer and the `…WithPopup` promise rejects with the same `KeychainAnswerError`, which `isReferrerMissing` recognises. If they close the popup, it rejects with a `KeychainPopupError` (`closed`).
+
+## From popup mode
+
+`connectWithPopup`, `executeWithPopup` and `signMessageWithPopup` reject with the errors above when the keychain answered, and with a `KeychainPopupError` when it did not. See [Popup mode](/guide/popup#when-it-does-not-answer).
+
+| `code` | Message | Cause |
+|---|---|---|
+| `closed` | `the popup was closed before answering` | The user closed the popup |
+| `timeout` | `no answer from the popup in time` | No answer within `timeoutMs`. Also how a popup closed after the sign-in ends |
+| `aborted` | `the request was cancelled` | The `signal` was aborted |
+| `blocked` | `the browser blocked the popup` | Only with `fallback: 'none'`; otherwise a blocked popup becomes a redirect |
+
 ## From the sponsor endpoint
 
 `sponsor()` throws `Error('sponsor: <CODE>')`. HTTP status in brackets.
