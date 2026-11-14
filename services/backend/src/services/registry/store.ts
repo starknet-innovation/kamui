@@ -103,9 +103,12 @@ export class RegistryStore implements RegistryStorage {
    */
   put(account: string, session: StoredSession, now: number): boolean {
     return this.db.transaction(() => {
-      this.db.query('DELETE FROM sessions WHERE account = $account AND (valid_until <= $now OR public_key = $key)').run({ account, now, key: session.publicKey });
-      const { n } = this.db.query('SELECT COUNT(*) AS n FROM sessions WHERE account = $account').get({ account }) as { n: number };
+      // Count the other live entries before deleting anything, so a refused put writes nothing.
+      const { n } = this.db
+        .query('SELECT COUNT(*) AS n FROM sessions WHERE account = $account AND valid_until > $now AND public_key <> $key')
+        .get({ account, now, key: session.publicKey }) as { n: number };
       if (n >= this.maxPerAccount) return false;
+      this.db.query('DELETE FROM sessions WHERE account = $account AND (valid_until <= $now OR public_key = $key)').run({ account, now, key: session.publicKey });
       this.db
         .query('INSERT INTO sessions (account, public_key, valid_until, created_at, session) VALUES ($account, $key, $validUntil, $now, $session)')
         .run({ account, key: session.publicKey, validUntil: session.validUntil, now, session: JSON.stringify(session) });

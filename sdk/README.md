@@ -10,7 +10,7 @@ Not audited, like the contracts. Source-only for now: import from `src/`.
 
 | Module | What it does |
 |---|---|
-| `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExecute` and `finishExecute` for one approved transaction, `beginSignMessage` and `finishSignMessage` for one owner-signed message, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `parseSignMessageRequest`, `sessionProblems`, `executeProblems`, `signMessageProblems`, `describeCall`. |
+| `keychain` | The keychain protocol and the app side of it: `beginConnect` and `finishConnect` for a session, `beginExtend` to renew one, `beginExecute` and `finishExecute` for one approved transaction, `beginSignMessage` and `finishSignMessage` for one owner-signed message, `sessionCall`, `sponsor`; and for the keychain `parseConnectRequest`, `parseExecuteRequest`, `parseSignMessageRequest`, `sessionProblems`, `executeProblems`, `signMessageProblems`, `describeCall`. |
 | `messages` | SNIP-12 typed data signed as the account: `sessionSignTypedData` (a session, `[session_pubkey, r, s, valid_until]`), `ownerSignTypedData` (`[r, s]`), `verifyMessageSignature` (the account's `is_valid_signature`), `typedDataHash`, `typedDataFields`. |
 | `native` | Native apps through a bounce page on the app's own HTTPS domain: `beginNativeConnect` and `finishNativeConnect` for the page, `newNativeHandoff`, `nativeStartUrl` and `openNativeHandoff` for the app. The session key is made in the page and reaches the app sealed, over an https app link. Unit-tested; not run on devices. See `../docs/native/bounce-page.md`. |
 | `popup` | The keychain's requests in a popup, so the app's page is not reloaded: `connectWithPopup`, `executeWithPopup`, `signMessageWithPopup` (promises, with a fallback to the redirect when the popup is blocked), `relayPopupResult` for the page the popup ends on, and `KeychainPopupError`. |
@@ -117,7 +117,7 @@ const login = await completeLogin({
 ## Things to know
 
 - **Any change of owners revokes every session**, including a login on a new device. Check `reader.session(key).exists` and ask the user to approve again.
-- **Sponsored session nonces** are a reserved range of `maxCalls` values; any other nonce is refused. `nextSessionNonce` finds the next free one by asking the account, one call per used nonce, so keep the returned offset for long sessions.
+- **Sponsored session nonces** are a reserved range of `maxCalls` values; any other nonce is refused. The account accepts them in any order and has no counter, so `nextSessionNonce` searches: about `2·log2(used)` reads, or one with a `hint`. `sessionCall` keeps the hint on the connection for you. When the range is used up, `beginExtend` asks the user to renew the session under the same key.
 - **`maxCalls` is counted per path**: a session may send up to `maxCalls` sponsored and up to `maxCalls` self-paid transactions. On the self-paid path the range also shrinks when other keys send transactions.
 - **The address depends on the class hash.** Kamui accounts are not upgradeable, so a new class means new addresses. Keep every class hash you have deployed with.
 - **The session registry is untrusted input.** `registryClient().list()` drops records that are not shaped as the protocol says and caps the list at 50, but what a record claims (the site, the calls, the limits) is only a claim. Check each session with `reader.session(key).exists`, read what it may do from the account, and show `origin` and `appName` as text.
@@ -135,11 +135,14 @@ bun test test/tokens.test.ts          # 9 tests, no network
 bun test test/registry.test.ts        # 21 tests, no network
 bun test test/native.test.ts          # 10 tests, no network
 bun test test/vectors.test.ts         # 14 tests, no network; the published vectors match the SDK
+bun test test/nonce.test.ts           # 16 tests, no network
+bun test test/watch.test.ts           # 43 tests, no network
+bun test test/wallet.test.ts          # 35 tests, no network
 
 # needs Docker and the built contracts
 docker run --rm -p 127.0.0.1:5050:5050 shardlabs/starknet-devnet-rs:latest --seed 0
 (cd ../contracts && scarb build)
-bun test test/devnet.test.ts          # 9 tests against the devnet
+bun test test/devnet.test.ts          # 10 tests against the devnet
 ```
 
 `test/vectors/session-signing.json` holds test vectors for session signing in other languages (`../docs/reference/session-signing.md`). Regenerate it with `bun run test/vectors/generate.ts` after a deliberate change to what the SDK signs; `test/vectors.test.ts` fails until it matches.

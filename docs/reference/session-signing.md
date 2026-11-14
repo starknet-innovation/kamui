@@ -28,11 +28,17 @@ A sponsored session call is an SNIP-9 version 2 outside execution: `execute_from
 
 A session can use exactly `maxCalls` nonces on this path: `base`, `base + 1`, … `base + maxCalls − 1`, in any order. The account refuses any other nonce from a session.
 
-1. `base` = `get_session_nonce_base(session_public_key)` on the account. It changes when the session is registered again, so read it from the chain; do not compute or hard-code it.
-2. Take the first `base + i`, `0 ≤ i < maxCalls`, for which `is_valid_outside_execution_nonce(nonce)` returns 1.
+1. `base` = `get_session_nonce_base(session_public_key)` on the account. It changes whenever the session is registered again, which includes a renewal under the same key, so read it from the chain each time; do not compute or hard-code it.
+2. Take any `base + i`, `0 ≤ i < maxCalls`, for which `is_valid_outside_execution_nonce(nonce)` returns 1.
 3. If there is none, the session has used all its calls.
 
-Remember `i` and start the next scan from `i + 1`. A nonce is spent only when the call succeeds on chain. After a timeout, check the chain before reusing one.
+The account keeps no count of used session nonces, so finding a free one is a search. Any correct search will do; what matters is that the nonce you sign was reported free. What the TypeScript SDK does (`nextSessionNonce`):
+
+- Use the nonces in order, and remember the offset after the last one you handed out. Try that offset first: with a good hint this is one read.
+- Without one, or when it is taken, step away in doubling strides until an offset is free, then binary-search between the last used and the first free offset. Used in order, the used nonces are a prefix, so this is about `2·log2(used)` reads.
+- Before reporting the session used up, read the offsets not read yet: a call that was signed and never sent leaves a free nonce behind used ones.
+
+A nonce is spent only when the call succeeds on chain. After a timeout, check the chain before reusing one.
 
 ### 2. Hash
 
