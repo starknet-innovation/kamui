@@ -35,6 +35,7 @@ export default defineConfig({
         text: 'Examples',
         items: [
           { text: 'React', link: '/examples/react' },
+          { text: 'starknet-react', link: '/examples/starknet-react' },
           { text: 'Svelte', link: '/examples/svelte' },
           { text: 'Node.js', link: '/examples/node' },
         ],

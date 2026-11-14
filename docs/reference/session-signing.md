@@ -126,5 +126,6 @@ The cases:
 ## Not covered
 
 - Building a connect request and reading the answer: [Keychain protocol](/reference/protocol).
+- Signing SNIP-12 messages with a session (`sessionSignTypedData` in the SDK): the same four-felt signature over the message hash of your own typed data. See [Signing messages with a session](/reference/protocol#signing-messages-with-a-session). The vectors here cover outside executions only.
 - Getting a session into a native app: [Bounce page](/native/bounce-page).
 - The contract was not exercised with a signature produced by another language. The vectors pin the TypeScript SDK's output, which is what the contract tests and Sepolia use.

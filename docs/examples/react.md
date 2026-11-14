@@ -40,6 +40,8 @@ Keep the keychain URL, your RPC and the session you ask for in one module, outsi
 2. loads the stored connection;
 3. checks on chain that the session is still alive (it ends when the user adds a device, revokes it, or it expires).
 
+While connected, it also runs [`watchSession`](/guide/sessions#being-told-when-it-ends), which tells it once when the session ends later on.
+
 <<< @/snippets/react/KamuiProvider.tsx
 
 ::: tip StrictMode and SSR
@@ -85,4 +87,4 @@ With Vite only, run any small server for it, or use Vite's `server.proxy` during
 
 ## starknet-react
 
-There is no `starknet-react` connector for Kamui yet, so `useAccount` and friends do not see a Kamui session. Use the `useKamui()` hook above, or pass `createSessionAccount(...)` to your own code where a starknet.js `Account` is expected (self-paid sessions only, see [Sessions](/guide/sessions#self-paid-session-transactions)).
+If your app already uses starknet-react, skip the provider above and use the connector: `useAccount`, `useConnect` and `useSendTransaction` then see the Kamui session. See [starknet-react](/examples/starknet-react).
